@@ -220,6 +220,13 @@ HTML = """
         margin: 0;
     }
 
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
     button {
         border: 0;
         border-radius: 10px;
@@ -402,6 +409,18 @@ HTML = """
     }
 
     @media (max-width: 900px) {
+        html, body {
+            height: auto;
+            min-height: 100%;
+            overflow: auto;
+        }
+
+        .container {
+            height: auto;
+            min-height: 100dvh;
+            overflow: visible;
+        }
+
         .title-row {
             flex-direction: column;
             align-items: flex-start;
@@ -421,6 +440,13 @@ HTML = """
 
         .logs {
             display: block;
+            flex: 0 0 auto;
+            overflow: visible;
+        }
+
+        .panel {
+            height: auto;
+            min-height: 0;
         }
 
         .panel-header {
@@ -430,6 +456,12 @@ HTML = """
 
         .panel-header h3 {
             white-space: normal;
+        }
+
+        .console-box {
+            min-height: calc(80 * 1.45em + 28px);
+            max-height: none;
+            flex: 0 0 auto;
         }
     }
 </style>
@@ -443,16 +475,18 @@ HTML = """
                 <h1>Marites Server Control</h1>
                 <div class="actions">
                     <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
-                    <form class="ajax-form" method="post" action="/start">
-                        <button id="start-btn" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
-                    </form>
-                    <form class="ajax-form sudo-form" method="post" action="/stop">
-                        <input type="hidden" name="sudo_password">
-                        <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
-                    </form>
-                    <form class="ajax-form" method="post" action="/backup">
-                        <button class="btn-backup" type="submit">Backup</button>
-                    </form>
+                    <div class="action-buttons">
+                        <form class="ajax-form" method="post" action="/start">
+                            <button id="start-btn" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
+                        </form>
+                        <form class="ajax-form sudo-form" method="post" action="/stop">
+                            <input type="hidden" name="sudo_password">
+                            <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
+                        </form>
+                        <form class="ajax-form" method="post" action="/backup">
+                            <button class="btn-backup" type="submit">Backup</button>
+                        </form>
+                    </div>
                 </div>
             </div>
             <div class="stats-groups">
