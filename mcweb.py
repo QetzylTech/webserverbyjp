@@ -100,11 +100,18 @@ METRICS_COLLECT_INTERVAL_SECONDS = 1
 METRICS_STREAM_HEARTBEAT_SECONDS = 20
 LOG_STREAM_HEARTBEAT_SECONDS = 20
 LOG_STREAM_EVENT_BUFFER_SIZE = 800
+CRASH_STOP_GRACE_SECONDS = 15
+CRASH_STOP_MARKERS = (
+    "Preparing crash report with UUID",
+    "This crash report has been saved to:",
+)
 metrics_collector_started = False
 metrics_collector_start_lock = threading.Lock()
 metrics_cache_cond = threading.Condition()
 metrics_cache_seq = 0
 metrics_cache_payload = {}
+crash_stop_lock = threading.Lock()
+crash_stop_timer_active = False
 log_stream_states = {
     source: {
         "cond": threading.Condition(),
@@ -1428,7 +1435,7 @@ def log_mcweb_boot_diagnostics():
         log_mcweb_exception("boot_diagnostics", exc)
 
 def set_service_status_intent(intent):
-    # Set transient UI status intent: 'starting', 'shutting', or None.
+    # Set transient UI status intent: 'starting', 'shutting', 'crashed', or None.
     global service_status_intent
     with service_status_intent_lock:
         service_status_intent = intent
@@ -1543,7 +1550,7 @@ def get_session_start_time(service_status=None):
         return None
     return read_session_start_time()
 
-def get_session_duration_text(service_status=None):
+def get_session_duration_text():
     # Return elapsed session duration based strictly on session.txt UNIX time.
     start_time = read_session_start_time()
     if start_time is None:
@@ -1616,6 +1623,46 @@ def _publish_log_stream_line(source, line):
         state["events"].append((state["seq"], line))
         state["cond"].notify_all()
 
+def _line_matches_crash_marker(line):
+    text = (line or "").lower()
+    return any(marker.lower() in text for marker in CRASH_STOP_MARKERS)
+
+def _crash_stop_after_grace(trigger_line):
+    # Wait for crash grace period, then stop through systemd if still active.
+    global crash_stop_timer_active
+    try:
+        time.sleep(CRASH_STOP_GRACE_SECONDS)
+        status = get_status()
+        if status == "active":
+            stopped = stop_service_systemd()
+            if stopped:
+                log_mcweb_action(
+                    "auto-stop-crash",
+                    command=f"marker={trigger_line} grace={CRASH_STOP_GRACE_SECONDS}s",
+                )
+            else:
+                log_mcweb_action(
+                    "auto-stop-crash",
+                    command=f"marker={trigger_line} grace={CRASH_STOP_GRACE_SECONDS}s",
+                    rejection_message="systemd stop did not reach inactive/failed within timeout.",
+                )
+    finally:
+        with crash_stop_lock:
+            crash_stop_timer_active = False
+
+def _schedule_crash_stop_if_needed(line):
+    # Start at most one crash-stop timer while awaiting shutdown.
+    global crash_stop_timer_active
+    if not _line_matches_crash_marker(line):
+        return
+    set_service_status_intent("crashed")
+    with crash_stop_lock:
+        if crash_stop_timer_active:
+            return
+        crash_stop_timer_active = True
+    worker = threading.Thread(target=_crash_stop_after_grace, args=(line,), daemon=True)
+    worker.start()
+
 def _log_source_fetcher_loop(source):
     # Background source reader: one subprocess per source, shared by all clients.
     settings = _log_source_settings(source)
@@ -1651,6 +1698,8 @@ def _log_source_fetcher_loop(source):
                 if not clean:
                     continue
                 _publish_log_stream_line(source, clean)
+                if source == "minecraft":
+                    _schedule_crash_stop_if_needed(clean)
         except Exception as exc:
             log_mcweb_exception(settings["context"], exc)
         finally:
@@ -2149,6 +2198,12 @@ def get_tick_rate():
     return tick_rate
 def get_service_status_display(service_status, players_online):
     # Map raw service + start/stop intent into rule-based UI status labels.
+    intent = get_service_status_intent()
+
+    # Crash marker detection has highest priority until a new lifecycle action updates intent.
+    if intent == "crashed":
+        return "Crashed"
+
     # Rule 1: show Off when systemd says the service is off.
     if service_status in ("inactive", "failed"):
         set_service_status_intent(None)
@@ -2163,7 +2218,6 @@ def get_service_status_display(service_status, players_online):
     # Active state: apply intent rules based on players and transient UI intent.
     if service_status == "active":
         players_is_integer = isinstance(players_online, str) and players_online.isdigit()
-        intent = get_service_status_intent()
 
         # Rule 2: show Running when systemd is active and players is an integer.
         if players_is_integer:
@@ -2188,6 +2242,8 @@ def get_service_status_class(service_status_display):
         return "stat-yellow"
     if service_status_display == "Shutting Down":
         return "stat-orange"
+    if service_status_display == "Crashed":
+        return "stat-red"
     return "stat-red"
 
 def graceful_stop_minecraft():
@@ -2353,7 +2409,7 @@ def collect_dashboard_metrics():
     service_status = get_status()
     players_online = get_players_online()
     tick_rate = get_tick_rate()
-    session_duration = get_session_duration_text(service_status)
+    session_duration = get_session_duration_text()
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
     backup_status, backup_status_class = get_backup_status()
