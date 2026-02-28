@@ -1,4 +1,4 @@
-﻿"""Web dashboard for controlling and monitoring a Minecraft systemd service.
+"""Web dashboard for controlling and monitoring a Minecraft systemd service.
 
 This app provides:
 - Service controls (start/stop/manual backup)
@@ -7,7 +7,7 @@ This app provides:
 - Automatic idle shutdown and session-based backup scheduling
 """
 
-from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context, session, has_request_context
+from flask import Flask, render_template, redirect, request, jsonify, Response, stream_with_context, session, has_request_context, send_from_directory, abort
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -30,12 +30,18 @@ app.config["SECRET_KEY"] = (
 )
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 86400
 
 # Core service and application settings.
+FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
 SERVICE = "minecraft"
 # BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
 BACKUP_SCRIPT = Path(__file__).resolve().parent / "backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
+# CRASH_REPORTS_DIR = Path("/opt/Minecraft/crash-reports")
+CRASH_REPORTS_DIR = Path(__file__).resolve().parent.parent / "crash-reports"
+# MINECRAFT_LOGS_DIR = Path("/opt/Minecraft/logs")
+MINECRAFT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 BACKUP_LOG_FILE = Path(__file__).resolve().parent / "logs/backup.log"
 MCWEB_LOG_DIR = Path(__file__).resolve().parent / "logs"
 MCWEB_ACTION_LOG_FILE = MCWEB_LOG_DIR / "mcweb-actions.log"
@@ -53,6 +59,19 @@ SERVER_PROPERTIES_CANDIDATES = [
     Path(__file__).resolve().parent.parent / "server.properties",
 ]
 
+def _static_asset_version(filename):
+    # Version token for static assets based on each file's mtime.
+    try:
+        path = Path(app.root_path) / "static" / filename
+        return int(path.stat().st_mtime)
+    except OSError:
+        return 0
+
+@app.context_processor
+def inject_asset_helpers():
+    # Expose per-file static version helper to templates.
+    return {"static_version": _static_asset_version}
+
 # Backup and automation timing controls.
 BACKUP_INTERVAL_HOURS = 3
 BACKUP_INTERVAL_SECONDS = max(60, int(BACKUP_INTERVAL_HOURS * 3600))
@@ -66,7 +85,6 @@ backup_periodic_runs = 0
 backup_lock = threading.Lock()
 backup_run_lock = threading.Lock()
 backup_last_error = ""
-backup_last_successful_at = None
 session_tracking_initialized = False
 session_tracking_lock = threading.Lock()
 service_status_intent = None
@@ -97,8 +115,13 @@ rcon_last_config_read_at = 0.0
 
 # Shared dashboard metrics collector/broadcast state.
 METRICS_COLLECT_INTERVAL_SECONDS = 1
-METRICS_STREAM_HEARTBEAT_SECONDS = 20
-LOG_STREAM_HEARTBEAT_SECONDS = 20
+METRICS_STREAM_HEARTBEAT_SECONDS = 5
+LOG_STREAM_HEARTBEAT_SECONDS = 5
+HOME_PAGE_ACTIVE_TTL_SECONDS = 30
+HOME_PAGE_HEARTBEAT_INTERVAL_MS = 10000
+FILE_PAGE_CACHE_REFRESH_SECONDS = 15
+FILE_PAGE_ACTIVE_TTL_SECONDS = 30
+FILE_PAGE_HEARTBEAT_INTERVAL_MS = 10000
 LOG_STREAM_EVENT_BUFFER_SIZE = 800
 CRASH_STOP_GRACE_SECONDS = 15
 CRASH_STOP_MARKERS = (
@@ -110,6 +133,28 @@ metrics_collector_start_lock = threading.Lock()
 metrics_cache_cond = threading.Condition()
 metrics_cache_seq = 0
 metrics_cache_payload = {}
+metrics_stream_client_count = 0
+home_page_last_seen = 0.0
+backup_log_cache_lock = threading.Lock()
+backup_log_cache_lines = deque(maxlen=200)
+backup_log_cache_loaded = False
+backup_log_cache_mtime_ns = None
+minecraft_log_cache_lock = threading.Lock()
+minecraft_log_cache_lines = deque(maxlen=1000)
+minecraft_log_cache_loaded = False
+mcweb_log_cache_lock = threading.Lock()
+mcweb_log_cache_lines = deque(maxlen=200)
+mcweb_log_cache_loaded = False
+mcweb_log_cache_mtime_ns = None
+file_page_last_seen = 0.0
+file_page_cache_refresher_started = False
+file_page_cache_refresher_start_lock = threading.Lock()
+file_page_cache_lock = threading.Lock()
+file_page_cache = {
+    "backups": {"items": [], "updated_at": 0.0},
+    "crash_logs": {"items": [], "updated_at": 0.0},
+    "minecraft_logs": {"items": [], "updated_at": 0.0},
+}
 crash_stop_lock = threading.Lock()
 crash_stop_timer_active = False
 log_stream_states = {
@@ -124,1218 +169,8 @@ log_stream_states = {
 }
 
 # Single-file HTML template for the dashboard UI.
-HTML = """
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Minecraft Control</title>
-<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
-<style>
-    :root {
-        --surface: #ffffff;
-        --border: #d8dee6;
-        --text: #1f2a37;
-        --muted: #5a6878;
-        --accent: #1e40af;
-        --accent-hover: #1b3a9a;
-        --console-border: #1f2d45;
-        --console-text: #d2e4ff;
-    }
-
-    * { box-sizing: border-box; }
-
-    html, body {
-        height: 100%;
-        overflow: hidden;
-    }
-
-    body {
-        margin: 0;
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background: linear-gradient(180deg, #f7f9fb 0%, #edf2f7 100%);
-        color: var(--text);
-    }
-
-    .container {
-        max-width: 1200px;
-        margin: 0 auto;
-        height: 100dvh;
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        overflow: hidden;
-    }
-
-    .header {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        justify-content: space-between;
-        align-items: center;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 18px 20px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-    }
-
-    .title h1 {
-        margin: 0;
-        font-size: 1.4rem;
-        letter-spacing: 0.2px;
-    }
-
-    .title {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .title-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 8px;
-    }
-
-    .stats-groups {
-        display: grid;
-        grid-template-columns: minmax(420px, 1.35fr) minmax(260px, 1fr) minmax(260px, 1fr);
-        gap: 10px;
-        width: 100%;
-    }
-
-    .stats-group {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: #f8fafc;
-        padding: 8px 10px;
-        min-width: 0;
-    }
-
-    .server-stats {
-        min-width: 420px;
-    }
-
-    .group-title {
-        margin: 0 0 6px 0;
-        font-size: 0.78rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #64748b;
-        font-weight: 700;
-    }
-
-    .status-row {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 4px;
-        color: var(--muted);
-        font-size: 0.88rem;
-    }
-
-    .status-row b {
-        color: var(--text);
-        font-variant-numeric: tabular-nums;
-    }
-
-    .stat-green { color: #166534 !important; }
-    .stat-yellow { color: #a16207 !important; }
-    .stat-orange { color: #c2410c !important; }
-    .stat-red { color: #b91c1c !important; }
-
-    .status-row span {
-        white-space: nowrap;
-    }
-
-    .actions {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    .server-time {
-        color: var(--muted);
-        font-size: 0.9rem;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-    }
-
-    .actions form {
-        margin: 0;
-    }
-
-    .action-buttons {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    button {
-        border: 0;
-        border-radius: 10px;
-        padding: 10px 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
-        color: #fff;
-        background: var(--accent);
-    }
-
-    button:hover { background: var(--accent-hover); }
-    button:active { transform: translateY(1px); }
-    button:disabled {
-        background: #94a3b8;
-        cursor: not-allowed;
-        opacity: 0.65;
-        transform: none;
-    }
-
-    .btn-start { background: #15803d; }
-    .btn-start:hover { background: #166534; }
-
-    .btn-stop { background: #b91c1c; }
-    .btn-stop:hover { background: #991b1b; }
-
-    .btn-backup { background: #1d4ed8; }
-    .btn-backup:hover { background: #1e40af; }
-
-    .logs {
-        display: block;
-        flex: 1;
-        min-height: 0;
-        overflow: hidden;
-    }
-
-    .panel {
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: var(--surface);
-        overflow: hidden;
-        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        height: 100%;
-    }
-
-    .panel-header {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        align-items: center;
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--border);
-        background: #f8fafc;
-    }
-
-    #log-source {
-        margin: 0;
-        min-width: 190px;
-        border: 0;
-        border-radius: 10px;
-        padding: 8px 34px 8px 12px;
-        font-size: 0.95rem;
-        font-weight: 600;
-        color: #fff;
-        background: #1d4ed8;
-        cursor: pointer;
-        appearance: none;
-        -webkit-appearance: none;
-        -moz-appearance: none;
-        background-image:
-            linear-gradient(45deg, transparent 50%, #ffffff 50%),
-            linear-gradient(135deg, #ffffff 50%, transparent 50%);
-        background-position:
-            calc(100% - 18px) 50%,
-            calc(100% - 12px) 50%;
-        background-size:
-            6px 6px,
-            6px 6px;
-        background-repeat: no-repeat;
-        transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
-    }
-
-    #log-source:hover {
-        background-color: #1e40af;
-    }
-
-    #log-source:focus {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
-    }
-
-    #log-source option {
-        background: #ffffff;
-        color: #0f172a;
-    }
-
-    #log-source option:hover,
-    #log-source option:checked {
-        background: #1d4ed8;
-        color: #ffffff;
-    }
-
-    #rcon-submit {
-        background: #1d4ed8;
-    }
-
-    #rcon-submit:hover {
-        background: #1e40af;
-    }
-
-    .panel-controls {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex: 1;
-        justify-content: flex-end;
-    }
-
-    .panel-filter {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.84rem;
-        color: #475569;
-        white-space: nowrap;
-    }
-
-    .panel-controls input[type="text"] {
-        flex: 1;
-        min-width: 0;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 0.9rem;
-        color: #0f172a;
-        background: #ffffff;
-    }
-
-    .panel-controls input[type="text"]:disabled {
-        background: #e2e8f0;
-        color: #64748b;
-        cursor: not-allowed;
-    }
-
-    .console-box {
-        margin: 0;
-        min-height: 0;
-        max-height: none;
-        overflow: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-        padding: 14px;
-        font-size: 0.86rem;
-        line-height: 1.45;
-        border-top: 1px solid var(--console-border);
-        background: linear-gradient(180deg, #0b1220 0%, #0e1627 100%);
-        color: var(--console-text);
-        flex: 1;
-    }
-
-    .log-line { display: block; }
-    .log-text { color: #f8fafc; }
-    .log-ts { color: #86efac; }
-    .log-bracket { color: #93c5fd; }
-    .log-level-info { color: #4ade80; }
-    .log-level-warn { color: #fb923c; }
-    .log-level-error { color: #f87171; }
-    .log-muted { color: #94a3b8; }
-
-    .modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.55);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-        padding: 16px;
-    }
-
-    .modal-overlay.open {
-        display: flex;
-    }
-
-    .modal-card {
-        width: min(420px, 100%);
-        background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
-        padding: 14px;
-    }
-
-    .modal-title {
-        margin: 0 0 8px 0;
-        font-size: 1rem;
-        color: #0f172a;
-    }
-
-    .modal-text {
-        margin: 0 0 12px 0;
-        font-size: 0.9rem;
-        color: #334155;
-    }
-
-    .modal-image {
-        width: 100%;
-        max-height: 220px;
-        object-fit: cover;
-        border-radius: 8px;
-        border: 1px solid #cbd5e1;
-        margin: 0 0 12px 0;
-    }
-
-    .modal-input {
-        width: 100%;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 0.92rem;
-        margin-bottom: 12px;
-    }
-
-    .modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-    }
-
-    .btn-secondary {
-        background: #475569;
-    }
-
-    .btn-secondary:hover {
-        background: #334155;
-    }
-
-    @media (max-width: 1100px) and (min-width: 901px) {
-        .stats-groups {
-            grid-template-columns: repeat(2, minmax(260px, 1fr));
-        }
-
-        .stats-groups > .stats-group:nth-child(3) {
-            grid-column: 1 / -1;
-        }
-    }
-
-    @media (max-width: 900px) {
-        html, body {
-            height: auto;
-            min-height: 100%;
-            overflow: auto;
-        }
-
-        .container {
-            height: auto;
-            min-height: 100dvh;
-            overflow: visible;
-        }
-
-        .title-row {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-
-        .actions {
-            justify-content: flex-start;
-        }
-
-        .stats-groups {
-            grid-template-columns: 1fr;
-        }
-
-        .server-stats {
-            min-width: 0;
-        }
-
-        .logs {
-            flex: 0 0 auto;
-            overflow: visible;
-        }
-
-        .panel {
-            height: auto;
-        }
-
-        .panel-header {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        #log-source {
-            width: 100%;
-            min-width: 0;
-        }
-
-        .console-box {
-            min-height: calc(80 * 1.45em + 28px);
-            flex: 0 0 auto;
-        }
-    }
-</style>
-</head>
-<body>
-<div class="container">
-    <!-- Header area: title, action buttons, and all stat cards. -->
-    <section class="header">
-        <div class="title">
-            <div class="title-row">
-                <h1>Marites Server Control</h1>
-                <div class="actions">
-                    <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
-                    <div class="action-buttons">
-                        <form class="ajax-form" method="post" action="/start">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button id="start-btn" class="btn-start" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
-                        </form>
-                        <form class="ajax-form sudo-form" method="post" action="/stop">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <input type="hidden" name="sudo_password">
-                            <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
-                        </form>
-                        <form class="ajax-form" method="post" action="/backup">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status == "Running" %}disabled{% endif %}>Backup</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            <div class="stats-groups">
-                <!-- Host machine utilization metrics. -->
-                <div class="stats-group server-stats">
-                    <p class="group-title">Server Stats</p>
-                    <div class="status-row">
-                        <span>RAM: <b id="ram-usage" class="{{ ram_usage_class }}">{{ ram_usage }}</b></span>
-                        <span>CPU: <b id="cpu-per-core">{% for core in cpu_per_core_items %}<span class="{{ core.class }}">CPU{{ core.index }} {{ core.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}</b></span>
-                        <span>CPU freq: <b id="cpu-frequency" class="{{ cpu_frequency_class }}">{{ cpu_frequency }}</b></span>
-                        <span>Storage: <b id="storage-usage" class="{{ storage_usage_class }}">{{ storage_usage }}</b></span>
-                    </div>
-                </div>
-                <!-- Minecraft runtime/health metrics. -->
-                <div class="stats-group">
-                    <p class="group-title">Minecraft Stats</p>
-                    <div class="status-row">
-                        <span>Server Status: <b id="service-status" class="{{ service_status_class }}">{{ service_status }}</b><span id="service-status-duration-prefix">{% if service_status == "Running" and session_duration != "--" %} for {% endif %}</span><b id="session-duration" {% if service_status != "Running" or session_duration == "--" %}style="display:none;"{% endif %}>{{ session_duration }}</b></span>
-                        <span>Players online: <b id="players-online">{{ players_online }}</b></span>
-                        <span>Tick time: <b id="tick-rate">{{ tick_rate }}</b></span>
-                        <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
-                    </div>
-                </div>
-                <!-- Backup scheduler/activity metrics. -->
-                <div class="stats-group">
-                    <p class="group-title">Backup Stats</p>
-                    <div class="status-row">
-                        <span>Backup status: <b id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</b></span>
-                        <span>Last backup: <b id="last-backup-time">{{ last_backup_time }}</b></span>
-                        <span>Next backup: <b id="next-backup-time">{{ next_backup_time }}</b></span>
-                        <span>Backups folder: <b id="backups-status">{{ backups_status }}</b></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-    </section>
-
-    <!-- Main content: selectable log viewer. -->
-    <section class="logs">
-        <article class="panel">
-            <div class="panel-header">
-                <select id="log-source">
-                    <option value="minecraft">Minecraft Log</option>
-                    <option value="backup">Backup Log</option>
-                    <option value="mcweb">Control Panel Logs</option>
-                </select>
-                <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <label class="panel-filter">
-                        <input id="hide-rcon-noise" type="checkbox" checked>
-                        Hide RCON noise
-                    </label>
-                    <input type="hidden" name="sudo_password">
-                    <input id="rcon-command" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
-                    <button id="rcon-submit" type="submit" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %}>Submit</button>
-                </form>
-            </div>
-            <pre id="minecraft-log" class="console-box">{{ minecraft_logs_raw }}</pre>
-        </article>
-    </section>
-</div>
-<!-- Password gate modal for privileged operations (stop + RCON submit). -->
-<div id="sudo-modal" class="modal-overlay" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
-        <h3 id="sudo-modal-title" class="modal-title">Password Required</h3>
-        <p class="modal-text">Enter sudo password to continue.</p>
-        <input id="sudo-modal-input" class="modal-input" type="text" placeholder="Sudo password">
-        <div class="modal-actions">
-            <button id="sudo-modal-cancel" class="btn-secondary" type="button">Cancel</button>
-            <button id="sudo-modal-submit" type="button">Continue</button>
-        </div>
-    </div>
-</div>
-<!-- Password rejection modal (only for incorrect password on protected actions). -->
-<div id="message-modal" class="modal-overlay" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
-        <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
-        <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
-        <p id="message-modal-text" class="modal-text"></p>
-        <div class="modal-actions">
-            <button id="message-modal-ok" type="button">OK</button>
-        </div>
-    </div>
-</div>
-<!-- General error modal (ajax/network/runtime failures). -->
-<div id="error-modal" class="modal-overlay" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
-        <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
-        <p id="error-modal-text" class="modal-text"></p>
-        <div class="modal-actions">
-            <button id="error-modal-ok" type="button">OK</button>
-        </div>
-    </div>
-</div>
-<script>
-    // `alert_message` is set server-side when an action fails validation.
-    const alertMessage = {{ alert_message | tojson }};
-    const alertMessageCode = {{ alert_message_code | tojson }};
-    const csrfToken = {{ csrf_token | tojson }};
-
-    // UI state used for dynamic controls/modals.
-    let idleCountdownSeconds = null;
-    let pendingSudoForm = null;
-    const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb"];
-    const LOG_SOURCE_STREAM_PATHS = {
-        minecraft: "/log-stream/minecraft",
-        backup: "/log-stream/backup",
-        mcweb: "/log-stream/mcweb",
-    };
-    const LOG_SOURCE_TEXT_PATHS = {
-        minecraft: "/log-text/minecraft",
-        backup: "/log-text/backup",
-        mcweb: "/log-text/mcweb",
-    };
-    let selectedLogSource = "minecraft";
-    let minecraftSourceLines = [];
-    let logSourceBuffers = {
-        minecraft: [],
-        backup: [],
-        mcweb: [],
-    };
-    let logSourceHtml = {
-        minecraft: "",
-        backup: "",
-        mcweb: "",
-    };
-    let logStreams = {
-        minecraft: null,
-        backup: null,
-        mcweb: null,
-    };
-    let logAutoScrollEnabled = true;
-
-    // Refresh cadence configuration (milliseconds).
-    const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
-
-    let metricsEventSource = null;
-    let countdownTimer = null;
-    // Current scheduler mode: "active" or "off".
-    let refreshMode = null;
-
-    function isLogNearBottom(target, thresholdPx = 24) {
-        if (!target) return true;
-        const distance = target.scrollHeight - target.clientHeight - target.scrollTop;
-        return distance <= thresholdPx;
-    }
-
-    function scrollLogToBottom() {
-        const target = document.getElementById("minecraft-log");
-        if (!target) return;
-        target.scrollTop = target.scrollHeight;
-    }
-
-    function getLogSource() {
-        const select = document.getElementById("log-source");
-        const value = (select && select.value) ? select.value : "minecraft";
-        if (value === "backup") return "backup";
-        if (value === "mcweb") return "mcweb";
-        return "minecraft";
-    }
-
-    function capTail(lines, maxLines) {
-        if (!Array.isArray(lines)) return [];
-        return lines.length > maxLines ? lines.slice(-maxLines) : lines;
-    }
-
-    function isRconNoiseLine(line) {
-        const lower = (line || "").toLowerCase();
-        if (lower.includes("thread rcon client")) return true;
-        if (lower.includes("minecraft/rconclient") && lower.includes("shutting down")) return true;
-        return false;
-    }
-
-    function shouldStoreRconNoise() {
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        return !hideRcon || !hideRcon.checked;
-    }
-
-    function getBufferedLogText(source) {
-        const lines = logSourceBuffers[source] || [];
-        return lines.join("\\n");
-    }
-
-    function updateLogSourceUi() {
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        if (hideRcon) hideRcon.disabled = selectedLogSource !== "minecraft";
-    }
-
-    function rebuildMinecraftVisibleBuffer() {
-        let lines = minecraftSourceLines.slice();
-        if (!shouldStoreRconNoise()) {
-            lines = lines.filter((line) => !isRconNoiseLine(line));
-        }
-        logSourceBuffers.minecraft = capTail(lines, 500);
-        logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
-    }
-
-    function setSourceLogText(source, rawText) {
-        const lines = (rawText || "").split("\\n");
-        if (source === "minecraft") {
-            minecraftSourceLines = capTail(lines, 2000);
-            rebuildMinecraftVisibleBuffer();
-            return;
-        }
-        logSourceBuffers[source] = capTail(lines, 500);
-        logSourceHtml[source] = formatLogHtmlForSource(source);
-    }
-
-    function appendSourceLogLine(source, line) {
-        const text = line || "";
-        if (source === "minecraft") {
-            minecraftSourceLines.push(text);
-            minecraftSourceLines = capTail(minecraftSourceLines, 2000);
-            if (!shouldStoreRconNoise() && isRconNoiseLine(text)) {
-                return;
-            }
-            logSourceBuffers.minecraft.push(text);
-            logSourceBuffers.minecraft = capTail(logSourceBuffers.minecraft, 500);
-            logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
-            return;
-        }
-        logSourceBuffers[source].push(text);
-        logSourceBuffers[source] = capTail(logSourceBuffers[source], 500);
-        logSourceHtml[source] = formatLogHtmlForSource(source);
-    }
-
-    function escapeHtml(text) {
-        return (text || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/\"/g, "&quot;")
-            .replace(/'/g, "&#39;");
-    }
-
-    function bracketClass(token) {
-        if (/^\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\]$/.test(token)) return "log-ts";
-        if (/[/]\\s*error\\]/i.test(token) || /[/]\\s*fatal\\]/i.test(token)) return "log-level-error";
-        if (/[/]\\s*warn\\]/i.test(token)) return "log-level-warn";
-        if (/[/]\\s*info\\]/i.test(token)) return "log-level-info";
-        return "log-bracket";
-    }
-
-    function formatTextSegment(text, isLineStart) {
-        if (!text) return "";
-        if (isLineStart) {
-            const m = text.match(/^([A-Z][a-z]{2}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})(\\s+.*)?$/);
-            if (m) {
-                const ts = `<span class="log-ts">${escapeHtml(m[1])}</span>`;
-                const rest = m[2] ? `<span class="log-text">${escapeHtml(m[2])}</span>` : "";
-                return ts + rest;
-            }
-        }
-        return `<span class="log-text">${escapeHtml(text)}</span>`;
-    }
-
-    function formatBracketAwareLogLine(line, highlightErrorLine) {
-        const raw = line || "";
-        if (highlightErrorLine) {
-            const lower = raw.toLowerCase();
-            if (lower.includes("error") || lower.includes("overloaded") || lower.includes("delayed")) {
-                return `<span class="log-line log-level-error">${escapeHtml(raw)}</span>`;
-            }
-        }
-        const bracketRe = /\\[[^\\]]*\\]/g;
-        let out = "";
-        let cursor = 0;
-        let firstSegment = true;
-        let match;
-        while ((match = bracketRe.exec(raw)) !== null) {
-            const start = match.index;
-            const end = start + match[0].length;
-            out += formatTextSegment(raw.slice(cursor, start), firstSegment);
-            out += `<span class="${bracketClass(match[0])}">${escapeHtml(match[0])}</span>`;
-            cursor = end;
-            firstSegment = false;
-        }
-        out += formatTextSegment(raw.slice(cursor), firstSegment);
-        return `<span class="log-line">${out || '<span class="log-muted">(empty line)</span>'}</span>`;
-    }
-
-    function formatMinecraftLogLine(line) {
-        return formatBracketAwareLogLine(line, true);
-    }
-
-    function formatNonMinecraftLogLine(line) {
-        // For backup/mcweb logs: color only timestamps and bracketed tokens.
-        return formatBracketAwareLogLine(line, false);
-    }
-
-    function formatLogHtmlForSource(source) {
-        const lines = logSourceBuffers[source] || [];
-        const formatter = source === "minecraft"
-            ? formatMinecraftLogLine
-            : formatNonMinecraftLogLine;
-        if (lines.length === 0) {
-            return formatNonMinecraftLogLine("(no logs)");
-        }
-        return lines.map(formatter).join("");
-    }
-
-    function renderActiveLog() {
-        const target = document.getElementById("minecraft-log");
-        if (!target) return;
-        const wasNearBottom = isLogNearBottom(target);
-        target.innerHTML = logSourceHtml[selectedLogSource] || formatLogHtmlForSource(selectedLogSource);
-        if (logAutoScrollEnabled && wasNearBottom) {
-            scrollLogToBottom();
-        }
-    }
-
-    function parseCountdown(text) {
-        if (!text || text === "--:--") return null;
-        const match = text.match(/^([0-9]{2}):([0-9]{2})$/);
-        if (!match) return null;
-        return (parseInt(match[1], 10) * 60) + parseInt(match[2], 10);
-    }
-
-    function formatCountdown(totalSeconds) {
-        if (totalSeconds === null) return "--:--";
-        const s = Math.max(0, totalSeconds);
-        const mins = Math.floor(s / 60).toString().padStart(2, "0");
-        const secs = (s % 60).toString().padStart(2, "0");
-        return `${mins}:${secs}`;
-    }
-
-    function tickIdleCountdown() {
-        const idleCountdown = document.getElementById("idle-countdown");
-        if (!idleCountdown) return;
-        if (idleCountdownSeconds === null) {
-            idleCountdown.textContent = "--:--";
-            return;
-        }
-        idleCountdown.textContent = formatCountdown(idleCountdownSeconds);
-        if (idleCountdownSeconds > 0) {
-            idleCountdownSeconds -= 1;
-        }
-    }
-
-    function ensureLogStreamStarted(source) {
-        if (logStreams[source]) return;
-        const path = LOG_SOURCE_STREAM_PATHS[source];
-        const stream = new EventSource(path);
-        stream.onmessage = (event) => {
-            appendSourceLogLine(source, event.data || "");
-            if (selectedLogSource === source) {
-                renderActiveLog();
-            }
-        };
-        stream.onerror = () => {
-            // EventSource reconnects automatically.
-        };
-        logStreams[source] = stream;
-    }
-
-    function startAllLogStreams() {
-        LOG_SOURCE_KEYS.forEach((source) => ensureLogStreamStarted(source));
-    }
-
-    async function loadAllLogSourcesFromServer() {
-        await Promise.all(LOG_SOURCE_KEYS.map(async (source) => {
-            try {
-                const response = await fetch(LOG_SOURCE_TEXT_PATHS[source], { cache: "no-store" });
-                if (!response.ok) {
-                    setSourceLogText(source, "(no logs)");
-                    return;
-                }
-                const payload = await response.json();
-                setSourceLogText(source, payload.logs || "");
-            } catch (err) {
-                setSourceLogText(source, "(no logs)");
-            }
-        }));
-        renderActiveLog();
-    }
-
-    function openSudoModal(form) {
-        pendingSudoForm = form;
-        const modal = document.getElementById("sudo-modal");
-        const input = document.getElementById("sudo-modal-input");
-        if (!modal || !input) return;
-        input.value = "";
-        modal.setAttribute("aria-hidden", "false");
-        modal.classList.add("open");
-        input.focus();
-    }
-
-    function closeSudoModal() {
-        const modal = document.getElementById("sudo-modal");
-        const input = document.getElementById("sudo-modal-input");
-        if (modal) {
-            modal.classList.remove("open");
-            modal.setAttribute("aria-hidden", "true");
-            modal.style.display = "none";
-            // Force a reflow so next open state is applied cleanly.
-            void modal.offsetHeight;
-            modal.style.display = "";
-        }
-        if (input) input.value = "";
-        pendingSudoForm = null;
-    }
-
-    function showMessageModal(message) {
-        // Never stack the rejection modal on top of the password modal.
-        closeSudoModal();
-        const modal = document.getElementById("message-modal");
-        const text = document.getElementById("message-modal-text");
-        if (!modal || !text) return;
-        text.textContent = message || "";
-        modal.setAttribute("aria-hidden", "false");
-        modal.classList.add("open");
-    }
-
-    function showErrorModal(message) {
-        // Never stack error modal on top of the password modal.
-        closeSudoModal();
-        const modal = document.getElementById("error-modal");
-        const text = document.getElementById("error-modal-text");
-        if (!modal || !text) return;
-        text.textContent = message || "";
-        modal.setAttribute("aria-hidden", "false");
-        modal.classList.add("open");
-    }
-
-    function renderCpuPerCore(items) {
-        if (!Array.isArray(items) || items.length === 0) {
-            return "unknown";
-        }
-        return items.map((core) => {
-            const cls = core.class || "";
-            const idx = core.index;
-            const val = core.value;
-            return `<span class="${cls}">CPU${idx} ${val}%</span>`;
-        }).join(" | ");
-    }
-
-    function applyMetricsData(data) {
-        if (!data) return;
-        const ram = document.getElementById("ram-usage");
-        const cpu = document.getElementById("cpu-per-core");
-        const freq = document.getElementById("cpu-frequency");
-        const storage = document.getElementById("storage-usage");
-        const players = document.getElementById("players-online");
-        const tickRate = document.getElementById("tick-rate");
-        const idleCountdown = document.getElementById("idle-countdown");
-        const sessionDuration = document.getElementById("session-duration");
-        const serviceDurationPrefix = document.getElementById("service-status-duration-prefix");
-        const backupStatus = document.getElementById("backup-status");
-        const lastBackup = document.getElementById("last-backup-time");
-        const nextBackup = document.getElementById("next-backup-time");
-        const backupsStatus = document.getElementById("backups-status");
-        const service = document.getElementById("service-status");
-        const serverTime = document.getElementById("server-time");
-        const startBtn = document.getElementById("start-btn");
-        const stopBtn = document.getElementById("stop-btn");
-        const backupBtn = document.getElementById("backup-btn");
-        const rconInput = document.getElementById("rcon-command");
-        const rconSubmit = document.getElementById("rcon-submit");
-        if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-        if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
-        if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
-        if (storage && data.storage_usage) storage.textContent = data.storage_usage;
-        if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-        if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
-        if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
-        if (players && data.players_online) players.textContent = data.players_online;
-        if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
-        if (data.idle_countdown !== undefined) {
-            idleCountdownSeconds = parseCountdown(data.idle_countdown);
-            if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
-        }
-        if (sessionDuration && data.session_duration !== undefined) {
-            sessionDuration.textContent = data.session_duration;
-        }
-        if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
-        if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
-        if (backupBtn && data.backup_status) backupBtn.disabled = data.backup_status === "Running";
-        if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
-        if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
-        if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
-        if (service && data.service_status) service.textContent = data.service_status;
-        if (service && data.service_status_class) service.className = data.service_status_class;
-        if (serverTime && data.server_time) serverTime.textContent = data.server_time;
-        if (serviceDurationPrefix && service && sessionDuration) {
-            if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
-                sessionDuration.style.display = "";
-                serviceDurationPrefix.textContent = " for ";
-            } else {
-                sessionDuration.style.display = "none";
-                serviceDurationPrefix.textContent = "";
-            }
-        }
-        const rconEnabled = data.rcon_enabled === true;
-        if (data.service_running_status === "active") {
-            if (startBtn) startBtn.disabled = true;
-            if (stopBtn) stopBtn.disabled = false;
-            if (rconInput) rconInput.disabled = !rconEnabled;
-            if (rconSubmit) rconSubmit.disabled = !rconEnabled;
-            if (rconInput) {
-                rconInput.placeholder = rconEnabled
-                    ? "Enter Minecraft server command"
-                    : "RCON unavailable (missing rcon.password)";
-            }
-        } else {
-            if (startBtn) startBtn.disabled = false;
-            if (stopBtn) stopBtn.disabled = true;
-            if (rconInput) rconInput.disabled = true;
-            if (rconSubmit) rconSubmit.disabled = true;
-        }
-        applyRefreshMode(data.service_status);
-    }
-
-    async function submitFormAjax(form, sudoPassword = undefined) {
-        if (!form) return;
-        const action = form.getAttribute("action") || "/";
-        const method = (form.getAttribute("method") || "POST").toUpperCase();
-        if (action === "/backup") {
-            const backupStatus = document.getElementById("backup-status");
-            if (backupStatus) {
-                backupStatus.textContent = "Running";
-                backupStatus.className = "stat-green";
-            }
-        }
-        const formData = new FormData(form);
-        if (sudoPassword !== undefined) {
-            formData.set("sudo_password", sudoPassword);
-        }
-        try {
-            const response = await fetch(action, {
-                method,
-                body: formData,
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Accept": "application/json",
-                    "X-CSRF-Token": csrfToken
-                }
-            });
-
-            let payload = {};
-            try {
-                payload = await response.json();
-            } catch (e) {
-                payload = {};
-            }
-
-            if (!response.ok || payload.ok === false) {
-                const message = (payload && payload.message) ? payload.message : "Action rejected.";
-                const isPasswordRejected =
-                    payload &&
-                    payload.error === "password_incorrect" &&
-                    (action === "/stop" || action === "/rcon");
-                if (isPasswordRejected) {
-                    showMessageModal(message);
-                } else {
-                    showErrorModal(message);
-                }
-                return;
-            }
-
-            await refreshMetrics();
-        } catch (err) {
-            showErrorModal("Action failed. Please try again.");
-        }
-    }
-
-    async function refreshMetrics() {
-        try {
-            const response = await fetch("/metrics", { cache: "no-store" });
-            if (!response.ok) return;
-            const data = await response.json();
-            applyMetricsData(data);
-        } catch (err) {
-            // Keep current metrics on network/read errors.
-        }
-    }
-
-    function startMetricsStream() {
-        if (metricsEventSource) return;
-        metricsEventSource = new EventSource("/metrics-stream");
-        metricsEventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data || "{}");
-                applyMetricsData(data);
-            } catch (err) {
-                // Ignore malformed stream payload.
-            }
-        };
-        metricsEventSource.onerror = () => {
-            // EventSource reconnects automatically.
-        };
-    }
-
-    function clearRefreshTimers() {
-        // Prevent duplicate interval loops when switching modes.
-        if (countdownTimer) {
-            clearInterval(countdownTimer);
-            countdownTimer = null;
-        }
-    }
-
-    function applyRefreshMode(serviceStatusText) {
-        // Status is rendered as labels (Off/Starting/Running/Shutting Down).
-        const normalized = (serviceStatusText || "").trim().toLowerCase();
-        const nextMode = normalized === "off" ? "off" : "active";
-        if (nextMode === refreshMode) return;
-
-        refreshMode = nextMode;
-        clearRefreshTimers();
-
-        if (refreshMode === "off") {
-            return;
-        }
-
-        // In Active mode, restore countdown.
-        countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
-    }
-
-    window.addEventListener("load", () => {
-        document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
-            form.addEventListener("submit", async (event) => {
-                event.preventDefault();
-                await submitFormAjax(form);
-            });
-        });
-
-        document.querySelectorAll("form.sudo-form").forEach((form) => {
-            form.addEventListener("submit", async (event) => {
-                event.preventDefault();
-                openSudoModal(form);
-            });
-        });
-
-        const modalCancel = document.getElementById("sudo-modal-cancel");
-        const modalSubmit = document.getElementById("sudo-modal-submit");
-        const modalInput = document.getElementById("sudo-modal-input");
-        if (modalCancel) {
-            modalCancel.addEventListener("click", () => closeSudoModal());
-        }
-        if (modalSubmit) {
-            modalSubmit.addEventListener("click", async () => {
-                if (!pendingSudoForm || !modalInput) return;
-                const password = (modalInput.value || "").trim();
-                if (!password) return;
-                const form = pendingSudoForm;
-                closeSudoModal();
-                await submitFormAjax(form, password);
-            });
-        }
-        if (modalInput) {
-            modalInput.addEventListener("keydown", (event) => {
-                if (event.key === "Enter" && modalSubmit) {
-                    event.preventDefault();
-                    modalSubmit.click();
-                }
-            });
-        }
-
-        const messageOk = document.getElementById("message-modal-ok");
-        if (messageOk) {
-            messageOk.addEventListener("click", () => {
-                const modal = document.getElementById("message-modal");
-                if (modal) modal.classList.remove("open");
-            });
-        }
-        const errorOk = document.getElementById("error-modal-ok");
-        if (errorOk) {
-            errorOk.addEventListener("click", () => {
-                const modal = document.getElementById("error-modal");
-                if (modal) modal.classList.remove("open");
-            });
-        }
-
-        if (alertMessage) {
-            if (alertMessageCode === "password_incorrect") {
-                showMessageModal(alertMessage);
-            } else {
-                showErrorModal(alertMessage);
-            }
-            const url = new URL(window.location.href);
-            url.searchParams.delete("msg");
-            window.history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
-        }
-        scrollLogToBottom();
-        const idleCountdown = document.getElementById("idle-countdown");
-        if (idleCountdown) {
-            idleCountdownSeconds = parseCountdown(idleCountdown.textContent.trim());
-        }
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        if (hideRcon) {
-            hideRcon.addEventListener("change", () => {
-                rebuildMinecraftVisibleBuffer();
-                if (selectedLogSource === "minecraft") {
-                    renderActiveLog();
-                }
-            });
-        }
-        const logSource = document.getElementById("log-source");
-        if (logSource) {
-            logSource.addEventListener("change", () => {
-                selectedLogSource = getLogSource();
-                updateLogSourceUi();
-                renderActiveLog();
-                scrollLogToBottom();
-            });
-        }
-        const existingLog = document.getElementById("minecraft-log");
-        if (existingLog) {
-            existingLog.addEventListener("scroll", () => {
-                logAutoScrollEnabled = isLogNearBottom(existingLog);
-            });
-        }
-        selectedLogSource = getLogSource();
-        updateLogSourceUi();
-        setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
-        if (existingLog) {
-            renderActiveLog();
-            scrollLogToBottom();
-        }
-        startAllLogStreams();
-        loadAllLogSourcesFromServer();
-        startMetricsStream();
-        const service = document.getElementById("service-status");
-        applyRefreshMode(service ? service.textContent : "");
-    });
-</script>
-</body>
-</html>
-"""
+HTML_TEMPLATE_NAME = "home.html"
+FILES_TEMPLATE_NAME = "files.html"
 
 # ----------------------------
 # System and privilege helpers
@@ -1351,6 +186,257 @@ def get_status():
 def _sanitize_log_fragment(text):
     # Flatten user/system text into one line for action logs.
     return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+
+def _format_file_size(num_bytes):
+    # Human-readable size for listing panels.
+    value = float(max(0, num_bytes or 0))
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} {units[idx]}"
+    return f"{value:.1f} {units[idx]}"
+
+def _list_download_files(base_dir, pattern):
+    # Return file metadata sorted newest first.
+    items = []
+    if not base_dir.exists() or not base_dir.is_dir():
+        return items
+
+    for path in base_dir.glob(pattern):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        ts = stat.st_mtime
+        items.append({
+            "name": path.name,
+            "mtime": ts,
+            "modified": datetime.fromtimestamp(ts, tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z"),
+            "size_text": _format_file_size(stat.st_size),
+        })
+
+    items.sort(key=lambda item: item["mtime"], reverse=True)
+    return items
+
+def _read_recent_file_lines(path, limit):
+    # Return the last `limit` lines from a UTF-8 text file.
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    if len(lines) > limit:
+        lines = lines[-limit:]
+    return lines
+
+def _safe_file_mtime_ns(path):
+    # Return file mtime_ns or None when missing/unreadable.
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+def _load_backup_log_cache_from_disk():
+    # Refresh in-memory backup log cache from backup.log tail.
+    global backup_log_cache_loaded
+    global backup_log_cache_mtime_ns
+    lines = _read_recent_file_lines(BACKUP_LOG_FILE, 200)
+    mtime_ns = _safe_file_mtime_ns(BACKUP_LOG_FILE)
+    with backup_log_cache_lock:
+        backup_log_cache_lines.clear()
+        backup_log_cache_lines.extend(lines)
+        backup_log_cache_loaded = True
+        backup_log_cache_mtime_ns = mtime_ns
+
+def _append_backup_log_cache_line(line):
+    # Append one streamed backup log line to the in-memory tail cache.
+    global backup_log_cache_loaded
+    global backup_log_cache_mtime_ns
+    clean = (line or "").rstrip("\r\n")
+    if not clean:
+        return
+    with backup_log_cache_lock:
+        backup_log_cache_lines.append(clean)
+        backup_log_cache_loaded = True
+        backup_log_cache_mtime_ns = _safe_file_mtime_ns(BACKUP_LOG_FILE)
+
+def _get_cached_backup_log_text():
+    # Return cached backup log text, loading once from disk when needed.
+    current_mtime_ns = _safe_file_mtime_ns(BACKUP_LOG_FILE)
+    with backup_log_cache_lock:
+        loaded = backup_log_cache_loaded
+        cached_mtime_ns = backup_log_cache_mtime_ns
+        if loaded and cached_mtime_ns == current_mtime_ns:
+            return "\n".join(backup_log_cache_lines).strip() or "(no logs)"
+    _load_backup_log_cache_from_disk()
+    with backup_log_cache_lock:
+        return "\n".join(backup_log_cache_lines).strip() or "(no logs)"
+
+def _load_minecraft_log_cache_from_journal():
+    # Refresh in-memory minecraft log cache from journal tail.
+    global minecraft_log_cache_loaded
+    result = subprocess.run(
+        ["journalctl", "-u", SERVICE, "-n", "1000", "--no-pager"],
+        capture_output=True,
+        text=True,
+    )
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    lines = output.splitlines() if output else []
+    with minecraft_log_cache_lock:
+        minecraft_log_cache_lines.clear()
+        minecraft_log_cache_lines.extend(lines)
+        minecraft_log_cache_loaded = True
+
+def _append_minecraft_log_cache_line(line):
+    # Append one minecraft journal line to in-memory cache.
+    global minecraft_log_cache_loaded
+    clean = (line or "").rstrip("\r\n")
+    if not clean:
+        return
+    with minecraft_log_cache_lock:
+        minecraft_log_cache_lines.append(clean)
+        minecraft_log_cache_loaded = True
+
+def _get_cached_minecraft_log_text():
+    # Return cached minecraft log text, loading once from journal when needed.
+    with minecraft_log_cache_lock:
+        if minecraft_log_cache_loaded:
+            return "\n".join(minecraft_log_cache_lines).strip() or "(no logs)"
+    _load_minecraft_log_cache_from_journal()
+    with minecraft_log_cache_lock:
+        return "\n".join(minecraft_log_cache_lines).strip() or "(no logs)"
+
+def _load_mcweb_log_cache_from_disk():
+    # Refresh in-memory mcweb action log cache from file tail.
+    global mcweb_log_cache_loaded
+    global mcweb_log_cache_mtime_ns
+    lines = _read_recent_file_lines(MCWEB_ACTION_LOG_FILE, 200)
+    mtime_ns = _safe_file_mtime_ns(MCWEB_ACTION_LOG_FILE)
+    with mcweb_log_cache_lock:
+        mcweb_log_cache_lines.clear()
+        mcweb_log_cache_lines.extend(lines)
+        mcweb_log_cache_loaded = True
+        mcweb_log_cache_mtime_ns = mtime_ns
+
+def _append_mcweb_log_cache_line(line):
+    # Append one mcweb log line to in-memory cache.
+    global mcweb_log_cache_loaded
+    global mcweb_log_cache_mtime_ns
+    clean = (line or "").rstrip("\r\n")
+    if not clean:
+        return
+    with mcweb_log_cache_lock:
+        mcweb_log_cache_lines.append(clean)
+        mcweb_log_cache_loaded = True
+        mcweb_log_cache_mtime_ns = _safe_file_mtime_ns(MCWEB_ACTION_LOG_FILE)
+
+def _get_cached_mcweb_log_text():
+    # Return cached mcweb log text, refreshing on file changes.
+    current_mtime_ns = _safe_file_mtime_ns(MCWEB_ACTION_LOG_FILE)
+    with mcweb_log_cache_lock:
+        loaded = mcweb_log_cache_loaded
+        cached_mtime_ns = mcweb_log_cache_mtime_ns
+        if loaded and cached_mtime_ns == current_mtime_ns:
+            return "\n".join(mcweb_log_cache_lines).strip() or "(no logs)"
+    _load_mcweb_log_cache_from_disk()
+    with mcweb_log_cache_lock:
+        return "\n".join(mcweb_log_cache_lines).strip() or "(no logs)"
+
+def _set_file_page_items(cache_key, items):
+    # Replace cached page items with a fresh immutable snapshot.
+    with file_page_cache_lock:
+        file_page_cache[cache_key] = {
+            "items": [dict(item) for item in items],
+            "updated_at": time.time(),
+        }
+
+def _refresh_file_page_items(cache_key):
+    # Refresh one file-list page cache entry.
+    if cache_key == "backups":
+        items = _list_download_files(BACKUP_DIR, "*.zip")
+    elif cache_key == "crash_logs":
+        items = _list_download_files(CRASH_REPORTS_DIR, "*.txt")
+    elif cache_key == "minecraft_logs":
+        items = _list_download_files(MINECRAFT_LOGS_DIR, "*.log")
+        items.extend(_list_download_files(MINECRAFT_LOGS_DIR, "*.gz"))
+        items.sort(key=lambda item: item["mtime"], reverse=True)
+    else:
+        return []
+    _set_file_page_items(cache_key, items)
+    return items
+
+def _mark_file_page_client_active():
+    # Mark that at least one file page client has pinged recently.
+    global file_page_last_seen
+    with file_page_cache_lock:
+        file_page_last_seen = time.time()
+
+def _has_active_file_page_clients():
+    # Return True when file page clients have pinged recently.
+    with file_page_cache_lock:
+        last_seen = file_page_last_seen
+    return (time.time() - last_seen) <= FILE_PAGE_ACTIVE_TTL_SECONDS
+
+def get_cached_file_page_items(cache_key):
+    # Return cached file list; refresh on-demand if stale/empty.
+    with file_page_cache_lock:
+        entry = file_page_cache.get(cache_key)
+        if entry:
+            age = time.time() - entry["updated_at"]
+            if entry["items"] and age <= FILE_PAGE_CACHE_REFRESH_SECONDS:
+                return [dict(item) for item in entry["items"]]
+    return _refresh_file_page_items(cache_key)
+
+def file_page_cache_refresher_loop():
+    # Refresh file-list caches only while file page clients are active.
+    while True:
+        if _has_active_file_page_clients():
+            for cache_key in ("backups", "crash_logs", "minecraft_logs"):
+                try:
+                    _refresh_file_page_items(cache_key)
+                except Exception as exc:
+                    log_mcweb_exception(f"file_page_cache_refresh/{cache_key}", exc)
+            time.sleep(FILE_PAGE_CACHE_REFRESH_SECONDS)
+        else:
+            time.sleep(1)
+
+def ensure_file_page_cache_refresher_started():
+    # Start file-page cache refresher exactly once.
+    global file_page_cache_refresher_started
+    if file_page_cache_refresher_started:
+        return
+    with file_page_cache_refresher_start_lock:
+        if file_page_cache_refresher_started:
+            return
+        watcher = threading.Thread(target=file_page_cache_refresher_loop, daemon=True)
+        watcher.start()
+        file_page_cache_refresher_started = True
+
+def _safe_filename_in_dir(base_dir, filename):
+    # Ensure requested file is a direct child file of base_dir.
+    if not filename:
+        return None
+    name = Path(filename).name
+    if name != filename:
+        return None
+    candidate = (base_dir / name)
+    try:
+        base_resolved = base_dir.resolve()
+        candidate_resolved = candidate.resolve()
+    except OSError:
+        return None
+    try:
+        candidate_resolved.relative_to(base_resolved)
+    except ValueError:
+        return None
+    if not candidate_resolved.exists() or not candidate_resolved.is_file():
+        return None
+    return name
 
 def _get_client_ip():
     # Prefer reverse-proxy headers, then direct client address.
@@ -1578,13 +664,13 @@ def _log_source_settings(source):
             "type": "file",
             "context": "backup_log_stream",
             "path": BACKUP_LOG_FILE,
-            "text_limit": 500,
+            "text_limit": 200,
         }
     return {
         "type": "file",
         "context": "mcweb_action_log_stream",
         "path": MCWEB_ACTION_LOG_FILE,
-        "text_limit": 500,
+        "text_limit": 200,
     }
 
 def get_log_source_text(source):
@@ -1594,6 +680,8 @@ def get_log_source_text(source):
         return None
 
     if settings["type"] == "journal":
+        if source == "minecraft":
+            return _get_cached_minecraft_log_text()
         result = subprocess.run(
             ["journalctl", "-u", settings["unit"], "-n", str(settings["text_limit"]), "--no-pager"],
             capture_output=True,
@@ -1603,14 +691,19 @@ def get_log_source_text(source):
         return output or "(no logs)"
 
     path = settings["path"]
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return "(no logs)"
-    lines = text.splitlines()
-    limit = settings["text_limit"]
-    if len(lines) > limit:
-        lines = lines[-limit:]
+    if source == "backup":
+        # When backup is idle, serve preloaded in-memory backup log tail.
+        if not is_backup_running():
+            return _get_cached_backup_log_text()
+        # During active backup, read the latest tail from disk.
+        lines = _read_recent_file_lines(path, settings["text_limit"])
+        text = "\n".join(lines).strip() or "(no logs)"
+        _load_backup_log_cache_from_disk()
+        return text
+    if source == "mcweb":
+        return _get_cached_mcweb_log_text()
+
+    lines = _read_recent_file_lines(path, settings["text_limit"])
     return "\n".join(lines).strip() or "(no logs)"
 
 def _publish_log_stream_line(source, line):
@@ -1622,6 +715,12 @@ def _publish_log_stream_line(source, line):
         state["seq"] += 1
         state["events"].append((state["seq"], line))
         state["cond"].notify_all()
+    if source == "backup":
+        _append_backup_log_cache_line(line)
+    elif source == "minecraft":
+        _append_minecraft_log_cache_line(line)
+    elif source == "mcweb":
+        _append_mcweb_log_cache_line(line)
 
 def _line_matches_crash_marker(line):
     text = (line or "").lower()
@@ -2159,13 +1258,11 @@ def _probe_minecraft_runtime_metrics(force=False):
             players_value = _parse_players_online(combined)
     except Exception as exc:
         log_mcweb_exception("_probe_players_online", exc)
-        players_value = None
 
     try:
         tick_value = _probe_tick_rate()
     except Exception as exc:
         log_mcweb_exception("_probe_tick_wrapper", exc)
-        tick_value = None
 
     # Promote to startup-ready once fallback probing confirms RCON responsiveness.
     if use_startup_fallback_probe and (list_probe_ok or tick_value is not None):
@@ -2176,13 +1273,9 @@ def _probe_minecraft_runtime_metrics(force=False):
         # Keep last known values on transient RCON failures while service is active.
         if players_value is not None:
             mc_cached_players_online = players_value
-        elif mc_cached_players_online == "unknown":
-            mc_cached_players_online = "unknown"
 
         if tick_value is not None:
             mc_cached_tick_rate = tick_value
-        elif mc_cached_tick_rate == "unknown":
-            mc_cached_tick_rate = "unknown"
 
         mc_last_query_at = now
         return mc_cached_players_online, mc_cached_tick_rate
@@ -2266,7 +1359,6 @@ def stop_server_automatically():
 def run_backup_script(count_skip_as_success=True):
     # Run backup script and update in-memory backup status.
     global backup_last_error
-    global backup_last_successful_at
 
     # Prevent duplicate launches from concurrent triggers in this process.
     if not backup_run_lock.acquire(blocking=False):
@@ -2281,7 +1373,6 @@ def run_backup_script(count_skip_as_success=True):
         with backup_lock:
             backup_last_error = ""
 
-        success = False
         before_snapshot = get_backup_zip_snapshot()
         # Try direct execution first; some setups succeed even if script emits
         # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
@@ -2295,9 +1386,7 @@ def run_backup_script(count_skip_as_success=True):
         direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
 
         if direct_result.returncode == 0 or direct_created_zip:
-            success = True
-            with backup_lock:
-                backup_last_successful_at = time.time()
+            return True
         else:
             err = (
                 (direct_result.stderr or "")
@@ -2306,7 +1395,7 @@ def run_backup_script(count_skip_as_success=True):
             ).strip()
             with backup_lock:
                 backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
-        return success
+            return False
     finally:
         backup_run_lock.release()
 
@@ -2447,6 +1536,19 @@ def _publish_metrics_snapshot(snapshot):
         metrics_cache_seq += 1
         metrics_cache_cond.notify_all()
 
+def _mark_home_page_client_active():
+    # Mark that at least one dashboard client has pinged recently.
+    global home_page_last_seen
+    with metrics_cache_cond:
+        home_page_last_seen = time.time()
+        metrics_cache_cond.notify_all()
+
+def _has_active_home_page_clients():
+    # Return True when dashboard clients pinged recently.
+    with metrics_cache_cond:
+        last_seen = home_page_last_seen
+    return (time.time() - last_seen) <= HOME_PAGE_ACTIVE_TTL_SECONDS
+
 def _collect_and_publish_metrics():
     # Collect dashboard metrics once and publish; return success flag.
     try:
@@ -2458,10 +1560,20 @@ def _collect_and_publish_metrics():
     return True
 
 def metrics_collector_loop():
-    # Background loop: collect shared dashboard metrics for all clients.
+    # Background loop: collect shared dashboard metrics only while dashboard clients are active.
     while True:
+        with metrics_cache_cond:
+            metrics_cache_cond.wait_for(
+                lambda: metrics_stream_client_count > 0 or _has_active_home_page_clients(),
+                timeout=1,
+            )
+            should_collect = metrics_stream_client_count > 0 or _has_active_home_page_clients()
+        if not should_collect:
+            continue
         _collect_and_publish_metrics()
-        time.sleep(METRICS_COLLECT_INTERVAL_SECONDS)
+        with metrics_cache_cond:
+            if metrics_stream_client_count > 0 or _has_active_home_page_clients():
+                metrics_cache_cond.wait(timeout=METRICS_COLLECT_INTERVAL_SECONDS)
 
 def ensure_metrics_collector_started():
     # Start metrics collector exactly once per process.
@@ -2471,21 +1583,38 @@ def ensure_metrics_collector_started():
     with metrics_collector_start_lock:
         if metrics_collector_started:
             return
-        _collect_and_publish_metrics()
         watcher = threading.Thread(target=metrics_collector_loop, daemon=True)
         watcher.start()
         metrics_collector_started = True
 
 def get_cached_dashboard_metrics():
-    # Return latest shared metrics snapshot (collect once if empty).
+    # Return latest shared metrics snapshot, or defaults when cache is cold.
     with metrics_cache_cond:
         if metrics_cache_payload:
             return dict(metrics_cache_payload)
-    if _collect_and_publish_metrics():
-        with metrics_cache_cond:
-            if metrics_cache_payload:
-                return dict(metrics_cache_payload)
-    return collect_dashboard_metrics()
+    return {
+        "service_status": "Off",
+        "service_status_class": "stat-red",
+        "service_running_status": "inactive",
+        "backups_status": "unknown",
+        "ram_usage": "unknown",
+        "ram_usage_class": "stat-red",
+        "cpu_per_core_items": [{"index": 0, "value": "unknown", "class": "stat-red"}],
+        "cpu_frequency": "unknown",
+        "cpu_frequency_class": "stat-red",
+        "storage_usage": "unknown",
+        "storage_usage_class": "stat-red",
+        "players_online": "unknown",
+        "tick_rate": "unknown",
+        "session_duration": "--",
+        "idle_countdown": "--:--",
+        "backup_status": "Idle",
+        "backup_status_class": "stat-yellow",
+        "last_backup_time": "--",
+        "next_backup_time": "--",
+        "server_time": get_server_time_text(),
+        "rcon_enabled": False,
+    }
 
 def format_countdown(seconds):
     # Render remaining seconds as MM:SS.
@@ -2763,9 +1892,11 @@ def index():
     elif message_code == "internal_error":
         alert_message = "Internal server error."
 
+    _mark_home_page_client_active()
     data = get_cached_dashboard_metrics()
-    return render_template_string(
-        HTML,
+    return render_template(
+        HTML_TEMPLATE_NAME,
+        current_page="home",
         service_status=data["service_status"],
         service_status_class=data["service_status_class"],
         service_running_status=data["service_running_status"],
@@ -2791,7 +1922,114 @@ def index():
         csrf_token=_ensure_csrf_token(),
         alert_message=alert_message,
         alert_message_code=message_code,
+        home_page_heartbeat_interval_ms=HOME_PAGE_HEARTBEAT_INTERVAL_MS,
     )
+
+
+@app.route("/home-heartbeat", methods=["POST"])
+def home_heartbeat():
+    # Keep metrics collection active while dashboard clients are viewing home.
+    _mark_home_page_client_active()
+    return ("", 204)
+
+@app.route("/files")
+def files_page():
+    # Backward-compatible alias for old combined downloads page.
+    return redirect("/backups")
+
+@app.route("/favicon.ico")
+def favicon():
+    # Use a single explicit favicon URL across all pages.
+    return redirect(FAVICON_URL)
+@app.route("/readme")
+def readme_page():
+    # Serve local documentation.html page.
+    return send_from_directory(str(Path(__file__).resolve().parent), "documentation.html")
+
+@app.route("/backups")
+def backups_page():
+    # Dedicated backups downloads page.
+    ensure_file_page_cache_refresher_started()
+    _mark_file_page_client_active()
+    return render_template(
+        FILES_TEMPLATE_NAME,
+        current_page="backups",
+        page_title="Backups",
+        panel_title="Backups",
+        panel_hint="Latest to oldest from /home/marites/backups",
+        items=get_cached_file_page_items("backups"),
+        download_base="/download/backups",
+        empty_text="No backup zip files found.",
+        csrf_token=_ensure_csrf_token(),
+        file_page_heartbeat_interval_ms=FILE_PAGE_HEARTBEAT_INTERVAL_MS,
+    )
+
+@app.route("/crash-logs")
+def crash_logs_page():
+    # Dedicated crash reports downloads page.
+    ensure_file_page_cache_refresher_started()
+    _mark_file_page_client_active()
+    return render_template(
+        FILES_TEMPLATE_NAME,
+        current_page="crash_logs",
+        page_title="Crash Reports",
+        panel_title="Crash Reports",
+        panel_hint="Latest to oldest from /opt/Minecraft/crash-reports",
+        items=get_cached_file_page_items("crash_logs"),
+        download_base="/download/crash-logs",
+        empty_text="No crash reports found.",
+        csrf_token=_ensure_csrf_token(),
+        file_page_heartbeat_interval_ms=FILE_PAGE_HEARTBEAT_INTERVAL_MS,
+    )
+
+@app.route("/minecraft-logs")
+def minecraft_logs_page():
+    # Dedicated Minecraft logs downloads page.
+    ensure_file_page_cache_refresher_started()
+    _mark_file_page_client_active()
+    return render_template(
+        FILES_TEMPLATE_NAME,
+        current_page="minecraft_logs",
+        page_title="Log Files",
+        panel_title="Log Files",
+        panel_hint="Latest to oldest from /opt/Minecraft/logs",
+        items=get_cached_file_page_items("minecraft_logs"),
+        download_base="/download/minecraft-logs",
+        empty_text="No log files (.log/.gz) found.",
+        csrf_token=_ensure_csrf_token(),
+        file_page_heartbeat_interval_ms=FILE_PAGE_HEARTBEAT_INTERVAL_MS,
+    )
+
+@app.route("/file-page-heartbeat", methods=["POST"])
+def file_page_heartbeat():
+    # Keep file-list cache refresh active while clients are viewing file pages.
+    ensure_file_page_cache_refresher_started()
+    _mark_file_page_client_active()
+    return ("", 204)
+
+@app.route("/download/backups/<path:filename>", methods=["POST"])
+def download_backup(filename):
+    sudo_password = request.form.get("sudo_password", "")
+    if not validate_sudo_password(sudo_password):
+        return _password_rejected_response()
+    safe_name = _safe_filename_in_dir(BACKUP_DIR, filename)
+    if safe_name is None:
+        return abort(404)
+    return send_from_directory(str(BACKUP_DIR), safe_name, as_attachment=True)
+
+@app.route("/download/crash-logs/<path:filename>")
+def download_crash_log(filename):
+    safe_name = _safe_filename_in_dir(CRASH_REPORTS_DIR, filename)
+    if safe_name is None:
+        return abort(404)
+    return send_from_directory(str(CRASH_REPORTS_DIR), safe_name, as_attachment=True)
+
+@app.route("/download/minecraft-logs/<path:filename>")
+def download_minecraft_log(filename):
+    safe_name = _safe_filename_in_dir(MINECRAFT_LOGS_DIR, filename)
+    if safe_name is None:
+        return abort(404)
+    return send_from_directory(str(MINECRAFT_LOGS_DIR), safe_name, as_attachment=True)
 
 @app.route("/log-stream/<source>")
 def log_stream(source):
@@ -2855,27 +2093,36 @@ def metrics():
 def metrics_stream():
     # Stream shared dashboard metric snapshots via SSE.
     def generate():
+        global metrics_stream_client_count
+        with metrics_cache_cond:
+            metrics_stream_client_count += 1
+            metrics_cache_cond.notify_all()
         last_seq = -1
-        while True:
-            with metrics_cache_cond:
-                metrics_cache_cond.wait_for(
-                    lambda: metrics_cache_seq != last_seq,
-                    timeout=METRICS_STREAM_HEARTBEAT_SECONDS,
-                )
-                seq = metrics_cache_seq
-                snapshot = dict(metrics_cache_payload) if metrics_cache_payload else None
-
-            if snapshot is None:
-                snapshot = get_cached_dashboard_metrics()
+        try:
+            while True:
                 with metrics_cache_cond:
+                    metrics_cache_cond.wait_for(
+                        lambda: metrics_cache_seq != last_seq,
+                        timeout=METRICS_STREAM_HEARTBEAT_SECONDS,
+                    )
                     seq = metrics_cache_seq
+                    snapshot = dict(metrics_cache_payload) if metrics_cache_payload else None
 
-            if seq != last_seq and snapshot is not None:
-                payload = json.dumps(snapshot, separators=(",", ":"))
-                yield f"data: {payload}\n\n"
-                last_seq = seq
-            else:
-                yield ": keepalive\n\n"
+                if snapshot is None:
+                    snapshot = get_cached_dashboard_metrics()
+                    with metrics_cache_cond:
+                        seq = metrics_cache_seq
+
+                if seq != last_seq and snapshot is not None:
+                    payload = json.dumps(snapshot, separators=(",", ":"))
+                    yield f"data: {payload}\n\n"
+                    last_seq = seq
+                else:
+                    yield ": keepalive\n\n"
+        finally:
+            with metrics_cache_cond:
+                metrics_stream_client_count = max(0, metrics_stream_client_count - 1)
+                metrics_cache_cond.notify_all()
 
     return Response(
         stream_with_context(generate()),
@@ -2980,8 +2227,13 @@ if __name__ == "__main__":
     # Start background automation loops before serving HTTP requests.
     log_mcweb_boot_diagnostics()
     try:
+        _load_minecraft_log_cache_from_journal()
+        _load_mcweb_log_cache_from_disk()
+        if not is_backup_running():
+            _load_backup_log_cache_from_disk()
         ensure_session_tracking_initialized()
         ensure_metrics_collector_started()
+        _collect_and_publish_metrics()
         start_idle_player_watcher()
         start_backup_session_watcher()
         app.run(host="0.0.0.0", port=8080)

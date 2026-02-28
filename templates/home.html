@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minecraft Control</title>
+<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<link rel="stylesheet" href="{{ url_for('static', filename='home.css', v=static_version('home.css')) }}">
+</head>
+<body>
+<button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+</button>
+<div id="nav-backdrop" class="nav-backdrop"></div>
+<div class="layout">
+    <aside id="side-nav" class="sidebar">
+        <div class="sidebar-title">Navigation</div>
+        <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+        <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+        <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
+        <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Reports</a>
+        <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Readme</a>
+    </aside>
+    <main class="content">
+<div class="container">
+    <!-- Header area: title, action buttons, and all stat cards. -->
+    <section class="header">
+        <div class="title">
+            <div class="title-row">
+                <h1>Marites Server Control Panel</h1>
+                <div class="actions">
+                    <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
+                    <div class="action-buttons">
+                        <form class="ajax-form" method="post" action="/start">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button id="start-btn" class="btn-start" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
+                        </form>
+                        <form class="ajax-form sudo-form" method="post" action="/stop">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="sudo_password">
+                            <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
+                        </form>
+                        <form class="ajax-form" method="post" action="/backup">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status == "Running" %}disabled{% endif %}>Backup</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="stats-groups">
+                <!-- Host machine utilization metrics. -->
+                <div class="stats-group server-stats">
+                    <p class="group-title">Server Stats</p>
+                    <div class="status-row">
+                        <span>RAM: <b id="ram-usage" class="{{ ram_usage_class }}">{{ ram_usage }}</b></span>
+                        <span>CPU: <b id="cpu-per-core">{% for core in cpu_per_core_items %}<span class="{{ core.class }}">CPU{{ core.index }} {{ core.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}</b></span>
+                        <span>CPU freq: <b id="cpu-frequency" class="{{ cpu_frequency_class }}">{{ cpu_frequency }}</b></span>
+                        <span>Storage: <b id="storage-usage" class="{{ storage_usage_class }}">{{ storage_usage }}</b></span>
+                    </div>
+                </div>
+                <!-- Minecraft runtime/health metrics. -->
+                <div class="stats-group">
+                    <p class="group-title">Minecraft Stats</p>
+                    <div class="status-row">
+                        <span>Server Status: <b id="service-status" class="{{ service_status_class }}">{{ service_status }}</b><span id="service-status-duration-prefix">{% if service_status == "Running" and session_duration != "--" %} for {% endif %}</span><b id="session-duration" {% if service_status != "Running" or session_duration == "--" %}style="display:none;"{% endif %}>{{ session_duration }}</b></span>
+                        <span>Players online: <b id="players-online">{{ players_online }}</b></span>
+                        <span>Tick time: <b id="tick-rate">{{ tick_rate }}</b></span>
+                        <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
+                    </div>
+                </div>
+                <!-- Backup scheduler/activity metrics. -->
+                <div class="stats-group">
+                    <p class="group-title">Backup Stats</p>
+                    <div class="status-row">
+                        <span>Backup status: <b id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</b></span>
+                        <span>Last backup: <b id="last-backup-time">{{ last_backup_time }}</b></span>
+                        <span>Next backup: <b id="next-backup-time">{{ next_backup_time }}</b></span>
+                        <span>Backups folder: <b id="backups-status">{{ backups_status }}</b></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- Main content: selectable log viewer. -->
+    <section class="logs">
+        <article class="panel">
+            <div class="panel-header">
+                <select id="log-source">
+                    <option value="minecraft">Live Server Console</option>
+                    <option value="backup">Live Backup Activity</option>
+                    <option value="mcweb">Live Control Panel Activity</option>
+                </select>
+                <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <label class="panel-filter">
+                        <input id="hide-rcon-noise" type="checkbox" checked>
+                        Hide RCON noise
+                    </label>
+                    <input type="hidden" name="sudo_password">
+                    <input id="rcon-command" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
+                    <button id="rcon-submit" type="submit" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %}>Submit</button>
+                </form>
+            </div>
+            <pre id="minecraft-log" class="console-box">{{ minecraft_logs_raw }}</pre>
+        </article>
+    </section>
+</div>
+</main>
+</div>
+<!-- Password gate modal for privileged operations (stop + RCON submit). -->
+<div id="sudo-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
+        <h3 id="sudo-modal-title" class="modal-title">Password Required</h3>
+        <p class="modal-text">Enter sudo password to continue.</p>
+        <input id="sudo-modal-input" class="modal-input" type="text" placeholder="Sudo password">
+        <div class="modal-actions">
+            <button id="sudo-modal-cancel" class="btn-secondary" type="button">Cancel</button>
+            <button id="sudo-modal-submit" type="button">Continue</button>
+        </div>
+    </div>
+</div>
+<!-- Password rejection modal (only for incorrect password on protected actions). -->
+<div id="message-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
+        <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
+        <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
+        <p id="message-modal-text" class="modal-text"></p>
+        <div class="modal-actions">
+            <button id="message-modal-ok" type="button">OK</button>
+        </div>
+    </div>
+</div>
+<!-- General error modal (ajax/network/runtime failures). -->
+<div id="error-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
+        <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
+        <p id="error-modal-text" class="modal-text"></p>
+        <div class="modal-actions">
+            <button id="error-modal-ok" type="button">OK</button>
+        </div>
+    </div>
+</div>
+<script>
+    window.__MCWEB_HOME_CONFIG = {
+        alertMessage: {{ alert_message | tojson }},
+        alertMessageCode: {{ alert_message_code | tojson }},
+        csrfToken: {{ csrf_token | tojson }},
+        heartbeatIntervalMs: {{ home_page_heartbeat_interval_ms | tojson }},
+    };
+</script>
+<script src="{{ url_for('static', filename='home.js', v=static_version('home.js')) }}"></script>
+</body>
+</html>

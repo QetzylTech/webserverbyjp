@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page_title }}</title>
+<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+</head>
+<body>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+    </button>
+    <div id="nav-backdrop" class="nav-backdrop"></div>
+    <div class="layout">
+        <aside id="side-nav" class="sidebar">
+            <div class="sidebar-title">Navigation</div>
+            <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+            <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+            <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
+            <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Reports</a>
+            <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Readme</a>
+        </aside>
+        <main class="content">
+            <div class="wrap">
+                <section class="panel">
+                <h2>{{ panel_title }}</h2>
+                <p class="hint">{{ panel_hint }}</p>
+                <div id="download-error" class="download-error"></div>
+                {% if items %}
+                <ul class="list">
+                    {% for item in items %}
+                    <li>
+                        {% if current_page == "backups" %}
+                        <button
+                            class="file-download-btn"
+                            type="button"
+                            data-download-url="{{ download_base }}/{{ item.name }}"
+                            data-filename="{{ item.name }}"
+                        >{{ item.name }}</button>
+                        {% else %}
+                        <a class="file-link" href="{{ download_base }}/{{ item.name }}">{{ item.name }}</a>
+                        {% endif %}
+                        <span class="meta">{{ item.modified }} | {{ item.size_text }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="empty">{{ empty_text }}</div>
+                {% endif %}
+                </section>
+            </div>
+        </main>
+    </div>
+    <div id="download-password-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="download-password-title">
+            <h3 id="download-password-title" class="modal-title">Enter Password</h3>
+            <p class="modal-text">Enter sudo password to download this backup.</p>
+            <input id="download-password-input" class="modal-input" type="password" autocomplete="current-password" placeholder="Password">
+            <div class="modal-actions">
+                <button id="download-password-cancel" class="modal-btn-cancel" type="button">Cancel</button>
+                <button id="download-password-submit" class="modal-btn-submit" type="button">Continue</button>
+            </div>
+        </div>
+    </div>
+    <div id="message-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
+            <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
+            <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
+            <p id="message-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="message-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+<script>
+    window.__MCWEB_FILES_CONFIG = {
+        csrfToken: {{ csrf_token | tojson }},
+        heartbeatIntervalMs: {{ file_page_heartbeat_interval_ms | tojson }},
+    };
+</script>
+<script src="{{ url_for('static', filename='files.js', v=static_version('files.js')) }}"></script>
+</body>
+</html>
