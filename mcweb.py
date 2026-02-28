@@ -7,7 +7,7 @@ This app provides:
 - Automatic idle shutdown and session-based backup scheduling
 """
 
-from flask import Flask, render_template_string, redirect, request, jsonify
+from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -21,6 +21,7 @@ app = Flask(__name__)
 SERVICE = "minecraft"
 BACKUP_SCRIPT = "/opt/Minecraft/backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
+SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
 SUDO_PASSWORD = "SuperCute"
 RCON_PASSWORD = "SuperCute"
 
@@ -33,7 +34,6 @@ IDLE_CHECK_INTERVAL_SECONDS = 15
 # Shared watcher state (protected by locks below).
 idle_zero_players_since = None
 idle_lock = threading.Lock()
-backup_session_started_at = None
 backup_last_run_at = None
 backup_last_completed_at = None
 backup_had_periodic_run = False
@@ -43,6 +43,8 @@ backup_active_jobs = 0
 backup_last_started_at = None
 backup_last_finished_at = None
 backup_last_success = None
+session_tracking_initialized = False
+session_tracking_lock = threading.Lock()
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -257,6 +259,15 @@ HTML = """
         justify-content: flex-end;
     }
 
+    .panel-filter {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.84rem;
+        color: #475569;
+        white-space: nowrap;
+    }
+
     .panel-controls input[type="text"] {
         flex: 1;
         min-width: 0;
@@ -430,6 +441,7 @@ HTML = """
                         <span>Players online: <b id="players-online">{{ players_online }}</b></span>
                         <span>Tick time: <b id="tick-rate">{{ tick_rate }}</b></span>
                         <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
+                        <span>Session duration: <b id="session-duration">{{ session_duration }}</b></span>
                     </div>
                 </div>
                 <!-- Backup scheduler/activity metrics. -->
@@ -453,12 +465,16 @@ HTML = """
             <div class="panel-header">
                 <h3>Minecraft Log (last 50 lines)</h3>
                 <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
+                    <label class="panel-filter">
+                        <input id="hide-rcon-noise" type="checkbox" checked>
+                        Hide RCON noise
+                    </label>
                     <input type="hidden" name="sudo_password">
                     <input id="rcon-command" type="text" name="rcon_command" placeholder="Enter Minecraft server command (e.g., say hello)" {% if service_running_status != "active" %}disabled{% endif %} required>
                     <button id="rcon-submit" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Submit</button>
                 </form>
             </div>
-            <pre id="minecraft-log" class="console-box">{{ minecraft_logs }}</pre>
+            <pre id="minecraft-log" class="console-box">{{ minecraft_logs_raw }}</pre>
         </article>
     </section>
 </div>
@@ -492,18 +508,18 @@ HTML = """
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
     let pendingSudoForm = null;
+    let rawMinecraftLogLines = [];
+    let logEventSource = null;
 
     // Refresh cadence configuration (milliseconds).
     // Active mode = full dashboard updates.
     const ACTIVE_METRICS_INTERVAL_MS = 1000;
-    const ACTIVE_LOG_INTERVAL_MS = 1000;
-    const ACTIVE_COUNTDOWN_INTERVAL_MS = 1000;
+    const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
     // Off mode = only server stats update.
-    const OFF_SERVER_STATS_INTERVAL_MS = 1000;
+    const OFF_SERVER_STATS_INTERVAL_MS = 15000;
 
     // Timer handles retained so intervals can be stopped/restarted cleanly.
     let metricsTimer = null;
-    let logTimer = null;
     let countdownTimer = null;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
@@ -512,6 +528,48 @@ HTML = """
         const target = document.getElementById("minecraft-log");
         if (!target) return;
         target.scrollTop = target.scrollHeight;
+    }
+
+    function getRawMinecraftLogText() {
+        return rawMinecraftLogLines.join("\\n");
+    }
+
+    function setRawMinecraftLogText(rawText) {
+        rawMinecraftLogLines = (rawText || "").split("\\n");
+        if (rawMinecraftLogLines.length > 3000) {
+            rawMinecraftLogLines = rawMinecraftLogLines.slice(-3000);
+        }
+    }
+
+    function appendRawMinecraftLogLine(line) {
+        rawMinecraftLogLines.push(line || "");
+        if (rawMinecraftLogLines.length > 3000) {
+            rawMinecraftLogLines.shift();
+        }
+    }
+
+    function filterMinecraftLog(rawText) {
+        const hideRcon = document.getElementById("hide-rcon-noise");
+        if (!hideRcon || !hideRcon.checked) {
+            return (rawText || "").trim() || "(no logs)";
+        }
+
+        const lines = (rawText || "").split("\\n");
+        const kept = lines.filter((line) => {
+            const lower = line.toLowerCase();
+            if (lower.includes("thread rcon client")) return false;
+            if (lower.includes("minecraft/rconclient") && lower.includes("shutting down")) return false;
+            return true;
+        });
+        const out = kept.join("\\n").trim();
+        return out || "(no logs)";
+    }
+
+    function renderMinecraftLog() {
+        const target = document.getElementById("minecraft-log");
+        if (!target) return;
+        target.textContent = filterMinecraftLog(getRawMinecraftLogText());
+        scrollLogToBottom();
     }
 
     function parseCountdown(text) {
@@ -547,14 +605,29 @@ HTML = """
             const response = await fetch("/minecraft-log", { cache: "no-store" });
             if (!response.ok) return;
             const text = await response.text();
-            const target = document.getElementById("minecraft-log");
-            if (target) {
-                target.textContent = text || "(no logs)";
-                scrollLogToBottom();
-            }
+            setRawMinecraftLogText(text);
+            renderMinecraftLog();
         } catch (err) {
             // Keep current log content on network/read errors.
         }
+    }
+
+    function startMinecraftLogStream() {
+        if (logEventSource) return;
+        logEventSource = new EventSource("/minecraft-log-stream");
+        logEventSource.onmessage = (event) => {
+            appendRawMinecraftLogLine(event.data || "");
+            renderMinecraftLog();
+        };
+        logEventSource.onerror = () => {
+            // EventSource reconnects automatically.
+        };
+    }
+
+    function stopMinecraftLogStream() {
+        if (!logEventSource) return;
+        logEventSource.close();
+        logEventSource = null;
     }
 
     function openSudoModal(form) {
@@ -640,7 +713,6 @@ HTML = """
             }
 
             await refreshMetrics();
-            await refreshMinecraftLog();
         } catch (err) {
             if (!suppressErrors) {
                 showMessageModal("Action failed. Please try again.");
@@ -660,6 +732,7 @@ HTML = """
             const players = document.getElementById("players-online");
             const tickRate = document.getElementById("tick-rate");
             const idleCountdown = document.getElementById("idle-countdown");
+            const sessionDuration = document.getElementById("session-duration");
             const backupStatus = document.getElementById("backup-status");
             const lastBackup = document.getElementById("last-backup-time");
             const nextBackup = document.getElementById("next-backup-time");
@@ -680,6 +753,9 @@ HTML = """
             if (data.idle_countdown !== undefined) {
                 idleCountdownSeconds = parseCountdown(data.idle_countdown);
                 if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
+            }
+            if (sessionDuration && data.session_duration !== undefined) {
+                sessionDuration.textContent = data.session_duration;
             }
             if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
             if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
@@ -736,10 +812,6 @@ HTML = """
             clearInterval(metricsTimer);
             metricsTimer = null;
         }
-        if (logTimer) {
-            clearInterval(logTimer);
-            logTimer = null;
-        }
     }
 
     function applyRefreshMode(serviceStatusText) {
@@ -753,6 +825,7 @@ HTML = """
 
         if (refreshMode === "off") {
             // In Off mode, refresh only Server Stats at reduced cadence.
+            stopMinecraftLogStream();
             metricsTimer = setInterval(refreshServerStatsOnly, OFF_SERVER_STATS_INTERVAL_MS);
             return;
         }
@@ -760,7 +833,7 @@ HTML = """
         // In Active mode, restore full live updates.
         countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
         metricsTimer = setInterval(refreshMetrics, ACTIVE_METRICS_INTERVAL_MS);
-        logTimer = setInterval(refreshMinecraftLog, ACTIVE_LOG_INTERVAL_MS);
+        startMinecraftLogStream();
     }
 
     window.addEventListener("load", () => {
@@ -824,6 +897,17 @@ HTML = """
         if (idleCountdown) {
             idleCountdownSeconds = parseCountdown(idleCountdown.textContent.trim());
         }
+        const hideRcon = document.getElementById("hide-rcon-noise");
+        if (hideRcon) {
+            hideRcon.addEventListener("change", () => {
+                renderMinecraftLog();
+            });
+        }
+        const existingLog = document.getElementById("minecraft-log");
+        setRawMinecraftLogText(existingLog ? existingLog.textContent : "");
+        if (existingLog) {
+            renderMinecraftLog();
+        }
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
     });
@@ -856,31 +940,81 @@ def validate_sudo_password(sudo_password):
     """Validate user-supplied sudo password for privileged dashboard actions."""
     return (sudo_password or "").strip() == SUDO_PASSWORD
 
-def get_minecraft_logs():
-    """Return recent journal lines for the Minecraft service."""
-    # Look back far enough to still produce 50 useful lines when RCON spam is high.
-    for lookback in (400, 2000, 8000):
-        result = run_sudo(["journalctl", "-u", SERVICE, "-n", str(lookback), "--no-pager"])
-        output = (result.stdout or "") + (result.stderr or "")
-        filtered_lines = []
-        for line in output.splitlines():
-            lower = line.lower()
-            # Hide repetitive RCON connection noise only.
-            if "thread rcon client" in lower:
-                continue
-            if "minecraft/rconclient" in lower and "shutting down" in lower:
-                continue
-            filtered_lines.append(line)
+def ensure_session_file():
+    """Ensure the session timestamp file exists."""
+    try:
+        SESSION_FILE.touch(exist_ok=True)
+    except OSError:
+        pass
 
-        if len(filtered_lines) >= 50:
-            return "\n".join(filtered_lines[-50:]).strip()
-        if filtered_lines:
-            # Keep best available set if we still have fewer than 50 lines.
-            best_effort = "\n".join(filtered_lines).strip()
-            if best_effort:
-                return best_effort
+def read_session_start_time():
+    """Read session start UNIX timestamp from session file, or None."""
+    ensure_session_file()
+    try:
+        raw = SESSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        ts = float(raw)
+    except ValueError:
+        return None
+    return ts if ts > 0 else None
 
-    return "(no logs)"
+def write_session_start_time(timestamp=None):
+    """Persist session start UNIX timestamp to session file."""
+    ensure_session_file()
+    ts = time.time() if timestamp is None else float(timestamp)
+    try:
+        SESSION_FILE.write_text(f"{ts:.6f}\n", encoding="utf-8")
+    except OSError:
+        pass
+    return ts
+
+def clear_session_start_time():
+    """Clear persisted session start timestamp."""
+    ensure_session_file()
+    try:
+        SESSION_FILE.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+def get_session_start_time(service_status=None):
+    """Return current session start time from session file when applicable."""
+    if service_status is None:
+        service_status = get_status()
+
+    session_start = read_session_start_time()
+    if service_status != "active":
+        return None
+    if session_start is not None:
+        return session_start
+    # Fallback so schedule/duration still work if file was empty while running.
+    return write_session_start_time()
+
+def get_session_duration_text(service_status=None):
+    """Return elapsed session duration based on session.txt anchor."""
+    if service_status is None:
+        service_status = get_status()
+    if service_status != "active":
+        return "--"
+
+    start_time = get_session_start_time(service_status)
+    if start_time is None:
+        return "--"
+
+    elapsed = max(0, int(time.time() - start_time))
+    hours = elapsed // 3600
+    minutes = (elapsed % 3600) // 60
+    seconds = elapsed % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+def get_minecraft_logs_raw():
+    """Return raw recent journal lines for client-side filtering/display."""
+    result = run_sudo(["journalctl", "-u", SERVICE, "-n", "400", "--no-pager"])
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    return output or "(no logs)"
 
 # ----------------------------
 # Backup status/display helpers
@@ -963,6 +1097,7 @@ def get_cpu_usage_class(cpu_per_core):
 
 def get_cpu_per_core_items(cpu_per_core):
     """Return per-core values with independent color classes."""
+    # Each core is rendered independently so one hot core does not hide others.
     items = []
     for i, raw in enumerate(cpu_per_core):
         try:
@@ -1082,6 +1217,7 @@ def get_players_online():
 
 def get_tick_rate():
     """Return server tick time in milliseconds per tick when available."""
+    # Skip probing when systemd already reports server as not active.
     if get_status() != "active":
         return "unknown"
 
@@ -1142,6 +1278,7 @@ def get_tick_rate():
 
 def get_service_status_display(service_status, players_online):
     """Map raw service + RCON readiness into UI-friendly status labels."""
+    # Prefer systemd lifecycle for coarse state, use RCON readiness as a hint.
     if service_status in ("inactive", "failed"):
         return "Off"
     if service_status == "activating":
@@ -1166,6 +1303,10 @@ def get_service_status_class(service_status_display):
 
 def graceful_stop_minecraft():
     """Gracefully stop via RCON, run final backup, then stop systemd unit."""
+    # Order matters:
+    # 1) Ask Minecraft to stop cleanly (saves world)
+    # 2) Take final backup
+    # 3) Ensure unit is down at the service manager level
     subprocess.run(
         ["mcrcon", "-p", RCON_PASSWORD, "stop"],
         capture_output=True,
@@ -1177,14 +1318,12 @@ def graceful_stop_minecraft():
 
 def stop_server_automatically():
     """Gracefully stop Minecraft (used by idle watcher)."""
-    global backup_session_started_at
-    global backup_last_run_at
     global backup_had_periodic_run
     global backup_periodic_runs
 
     graceful_stop_minecraft()
+    clear_session_start_time()
     with backup_lock:
-        backup_session_started_at = None
         backup_last_run_at = None
         backup_had_periodic_run = False
         backup_periodic_runs = 0
@@ -1246,13 +1385,12 @@ def get_backup_schedule_times(service_status=None):
     if service_status is None:
         service_status = get_status()
 
-    with backup_lock:
-        session_started_at = backup_session_started_at
-
     next_backup_at = None
     if service_status == "active":
         # Next backup is aligned to fixed interval boundaries from session start.
-        anchor = session_started_at if session_started_at is not None else time.time()
+        anchor = get_session_start_time(service_status)
+        if anchor is None:
+            anchor = time.time()
         elapsed_intervals = int(max(0, time.time() - anchor) // BACKUP_INTERVAL_SECONDS)
         next_backup_at = anchor + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
 
@@ -1333,8 +1471,6 @@ def backup_session_watcher():
     If a session ends before reaching the backup interval, run one backup at
     shutdown so short sessions still produce a backup artifact.
     """
-    global backup_session_started_at
-    global backup_last_run_at
     global backup_had_periodic_run
     global backup_periodic_runs
 
@@ -1343,33 +1479,38 @@ def backup_session_watcher():
             now = time.time()
             service_status = get_status()
             is_running = service_status == "active"
+            is_off = service_status in ("inactive", "failed")
 
             should_run_periodic_backup = False
             should_run_shutdown_backup = False
 
+            session_started_at = read_session_start_time()
+
             with backup_lock:
                 if is_running:
-                    # Start a new session window when service becomes active.
-                    if backup_session_started_at is None:
-                        backup_session_started_at = now
+                    # Session anchor is persisted in session.txt.
+                    if session_started_at is None:
+                        session_started_at = write_session_start_time(now)
                         backup_last_run_at = None
                         backup_had_periodic_run = False
                         backup_periodic_runs = 0
 
                     # Number of interval boundaries crossed since session start.
-                    due_runs = int((now - backup_session_started_at) // BACKUP_INTERVAL_SECONDS)
+                    due_runs = int((now - session_started_at) // BACKUP_INTERVAL_SECONDS)
                     if due_runs > backup_periodic_runs:
                         should_run_periodic_backup = True
-                elif backup_session_started_at is not None:
-                    # Session ended: always run one final backup.
+                elif is_off and session_started_at is not None:
+                    # Session ended (truly off): always run one final backup.
+                    # Do not clear during transitional states like activating/deactivating.
                     should_run_shutdown_backup = True
 
-                    backup_session_started_at = None
+                    clear_session_start_time()
                     backup_last_run_at = None
                     backup_had_periodic_run = False
                     backup_periodic_runs = 0
 
             if should_run_periodic_backup:
+                # Keep schedule counters in sync only when backup succeeds.
                 if run_backup_script(track_session_schedule=True):
                     with backup_lock:
                         backup_had_periodic_run = True
@@ -1387,6 +1528,43 @@ def start_backup_session_watcher():
     """Start backup scheduler in a daemon thread."""
     watcher = threading.Thread(target=backup_session_watcher, daemon=True)
     watcher.start()
+
+def initialize_session_tracking():
+    """Initialize session.txt on process boot and reconcile with service state."""
+    ensure_session_file()
+    service_status = get_status()
+    session_start = read_session_start_time()
+
+    if service_status == "active":
+        # Keep existing start time when present; seed only if missing/invalid.
+        if session_start is None:
+            write_session_start_time()
+        return
+
+    # Service is off: session file should be empty.
+    # Keep value during transitional states (activating/deactivating).
+    if service_status in ("inactive", "failed") and session_start is not None:
+        clear_session_start_time()
+
+def ensure_session_tracking_initialized():
+    """Run session tracking initialization once per process."""
+    global session_tracking_initialized
+    if session_tracking_initialized:
+        return
+    with session_tracking_lock:
+        if session_tracking_initialized:
+            return
+        initialize_session_tracking()
+        session_tracking_initialized = True
+
+@app.before_request
+def _initialize_session_tracking_before_request():
+    """Ensure session tracking is initialized even under WSGI launch."""
+    ensure_session_tracking_initialized()
+
+# Eagerly initialize at import/startup so session.txt is reconciled immediately,
+# even before the first HTTP request is received.
+ensure_session_tracking_initialized()
 
 def _is_ajax_request():
     """Return True when request expects JSON response (fetch/XHR)."""
@@ -1422,6 +1600,7 @@ def _password_rejected_response():
 @app.route("/")
 def index():
     """Render dashboard page."""
+    # Legacy query-parameter path (kept for non-AJAX fallback flows).
     message_code = request.args.get("msg", "")
     alert_message = ""
     if message_code == "password_incorrect":
@@ -1434,6 +1613,7 @@ def index():
     service_status = get_status()
     players_online = get_players_online()
     tick_rate = get_tick_rate()
+    session_duration = get_session_duration_text(service_status)
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
     backup_status, backup_status_class = get_backup_status()
@@ -1451,6 +1631,7 @@ def index():
         storage_usage_class=get_storage_usage_class(storage_usage),
         players_online=players_online,
         tick_rate=tick_rate,
+        session_duration=session_duration,
         idle_countdown=get_idle_countdown(service_status, players_online),
         backup_status=backup_status,
         backup_status_class=backup_status_class,
@@ -1458,18 +1639,64 @@ def index():
         next_backup_time=backup_schedule["next_backup_time"],
         ram_usage=ram_usage,
         ram_usage_class=get_ram_usage_class(ram_usage),
-        minecraft_logs=get_minecraft_logs(),
+        minecraft_logs_raw=get_minecraft_logs_raw(),
         alert_message=alert_message,
     )
 
 @app.route("/minecraft-log")
 def minecraft_log():
     """Return plain-text Minecraft service log snippet."""
-    return get_minecraft_logs(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return get_minecraft_logs_raw(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+@app.route("/minecraft-log-stream")
+def minecraft_log_stream():
+    """Stream new Minecraft journal lines via SSE."""
+    def generate():
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                ["sudo", "-S", "journalctl", "-u", SERVICE, "-f", "-n", "0", "--no-pager"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            if proc.stdin:
+                proc.stdin.write(f"{SUDO_PASSWORD}\n")
+                proc.stdin.flush()
+                proc.stdin.close()
+
+            if not proc.stdout:
+                return
+
+            for line in proc.stdout:
+                clean = line.rstrip("\r\n")
+                if not clean:
+                    continue
+                # SSE payload: one new journal line per message.
+                yield f"data: {clean}\n\n"
+        except GeneratorExit:
+            pass
+        except Exception:
+            yield "event: error\ndata: stream_error\n\n"
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.route("/metrics")
 def metrics():
     """Return dynamic dashboard metrics as JSON."""
+    # This endpoint is polled by the UI; keep payload compact and explicit.
     cpu_per_core = get_cpu_usage_per_core()
     ram_usage = get_ram_usage()
     cpu_frequency = get_cpu_frequency()
@@ -1477,6 +1704,7 @@ def metrics():
     service_status = get_status()
     players_online = get_players_online()
     tick_rate = get_tick_rate()
+    session_duration = get_session_duration_text(service_status)
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
     backup_status, backup_status_class = get_backup_status()
@@ -1494,6 +1722,7 @@ def metrics():
         "storage_usage_class": get_storage_usage_class(storage_usage),
         "players_online": players_online,
         "tick_rate": tick_rate,
+        "session_duration": session_duration,
         "idle_countdown": get_idle_countdown(service_status, players_online),
         "backup_status": backup_status,
         "backup_status_class": backup_status_class,
@@ -1504,26 +1733,23 @@ def metrics():
 @app.route("/start", methods=["POST"])
 def start():
     """Start Minecraft service and initialize backup session state."""
-    global backup_session_started_at
     global backup_last_run_at
     global backup_had_periodic_run
     global backup_periodic_runs
 
     # Start via systemd so status/auto-watchers remain aligned to one source.
+    # Start service using systemd as source-of-truth for process lifecycle.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
+    write_session_start_time()
     with backup_lock:
-        # Only initialize if this is the first transition into running.
-        if backup_session_started_at is None:
-            backup_session_started_at = time.time()
-            backup_last_run_at = None
-            backup_had_periodic_run = False
-            backup_periodic_runs = 0
+        backup_last_run_at = None
+        backup_had_periodic_run = False
+        backup_periodic_runs = 0
     return _ok_response()
 
 @app.route("/stop", methods=["POST"])
 def stop():
     """Stop Minecraft service using user-supplied sudo password."""
-    global backup_session_started_at
     global backup_last_run_at
     global backup_had_periodic_run
     global backup_periodic_runs
@@ -1534,9 +1760,10 @@ def stop():
 
     # Ordered shutdown path:
     # 1) RCON stop, 2) final backup, 3) systemd stop (inside helper).
+    # Executes ordered shutdown (RCON stop -> backup -> systemd stop).
     graceful_stop_minecraft()
+    clear_session_start_time()
     with backup_lock:
-        backup_session_started_at = None
         backup_last_run_at = None
         backup_had_periodic_run = False
         backup_periodic_runs = 0
@@ -1558,6 +1785,7 @@ def rcon():
         if _is_ajax_request():
             return jsonify({"ok": False, "message": "Command is required."}), 400
         return redirect("/")
+    # Block command execution when service is not active.
     if get_status() != "active":
         if _is_ajax_request():
             return jsonify({"ok": False, "message": "Server is not running."}), 409
@@ -1576,6 +1804,7 @@ def rcon():
 
 if __name__ == "__main__":
     # Start background automation loops before serving HTTP requests.
+    ensure_session_tracking_initialized()
     start_idle_player_watcher()
     start_backup_session_watcher()
     app.run(host="0.0.0.0", port=8080)
