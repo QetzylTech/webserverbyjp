@@ -9,6 +9,7 @@ import zipfile
 import threading
 import uuid
 import re
+from werkzeug.security import check_password_hash
 
 
 def set_service_status_intent(ctx, intent):
@@ -40,32 +41,29 @@ def stop_service_systemd(ctx):
 
 
 def get_sudo_password(ctx):
-    """Resolve the sudo password from active RCON/server properties config."""
-    password, _, enabled = ctx._refresh_rcon_config()
-    if not enabled or not password:
-        return None
-    return password
+    """Legacy password accessor retained for runtime compatibility."""
+    return None
 
 
 def run_sudo(ctx, cmd):
-    """Run a privileged command by piping the resolved sudo password."""
-    sudo_password = get_sudo_password(ctx)
-    if not sudo_password:
-        raise RuntimeError("sudo password unavailable: rcon.password not found in server.properties")
+    """Run a privileged command (requires sudoers NOPASSWD configuration)."""
     return subprocess.run(
-        ["sudo", "-S"] + cmd,
-        input=f"{sudo_password}\n",
+        ["sudo", "-n"] + cmd,
         capture_output=True,
         text=True,
     )
 
 
 def validate_sudo_password(ctx, sudo_password):
-    """Validate user-supplied password against the resolved sudo password."""
-    expected_password = get_sudo_password(ctx)
-    if not expected_password:
+    """Validate user-supplied password against configured admin hash."""
+    expected_hash = (getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
+    candidate = (sudo_password or "").strip()
+    if not expected_hash or not candidate:
         return False
-    return (sudo_password or "").strip() == expected_password
+    try:
+        return bool(check_password_hash(expected_hash, candidate))
+    except ValueError:
+        return False
 
 
 def ensure_session_file(ctx):

@@ -13,6 +13,7 @@ Recommended location:
     state/
   mcweb.py
   mcweb.env
+  doc/mcweb.env.sample
   scripts/backup.sh
   data/state.txt
   data/session.txt
@@ -24,6 +25,7 @@ Recommended location:
 
 Required files relative to `mcweb.py`:
 - `mcweb.env`
+- `doc/mcweb.env.sample` (template for generating local `mcweb.env`)
 - `scripts/backup.sh`
 - `templates/documentation.html`
 - `doc/server_setup_doc.md`
@@ -34,6 +36,7 @@ Required files relative to `mcweb.py`:
 
 Important keys:
 - `SERVICE`
+- `MCWEB_ADMIN_PASSWORD_HASH`
 - `WEB_HOST`
 - `WEB_PORT`
 - `BACKUP_SCRIPT`
@@ -50,6 +53,9 @@ Important keys:
 - `BACKUP_STATE_FILE`
 - `DEBUG` (controls debug page availability at app boot)
 
+Bootstrap tip:
+- copy `doc/mcweb.env.sample` to `mcweb.env` and then fill local values.
+
 3. Configure `server.properties`
 
 `mcweb.py` and `backup.sh` search for `server.properties` in this order:
@@ -64,7 +70,8 @@ Required values:
 - `rcon.port=25575`
 
 Notes:
-- `rcon.password` is also used by the dashboard as the privileged-action password check.
+- `rcon.password` is used for RCON only.
+- privileged dashboard actions validate against `MCWEB_ADMIN_PASSWORD_HASH` from `mcweb.env`.
 - `rcon.port` from `server.properties` overrides base/default RCON port behavior.
 
 4. `backup.sh` behavior
@@ -106,9 +113,9 @@ Debug boot handling for `server.properties`:
   - if active file still contains debug world/motd, it is archived to `data/server.properties.debug`
 
 Debug action authentication:
-- debug `server.properties` Apply requires sudo password validation
-- debug env editor Apply/Reset requires sudo password validation
-- debug Stop requires sudo password validation
+- debug `server.properties` Apply requires admin password validation
+- debug env editor Apply/Reset requires admin password validation
+- debug Stop requires admin password validation
 
 6. Install dependencies
 
@@ -167,6 +174,7 @@ marites ALL=(root) NOPASSWD: /bin/systemctl start minecraft, /bin/systemctl stop
 Notes:
 - Use absolute paths for every command.
 - Keep each command separated by commas.
+- The app uses `sudo -n` for privileged commands, so required actions must be in sudoers with `NOPASSWD`.
 - Verify your actual `systemctl` path (`/bin/systemctl` vs `/usr/bin/systemctl`) with:
   `command -v systemctl`
 
@@ -213,7 +221,7 @@ Maintenance data files in `DATA_DIR`:
 - `cleanup_non_normal.txt` (missed-run tracking)
 - `logs/cleanup.log` (maintenance action logs)
 
-Protected actions (sudo password required):
+Protected actions (admin password required):
 - open rules edit mode
 - save rules
 - run rule cleanup

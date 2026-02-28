@@ -86,6 +86,7 @@ class AppState(MutableMapping[str, Any]):
     RCON_STARTUP_READY_PATTERN: Any
     SERVER_PROPERTIES_CANDIDATES: Any
     SERVICE: Any
+    ADMIN_PASSWORD_HASH: Any
     WORLD_DIR: Any
     USERS_FILE: Any
     backup_state: BackupState

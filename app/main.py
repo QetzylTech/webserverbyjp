@@ -67,6 +67,7 @@ apply_default_flask_config(app)
 # Core service and application settings.
 FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
 SERVICE = _cfg_str("SERVICE", "minecraft")
+ADMIN_PASSWORD_HASH = _cfg_str("MCWEB_ADMIN_PASSWORD_HASH", "")
 BACKUP_SCRIPT = _cfg_path("BACKUP_SCRIPT", APP_DIR / "scripts" / "backup.sh")
 BACKUP_DIR = _cfg_path("BACKUP_DIR", Path("/home/marites/backups"))
 WORLD_DIR = Path("/opt/Minecraft/config")
