@@ -14,6 +14,7 @@ from datetime import datetime
 import time
 import threading
 import re
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 
@@ -22,6 +23,7 @@ SERVICE = "minecraft"
 BACKUP_SCRIPT = "/opt/Minecraft/backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
 SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
+DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
 SUDO_PASSWORD = "SuperCute"
 RCON_PASSWORD = "SuperCute"
 
@@ -43,8 +45,11 @@ backup_active_jobs = 0
 backup_last_started_at = None
 backup_last_finished_at = None
 backup_last_success = None
+backup_last_error = ""
 session_tracking_initialized = False
 session_tracking_lock = threading.Lock()
+
+OFF_STATES = {"inactive", "failed"}
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -417,7 +422,7 @@ HTML = """
                         <input type="hidden" name="sudo_password">
                         <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
                     </form>
-                    <form class="ajax-form" method="post" action="/backup" data-no-reject-modal="1">
+                    <form class="ajax-form" method="post" action="/backup">
                         <button class="btn-backup" type="submit">Backup</button>
                     </form>
                 </div>
@@ -437,11 +442,10 @@ HTML = """
                 <div class="stats-group">
                     <p class="group-title">Minecraft Stats</p>
                     <div class="status-row">
-                        <span>Server Status: <b id="service-status" class="{{ service_status_class }}">{{ service_status }}</b></span>
+                        <span>Server Status: <b id="service-status" class="{{ service_status_class }}">{{ service_status }}</b><span id="service-status-duration-prefix">{% if service_status == "Running" and session_duration != "--" %} for {% endif %}</span><b id="session-duration" {% if service_status != "Running" or session_duration == "--" %}style="display:none;"{% endif %}>{{ session_duration }}</b></span>
                         <span>Players online: <b id="players-online">{{ players_online }}</b></span>
                         <span>Tick time: <b id="tick-rate">{{ tick_rate }}</b></span>
                         <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
-                        <span>Session duration: <b id="session-duration">{{ session_duration }}</b></span>
                     </div>
                 </div>
                 <!-- Backup scheduler/activity metrics. -->
@@ -733,6 +737,7 @@ HTML = """
             const tickRate = document.getElementById("tick-rate");
             const idleCountdown = document.getElementById("idle-countdown");
             const sessionDuration = document.getElementById("session-duration");
+            const serviceDurationPrefix = document.getElementById("service-status-duration-prefix");
             const backupStatus = document.getElementById("backup-status");
             const lastBackup = document.getElementById("last-backup-time");
             const nextBackup = document.getElementById("next-backup-time");
@@ -763,6 +768,15 @@ HTML = """
             if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
             if (service && data.service_status) service.textContent = data.service_status;
             if (service && data.service_status_class) service.className = data.service_status_class;
+            if (serviceDurationPrefix && service && sessionDuration) {
+                if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
+                    sessionDuration.style.display = "";
+                    serviceDurationPrefix.textContent = " for ";
+                } else {
+                    sessionDuration.style.display = "none";
+                    serviceDurationPrefix.textContent = "";
+                }
+            }
             if (data.service_running_status === "active") {
                 if (startBtn) startBtn.disabled = true;
                 if (stopBtn) stopBtn.disabled = false;
@@ -944,12 +958,14 @@ def ensure_session_file():
     """Ensure the session timestamp file exists."""
     try:
         SESSION_FILE.touch(exist_ok=True)
+        return True
     except OSError:
-        pass
+        return False
 
 def read_session_start_time():
     """Read session start UNIX timestamp from session file, or None."""
-    ensure_session_file()
+    if not ensure_session_file():
+        return None
     try:
         raw = SESSION_FILE.read_text(encoding="utf-8").strip()
     except OSError:
@@ -960,50 +976,49 @@ def read_session_start_time():
         ts = float(raw)
     except ValueError:
         return None
-    return ts if ts > 0 else None
+    if ts <= 0:
+        return None
+    # Accept accidental millisecond epoch values.
+    if ts > 1_000_000_000_000:
+        ts = ts / 1000.0
+    return ts
 
 def write_session_start_time(timestamp=None):
     """Persist session start UNIX timestamp to session file."""
-    ensure_session_file()
+    if not ensure_session_file():
+        return None
     ts = time.time() if timestamp is None else float(timestamp)
     try:
         SESSION_FILE.write_text(f"{ts:.6f}\n", encoding="utf-8")
     except OSError:
-        pass
+        return None
     return ts
 
 def clear_session_start_time():
     """Clear persisted session start timestamp."""
-    ensure_session_file()
+    if not ensure_session_file():
+        return False
     try:
         SESSION_FILE.write_text("", encoding="utf-8")
     except OSError:
-        pass
+        return False
+    return True
 
 def get_session_start_time(service_status=None):
-    """Return current session start time from session file when applicable."""
+    """Return session start time from session.txt when service is not off."""
     if service_status is None:
         service_status = get_status()
 
-    session_start = read_session_start_time()
-    if service_status != "active":
+    if service_status in OFF_STATES:
         return None
-    if session_start is not None:
-        return session_start
-    # Fallback so schedule/duration still work if file was empty while running.
-    return write_session_start_time()
+    return read_session_start_time()
 
 def get_session_duration_text(service_status=None):
-    """Return elapsed session duration based on session.txt anchor."""
-    if service_status is None:
-        service_status = get_status()
-    if service_status != "active":
-        return "--"
-
-    start_time = get_session_start_time(service_status)
+    """Return elapsed session duration based strictly on session.txt UNIX time."""
+    start_time = read_session_start_time()
     if start_time is None:
         return "--"
-
+    # If clock/timestamp is slightly ahead, clamp to zero instead of hiding duration.
     elapsed = max(0, int(time.time() - start_time))
     hours = elapsed // 3600
     minutes = (elapsed % 3600) // 60
@@ -1012,7 +1027,11 @@ def get_session_duration_text(service_status=None):
 
 def get_minecraft_logs_raw():
     """Return raw recent journal lines for client-side filtering/display."""
-    result = run_sudo(["journalctl", "-u", SERVICE, "-n", "400", "--no-pager"])
+    result = subprocess.run(
+        ["journalctl", "-u", SERVICE, "-n", "2000", "--no-pager"],
+        capture_output=True,
+        text=True,
+    )
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     return output or "(no logs)"
 
@@ -1278,7 +1297,7 @@ def get_tick_rate():
 
 def get_service_status_display(service_status, players_online):
     """Map raw service + RCON readiness into UI-friendly status labels."""
-    # Prefer systemd lifecycle for coarse state, use RCON readiness as a hint.
+    # Use systemd lifecycle as the source-of-truth for service state.
     if service_status in ("inactive", "failed"):
         return "Off"
     if service_status == "activating":
@@ -1286,8 +1305,6 @@ def get_service_status_display(service_status, players_online):
     if service_status == "deactivating":
         return "Shutting Down"
     if service_status == "active":
-        if players_online == "unknown":
-            return "Starting"
         return "Running"
     return "Off"
 
@@ -1302,19 +1319,21 @@ def get_service_status_class(service_status_display):
     return "stat-red"
 
 def graceful_stop_minecraft():
-    """Gracefully stop via RCON, run final backup, then stop systemd unit."""
-    # Order matters:
-    # 1) Ask Minecraft to stop cleanly (saves world)
-    # 2) Take final backup
-    # 3) Ensure unit is down at the service manager level
-    subprocess.run(
+    """Stop sequence: RCON stop -> backup -> systemd stop."""
+    # Run steps in strict order, regardless of intermediate failures.
+    rcon_result = subprocess.run(
         ["mcrcon", "-p", RCON_PASSWORD, "stop"],
         capture_output=True,
         text=True,
-        timeout=8,
+        timeout=30,
     )
-    run_backup_script(track_session_schedule=False)
-    run_sudo(["systemctl", "stop", SERVICE])
+    backup_ok = run_backup_script(track_session_schedule=False)
+    systemd_result = run_sudo(["systemctl", "stop", SERVICE])
+    return {
+        "rcon_ok": rcon_result.returncode == 0,
+        "backup_ok": backup_ok,
+        "systemd_ok": systemd_result.returncode == 0,
+    }
 
 def stop_server_automatically():
     """Gracefully stop Minecraft (used by idle watcher)."""
@@ -1336,22 +1355,30 @@ def run_backup_script(track_session_schedule=True):
     global backup_last_started_at
     global backup_last_finished_at
     global backup_last_success
+    global backup_last_error
 
     with backup_lock:
         # Track active backup jobs for UI status.
         backup_active_jobs += 1
         backup_last_started_at = time.time()
         backup_last_success = None
+        backup_last_error = ""
 
     success = False
     try:
-        success = run_sudo([BACKUP_SCRIPT]).returncode == 0
+        # Use sudo-backed execution for consistency with existing setup.
+        result = run_sudo([BACKUP_SCRIPT])
+        success = result.returncode == 0
         if success:
             now = time.time()
             with backup_lock:
                 backup_last_completed_at = now
                 if track_session_schedule:
                     backup_last_run_at = now
+        else:
+            err = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+            with backup_lock:
+                backup_last_error = err[:500] if err else "Backup command returned non-zero exit status."
     finally:
         with backup_lock:
             backup_active_jobs = max(0, backup_active_jobs - 1)
@@ -1364,7 +1391,7 @@ def format_backup_time(timestamp):
     """Format UNIX timestamp for the dashboard or return '--'."""
     if timestamp is None:
         return "--"
-    return datetime.fromtimestamp(timestamp).strftime("%b %d, %Y %I:%M:%S %p")
+    return datetime.fromtimestamp(timestamp, tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 def get_latest_backup_zip_timestamp():
     """Return mtime of newest ZIP backup file, if available."""
@@ -1386,13 +1413,12 @@ def get_backup_schedule_times(service_status=None):
         service_status = get_status()
 
     next_backup_at = None
-    if service_status == "active":
+    if service_status not in OFF_STATES:
         # Next backup is aligned to fixed interval boundaries from session start.
         anchor = get_session_start_time(service_status)
-        if anchor is None:
-            anchor = time.time()
-        elapsed_intervals = int(max(0, time.time() - anchor) // BACKUP_INTERVAL_SECONDS)
-        next_backup_at = anchor + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
+        if anchor is not None:
+            elapsed_intervals = int(max(0, time.time() - anchor) // BACKUP_INTERVAL_SECONDS)
+            next_backup_at = anchor + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
 
     return {
         "last_backup_time": format_backup_time(get_latest_backup_zip_timestamp()),
@@ -1490,15 +1516,15 @@ def backup_session_watcher():
                 if is_running:
                     # Session anchor is persisted in session.txt.
                     if session_started_at is None:
-                        session_started_at = write_session_start_time(now)
-                        backup_last_run_at = None
-                        backup_had_periodic_run = False
-                        backup_periodic_runs = 0
+                        # No valid session anchor: skip schedule calculation.
+                        # Start button/init logic is responsible for setting it.
+                        pass
 
                     # Number of interval boundaries crossed since session start.
-                    due_runs = int((now - session_started_at) // BACKUP_INTERVAL_SECONDS)
-                    if due_runs > backup_periodic_runs:
-                        should_run_periodic_backup = True
+                    if session_started_at is not None:
+                        due_runs = int((now - session_started_at) // BACKUP_INTERVAL_SECONDS)
+                        if due_runs > backup_periodic_runs:
+                            should_run_periodic_backup = True
                 elif is_off and session_started_at is not None:
                     # Session ended (truly off): always run one final backup.
                     # Do not clear during transitional states like activating/deactivating.
@@ -1530,21 +1556,62 @@ def start_backup_session_watcher():
     watcher.start()
 
 def initialize_session_tracking():
-    """Initialize session.txt on process boot and reconcile with service state."""
+    """Initialize session.txt on process boot with session-preserving rules."""
     ensure_session_file()
     service_status = get_status()
     session_start = read_session_start_time()
 
-    if service_status == "active":
-        # Keep existing start time when present; seed only if missing/invalid.
-        if session_start is None:
-            write_session_start_time()
+    # If server is off, clear session start.
+    if service_status in OFF_STATES:
+        clear_session_start_time()
         return
 
-    # Service is off: session file should be empty.
-    # Keep value during transitional states (activating/deactivating).
-    if service_status in ("inactive", "failed") and session_start is not None:
-        clear_session_start_time()
+    # Server is up/transitional: keep existing session anchor if present.
+    # Only seed with current time when file is empty/invalid.
+    if session_start is None:
+        write_session_start_time()
+
+def _status_debug_note():
+    """Return quick status note for troubleshooting session tracking."""
+    try:
+        service_status = get_status()
+        session_raw = ""
+        if ensure_session_file():
+            session_raw = SESSION_FILE.read_text(encoding="utf-8").strip()
+        return f"service={service_status}, session_file={'<empty>' if not session_raw else session_raw}"
+    except Exception:
+        return "service=unknown, session_file=unreadable"
+
+def _session_write_failed_response():
+    """Uniform response when session file cannot be written."""
+    message = "Session file write failed."
+    if _is_ajax_request():
+        return jsonify({"ok": False, "error": "session_write_failed", "message": f"{message} {_status_debug_note()}"}), 500
+    return redirect("/?msg=session_write_failed")
+
+def _ensure_session_anchor_or_fail(service_status):
+    """Ensure session anchor exists when service is not off."""
+    if service_status in OFF_STATES:
+        return True
+    session_start = get_session_start_time(service_status)
+    return session_start is not None
+
+def _ensure_session_anchor_for_start_or_fail():
+    """Set session start for explicit start action and validate persistence."""
+    ts = write_session_start_time()
+    return ts is not None
+
+def _ensure_session_clear_for_stop_or_fail():
+    """Clear session file after stop and validate persistence."""
+    return clear_session_start_time()
+
+def _maybe_attach_session_write_error(payload, service_status):
+    """Attach session write status note to metrics payload when anchor is missing."""
+    if service_status in OFF_STATES:
+        return payload
+    if read_session_start_time() is None:
+        payload["session_warning"] = _status_debug_note()
+    return payload
 
 def ensure_session_tracking_initialized():
     """Run session tracking initialization once per process."""
@@ -1593,6 +1660,12 @@ def _password_rejected_response():
         }), 403
     return redirect("/?msg=password_incorrect")
 
+def _backup_failed_response(message):
+    """Return backup failure response for ajax/non-ajax requests."""
+    if _is_ajax_request():
+        return jsonify({"ok": False, "error": "backup_failed", "message": message}), 500
+    return redirect("/?msg=backup_failed")
+
 #
 # ----------------------------
 # Flask routes
@@ -1605,6 +1678,10 @@ def index():
     alert_message = ""
     if message_code == "password_incorrect":
         alert_message = "Password incorrect. Action rejected."
+    elif message_code == "session_write_failed":
+        alert_message = "Session file write failed."
+    elif message_code == "backup_failed":
+        alert_message = "Backup failed."
 
     cpu_per_core = get_cpu_usage_per_core()
     ram_usage = get_ram_usage()
@@ -1655,17 +1732,12 @@ def minecraft_log_stream():
         proc = None
         try:
             proc = subprocess.Popen(
-                ["sudo", "-S", "journalctl", "-u", SERVICE, "-f", "-n", "0", "--no-pager"],
-                stdin=subprocess.PIPE,
+                ["journalctl", "-u", SERVICE, "-f", "-n", "0", "--no-pager"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
             )
-            if proc.stdin:
-                proc.stdin.write(f"{SUDO_PASSWORD}\n")
-                proc.stdin.flush()
-                proc.stdin.close()
 
             if not proc.stdout:
                 return
@@ -1708,7 +1780,7 @@ def metrics():
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
     backup_status, backup_status_class = get_backup_status()
-    return jsonify({
+    payload = {
         "service_status": service_status_display,
         "service_status_class": get_service_status_class(service_status_display),
         "service_running_status": service_status,
@@ -1728,7 +1800,8 @@ def metrics():
         "backup_status_class": backup_status_class,
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
-    })
+    }
+    return jsonify(payload)
 
 @app.route("/start", methods=["POST"])
 def start():
@@ -1740,7 +1813,8 @@ def start():
     # Start via systemd so status/auto-watchers remain aligned to one source.
     # Start service using systemd as source-of-truth for process lifecycle.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
-    write_session_start_time()
+    if not _ensure_session_anchor_for_start_or_fail():
+        return _session_write_failed_response()
     with backup_lock:
         backup_last_run_at = None
         backup_had_periodic_run = False
@@ -1762,7 +1836,7 @@ def stop():
     # 1) RCON stop, 2) final backup, 3) systemd stop (inside helper).
     # Executes ordered shutdown (RCON stop -> backup -> systemd stop).
     graceful_stop_minecraft()
-    clear_session_start_time()
+    _ensure_session_clear_for_stop_or_fail()
     with backup_lock:
         backup_last_run_at = None
         backup_had_periodic_run = False
@@ -1773,7 +1847,14 @@ def stop():
 def backup():
     """Run backup script manually from dashboard."""
     # Manual backup should not shift the periodic schedule anchor.
-    run_backup_script(track_session_schedule=False)
+    if not run_backup_script(track_session_schedule=False):
+        detail = ""
+        with backup_lock:
+            detail = backup_last_error
+        message = "Backup failed."
+        if detail:
+            message = f"Backup failed: {detail}"
+        return _backup_failed_response(message)
     return _ok_response()
 
 @app.route("/rcon", methods=["POST"])
