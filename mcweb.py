@@ -40,6 +40,9 @@ backup_had_periodic_run = False
 backup_periodic_runs = 0
 backup_lock = threading.Lock()
 backup_active_jobs = 0
+backup_last_started_at = None
+backup_last_finished_at = None
+backup_last_success = None
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -390,33 +393,36 @@ HTML = """
 </head>
 <body>
 <div class="container">
+    <!-- Header area: title, action buttons, and all stat cards. -->
     <section class="header">
         <div class="title">
             <div class="title-row">
                 <h1>Marites Server Control</h1>
                 <div class="actions">
-                    <form method="post" action="/start">
+                    <form class="ajax-form" method="post" action="/start">
                         <button id="start-btn" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
                     </form>
-                    <form class="sudo-form" method="post" action="/stop">
+                    <form class="ajax-form sudo-form" method="post" action="/stop">
                         <input type="hidden" name="sudo_password">
                         <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
                     </form>
-                    <form method="post" action="/backup">
+                    <form class="ajax-form" method="post" action="/backup" data-no-reject-modal="1">
                         <button class="btn-backup" type="submit">Backup</button>
                     </form>
                 </div>
             </div>
             <div class="stats-groups">
+                <!-- Host machine utilization metrics. -->
                 <div class="stats-group server-stats">
                     <p class="group-title">Server Stats</p>
                     <div class="status-row">
                         <span>RAM: <b id="ram-usage" class="{{ ram_usage_class }}">{{ ram_usage }}</b></span>
-                        <span>CPU: <b id="cpu-per-core" class="{{ cpu_usage_class }}">{{ cpu_per_core_text }}</b></span>
+                        <span>CPU: <b id="cpu-per-core">{% for core in cpu_per_core_items %}<span class="{{ core.class }}">CPU{{ core.index }} {{ core.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}</b></span>
                         <span>CPU freq: <b id="cpu-frequency" class="{{ cpu_frequency_class }}">{{ cpu_frequency }}</b></span>
                         <span>Storage: <b id="storage-usage" class="{{ storage_usage_class }}">{{ storage_usage }}</b></span>
                     </div>
                 </div>
+                <!-- Minecraft runtime/health metrics. -->
                 <div class="stats-group">
                     <p class="group-title">Minecraft Stats</p>
                     <div class="status-row">
@@ -426,10 +432,11 @@ HTML = """
                         <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
                     </div>
                 </div>
+                <!-- Backup scheduler/activity metrics. -->
                 <div class="stats-group">
                     <p class="group-title">Backup Stats</p>
                     <div class="status-row">
-                        <span>Backup status: <b id="backup-status">{{ backup_status }}</b></span>
+                        <span>Backup status: <b id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</b></span>
                         <span>Last backup: <b id="last-backup-time">{{ last_backup_time }}</b></span>
                         <span>Next backup: <b id="next-backup-time">{{ next_backup_time }}</b></span>
                         <span>Backups folder: <b>{{ backups_status }}</b></span>
@@ -440,11 +447,12 @@ HTML = """
 
     </section>
 
+    <!-- Main content: filtered Minecraft service logs. -->
     <section class="logs">
         <article class="panel">
             <div class="panel-header">
                 <h3>Minecraft Log (last 50 lines)</h3>
-                <form class="panel-controls sudo-form" method="post" action="/rcon">
+                <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
                     <input type="hidden" name="sudo_password">
                     <input id="rcon-command" type="text" name="rcon_command" placeholder="Enter Minecraft server command (e.g., say hello)" {% if service_running_status != "active" %}disabled{% endif %} required>
                     <button id="rcon-submit" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Submit</button>
@@ -454,17 +462,19 @@ HTML = """
         </article>
     </section>
 </div>
+<!-- Password gate modal for privileged operations (stop + RCON submit). -->
 <div id="sudo-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
         <h3 id="sudo-modal-title" class="modal-title">Password Required</h3>
         <p class="modal-text">Enter sudo password to continue.</p>
-        <input id="sudo-modal-input" class="modal-input" type="password" placeholder="Sudo password">
+        <input id="sudo-modal-input" class="modal-input" type="text" placeholder="Sudo password">
         <div class="modal-actions">
             <button id="sudo-modal-cancel" class="btn-secondary" type="button">Cancel</button>
             <button id="sudo-modal-submit" type="button">Continue</button>
         </div>
     </div>
 </div>
+<!-- Generic message modal (validation errors, action rejection, etc.). -->
 <div id="message-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
         <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
@@ -553,6 +563,7 @@ HTML = """
         const input = document.getElementById("sudo-modal-input");
         if (!modal || !input) return;
         input.value = "";
+        modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
         input.focus();
     }
@@ -560,17 +571,81 @@ HTML = """
     function closeSudoModal() {
         const modal = document.getElementById("sudo-modal");
         const input = document.getElementById("sudo-modal-input");
-        if (modal) modal.classList.remove("open");
+        if (modal) {
+            modal.classList.remove("open");
+            modal.setAttribute("aria-hidden", "true");
+            modal.style.display = "none";
+            // Force a reflow so next open state is applied cleanly.
+            void modal.offsetHeight;
+            modal.style.display = "";
+        }
         if (input) input.value = "";
         pendingSudoForm = null;
     }
 
     function showMessageModal(message) {
+        // Never stack the rejection modal on top of the password modal.
+        closeSudoModal();
         const modal = document.getElementById("message-modal");
         const text = document.getElementById("message-modal-text");
         if (!modal || !text) return;
         text.textContent = message || "";
+        modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
+    }
+
+    function renderCpuPerCore(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            return "unknown";
+        }
+        return items.map((core) => {
+            const cls = core.class || "";
+            const idx = core.index;
+            const val = core.value;
+            return `<span class="${cls}">CPU${idx} ${val}%</span>`;
+        }).join(" | ");
+    }
+
+    async function submitFormAjax(form, options = {}) {
+        if (!form) return;
+        const action = form.getAttribute("action") || "/";
+        const method = (form.getAttribute("method") || "POST").toUpperCase();
+        const suppressErrors = options.suppressErrors === true;
+        const formData = new FormData(form);
+        if (options.sudoPassword !== undefined) {
+            formData.set("sudo_password", options.sudoPassword);
+        }
+        try {
+            const response = await fetch(action, {
+                method,
+                body: formData,
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json"
+                }
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (e) {
+                payload = {};
+            }
+
+            if (!response.ok || payload.ok === false) {
+                if (!suppressErrors) {
+                    showMessageModal(payload.message || "Action rejected.");
+                }
+                return;
+            }
+
+            await refreshMetrics();
+            await refreshMinecraftLog();
+        } catch (err) {
+            if (!suppressErrors) {
+                showMessageModal("Action failed. Please try again.");
+            }
+        }
     }
 
     async function refreshMetrics() {
@@ -594,11 +669,10 @@ HTML = """
             const rconInput = document.getElementById("rcon-command");
             const rconSubmit = document.getElementById("rcon-submit");
             if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-            if (cpu && data.cpu_per_core_text) cpu.textContent = data.cpu_per_core_text;
+            if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
             if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
             if (storage && data.storage_usage) storage.textContent = data.storage_usage;
             if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-            if (cpu && data.cpu_usage_class) cpu.className = data.cpu_usage_class;
             if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
             if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
             if (players && data.players_online) players.textContent = data.players_online;
@@ -608,6 +682,7 @@ HTML = """
                 if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
             }
             if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
+            if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
             if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
             if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
             if (service && data.service_status) service.textContent = data.service_status;
@@ -639,11 +714,10 @@ HTML = """
             const freq = document.getElementById("cpu-frequency");
             const storage = document.getElementById("storage-usage");
             if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-            if (cpu && data.cpu_per_core_text) cpu.textContent = data.cpu_per_core_text;
+            if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
             if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
             if (storage && data.storage_usage) storage.textContent = data.storage_usage;
             if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-            if (cpu && data.cpu_usage_class) cpu.className = data.cpu_usage_class;
             if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
             if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
             applyRefreshMode(data.service_status);
@@ -690,12 +764,17 @@ HTML = """
     }
 
     window.addEventListener("load", () => {
+        document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                await submitFormAjax(form, {
+                    suppressErrors: form.dataset.noRejectModal === "1"
+                });
+            });
+        });
+
         document.querySelectorAll("form.sudo-form").forEach((form) => {
-            form.addEventListener("submit", (event) => {
-                if (form.dataset.skipSudo === "1") {
-                    form.dataset.skipSudo = "";
-                    return;
-                }
+            form.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 openSudoModal(form);
             });
@@ -708,16 +787,13 @@ HTML = """
             modalCancel.addEventListener("click", () => closeSudoModal());
         }
         if (modalSubmit) {
-            modalSubmit.addEventListener("click", () => {
+            modalSubmit.addEventListener("click", async () => {
                 if (!pendingSudoForm || !modalInput) return;
                 const password = (modalInput.value || "").trim();
                 if (!password) return;
-                const hidden = pendingSudoForm.querySelector("input[name='sudo_password']");
-                if (!hidden) return;
-                hidden.value = password;
-                pendingSudoForm.dataset.skipSudo = "1";
-                pendingSudoForm.submit();
+                const form = pendingSudoForm;
                 closeSudoModal();
+                await submitFormAjax(form, { sudoPassword: password });
             });
         }
         if (modalInput) {
@@ -884,6 +960,18 @@ def get_cpu_usage_class(cpu_per_core):
     except ValueError:
         return "stat-red"
     return _class_from_percent(peak)
+
+def get_cpu_per_core_items(cpu_per_core):
+    """Return per-core values with independent color classes."""
+    items = []
+    for i, raw in enumerate(cpu_per_core):
+        try:
+            val = float(raw)
+        except ValueError:
+            items.append({"index": i, "value": raw, "class": "stat-red"})
+            continue
+        items.append({"index": i, "value": f"{val:.1f}", "class": _class_from_percent(val)})
+    return items
 
 def get_ram_usage_class(ram_usage):
     """Color class based on RAM utilization percentage."""
@@ -1076,25 +1164,47 @@ def get_service_status_class(service_status_display):
         return "stat-orange"
     return "stat-red"
 
-def stop_server_automatically():
-    """Gracefully stop Minecraft via RCON (used by idle watcher)."""
+def graceful_stop_minecraft():
+    """Gracefully stop via RCON, run final backup, then stop systemd unit."""
     subprocess.run(
         ["mcrcon", "-p", RCON_PASSWORD, "stop"],
         capture_output=True,
         text=True,
         timeout=8,
     )
+    run_backup_script(track_session_schedule=False)
+    run_sudo(["systemctl", "stop", SERVICE])
+
+def stop_server_automatically():
+    """Gracefully stop Minecraft (used by idle watcher)."""
+    global backup_session_started_at
+    global backup_last_run_at
+    global backup_had_periodic_run
+    global backup_periodic_runs
+
+    graceful_stop_minecraft()
+    with backup_lock:
+        backup_session_started_at = None
+        backup_last_run_at = None
+        backup_had_periodic_run = False
+        backup_periodic_runs = 0
 
 def run_backup_script(track_session_schedule=True):
     """Run backup script and update in-memory backup timestamps."""
     global backup_last_run_at
     global backup_last_completed_at
     global backup_active_jobs
+    global backup_last_started_at
+    global backup_last_finished_at
+    global backup_last_success
 
     with backup_lock:
         # Track active backup jobs for UI status.
         backup_active_jobs += 1
+        backup_last_started_at = time.time()
+        backup_last_success = None
 
+    success = False
     try:
         success = run_sudo([BACKUP_SCRIPT]).returncode == 0
         if success:
@@ -1106,6 +1216,8 @@ def run_backup_script(track_session_schedule=True):
     finally:
         with backup_lock:
             backup_active_jobs = max(0, backup_active_jobs - 1)
+            backup_last_finished_at = time.time()
+            backup_last_success = success
 
     return success
 
@@ -1150,9 +1262,13 @@ def get_backup_schedule_times(service_status=None):
     }
 
 def get_backup_status():
-    """Return dashboard backup activity status."""
+    """Return dashboard backup activity status label and color class."""
     with backup_lock:
-        return "Running" if backup_active_jobs > 0 else "Idle"
+        active = backup_active_jobs > 0
+
+    if active:
+        return "Running", "stat-green"
+    return "Idle", "stat-yellow"
 
 def format_countdown(seconds):
     """Render remaining seconds as MM:SS."""
@@ -1272,6 +1388,33 @@ def start_backup_session_watcher():
     watcher = threading.Thread(target=backup_session_watcher, daemon=True)
     watcher.start()
 
+def _is_ajax_request():
+    """Return True when request expects JSON response (fetch/XHR)."""
+    # Primary AJAX signal used by fetch requests from this UI.
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return True
+    # Fallback signal when only Accept header is provided.
+    accept = request.headers.get("Accept", "")
+    return "application/json" in accept.lower()
+
+def _ok_response():
+    """Return appropriate success response for ajax/non-ajax requests."""
+    # AJAX callers need JSON, while legacy form submissions expect redirect.
+    if _is_ajax_request():
+        return jsonify({"ok": True})
+    return redirect("/")
+
+def _password_rejected_response():
+    """Return password rejection response for ajax/non-ajax requests."""
+    # Keep one shared password-rejected payload/message for consistency.
+    if _is_ajax_request():
+        return jsonify({
+            "ok": False,
+            "error": "password_incorrect",
+            "message": "Password incorrect. Action rejected.",
+        }), 403
+    return redirect("/?msg=password_incorrect")
+
 #
 # ----------------------------
 # Flask routes
@@ -1293,6 +1436,7 @@ def index():
     tick_rate = get_tick_rate()
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
+    backup_status, backup_status_class = get_backup_status()
     return render_template_string(
         HTML,
         service_status=service_status_display,
@@ -1300,7 +1444,7 @@ def index():
         service_running_status=service_status,
         backups_status=get_backups_status(),
         cpu_per_core_text=format_cpu_per_core_text(cpu_per_core),
-        cpu_usage_class=get_cpu_usage_class(cpu_per_core),
+        cpu_per_core_items=get_cpu_per_core_items(cpu_per_core),
         cpu_frequency=cpu_frequency,
         cpu_frequency_class=get_cpu_frequency_class(cpu_frequency),
         storage_usage=storage_usage,
@@ -1308,7 +1452,8 @@ def index():
         players_online=players_online,
         tick_rate=tick_rate,
         idle_countdown=get_idle_countdown(service_status, players_online),
-        backup_status=get_backup_status(),
+        backup_status=backup_status,
+        backup_status_class=backup_status_class,
         last_backup_time=backup_schedule["last_backup_time"],
         next_backup_time=backup_schedule["next_backup_time"],
         ram_usage=ram_usage,
@@ -1320,7 +1465,7 @@ def index():
 @app.route("/minecraft-log")
 def minecraft_log():
     """Return plain-text Minecraft service log snippet."""
-    return get_minecraft_logs(), 50, {"Content-Type": "text/plain; charset=utf-8"}
+    return get_minecraft_logs(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 @app.route("/metrics")
 def metrics():
@@ -1334,6 +1479,7 @@ def metrics():
     tick_rate = get_tick_rate()
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
+    backup_status, backup_status_class = get_backup_status()
     return jsonify({
         "service_status": service_status_display,
         "service_status_class": get_service_status_class(service_status_display),
@@ -1341,7 +1487,7 @@ def metrics():
         "ram_usage": ram_usage,
         "ram_usage_class": get_ram_usage_class(ram_usage),
         "cpu_per_core_text": format_cpu_per_core_text(cpu_per_core),
-        "cpu_usage_class": get_cpu_usage_class(cpu_per_core),
+        "cpu_per_core_items": get_cpu_per_core_items(cpu_per_core),
         "cpu_frequency": cpu_frequency,
         "cpu_frequency_class": get_cpu_frequency_class(cpu_frequency),
         "storage_usage": storage_usage,
@@ -1349,7 +1495,8 @@ def metrics():
         "players_online": players_online,
         "tick_rate": tick_rate,
         "idle_countdown": get_idle_countdown(service_status, players_online),
-        "backup_status": get_backup_status(),
+        "backup_status": backup_status,
+        "backup_status_class": backup_status_class,
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
     })
@@ -1362,6 +1509,7 @@ def start():
     global backup_had_periodic_run
     global backup_periodic_runs
 
+    # Start via systemd so status/auto-watchers remain aligned to one source.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
     with backup_lock:
         # Only initialize if this is the first transition into running.
@@ -1370,7 +1518,7 @@ def start():
             backup_last_run_at = None
             backup_had_periodic_run = False
             backup_periodic_runs = 0
-    return redirect("/")
+    return _ok_response()
 
 @app.route("/stop", methods=["POST"])
 def stop():
@@ -1382,27 +1530,24 @@ def stop():
 
     sudo_password = request.form.get("sudo_password", "")
     if not validate_sudo_password(sudo_password):
-        return redirect("/?msg=password_incorrect")
+        return _password_rejected_response()
 
-    subprocess.run(
-        ["mcrcon", "-p", RCON_PASSWORD, "stop"],
-        capture_output=True,
-        text=True,
-        timeout=8,
-    )
+    # Ordered shutdown path:
+    # 1) RCON stop, 2) final backup, 3) systemd stop (inside helper).
+    graceful_stop_minecraft()
     with backup_lock:
         backup_session_started_at = None
         backup_last_run_at = None
         backup_had_periodic_run = False
         backup_periodic_runs = 0
-    return redirect("/")
+    return _ok_response()
 
 @app.route("/backup", methods=["POST"])
 def backup():
     """Run backup script manually from dashboard."""
     # Manual backup should not shift the periodic schedule anchor.
     run_backup_script(track_session_schedule=False)
-    return redirect("/")
+    return _ok_response()
 
 @app.route("/rcon", methods=["POST"])
 def rcon():
@@ -1410,19 +1555,24 @@ def rcon():
     command = request.form.get("rcon_command", "").strip()
     sudo_password = request.form.get("sudo_password", "")
     if not command:
+        if _is_ajax_request():
+            return jsonify({"ok": False, "message": "Command is required."}), 400
         return redirect("/")
     if get_status() != "active":
+        if _is_ajax_request():
+            return jsonify({"ok": False, "message": "Server is not running."}), 409
         return redirect("/")
     if not validate_sudo_password(sudo_password):
-        return redirect("/?msg=password_incorrect")
+        return _password_rejected_response()
 
+    # Fire-and-forget command execution; output is visible in server logs.
     subprocess.run(
         ["mcrcon", "-p", RCON_PASSWORD, command],
         capture_output=True,
         text=True,
         timeout=8,
     )
-    return redirect("/")
+    return _ok_response()
 
 if __name__ == "__main__":
     # Start background automation loops before serving HTTP requests.
