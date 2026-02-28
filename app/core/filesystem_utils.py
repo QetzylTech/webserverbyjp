@@ -34,6 +34,7 @@ def list_download_files(base_dir, pattern, display_tz):
         items.append({
             "name": path.name,
             "mtime": ts,
+            "size_bytes": stat.st_size,
             "modified": datetime.fromtimestamp(ts, tz=display_tz).strftime("%b %d, %Y %I:%M:%S %p %Z"),
             "size_text": format_file_size(stat.st_size),
         })

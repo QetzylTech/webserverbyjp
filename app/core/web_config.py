@@ -7,6 +7,7 @@ class WebConfig:
     """Read a dotenv-like config file and expose typed getters."""
 
     def __init__(self, config_path, base_dir):
+        """Dunder method __init__."""
         self.config_path = Path(config_path)
         self.base_dir = Path(base_dir)
         self.values = self._load()

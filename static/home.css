@@ -56,7 +56,7 @@
         background: var(--surface);
         border: 0;
         border-radius: 14px;
-        padding: 18px 20px;
+        padding: 18px 12px 12px;
         box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
     }
 
@@ -84,8 +84,9 @@
     .stats-groups {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
+        gap: 12px;
         width: 100%;
+        margin: 0;
     }
 
     .stats-group {
@@ -94,6 +95,7 @@
         background: #eef2ff;
         padding: 8px 10px;
         min-width: 0;
+        margin: 0;
     }
 
     .server-stats {
@@ -177,7 +179,8 @@
     button {
         border: 0;
         border-radius: 10px;
-        padding: 10px 16px;
+        height: 40px;
+        padding: 0 16px;
         font-weight: 600;
         cursor: pointer;
         transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
@@ -193,14 +196,15 @@
         opacity: 0.65;
         transform: none;
     }
+    button:disabled:hover { background: var(--ui-disabled-hover, #8193ab); }
 
-    .btn-start { background: #15803d; }
-    .btn-start:hover { background: #166534; }
+    .btn-start { background: #0f766e; }
+    .btn-start:hover { background: #0d9488; }
 
     .btn-stop { background: #b91c1c; }
     .btn-stop:hover { background: #991b1b; }
 
-    .btn-backup { background: #1d4ed8; }
+    .btn-backup { background: #1e3a8a; }
     .btn-backup:hover { background: #1e40af; }
 
     .logs {
@@ -235,52 +239,16 @@
     #log-source {
         margin: 0;
         min-width: 190px;
-        border: 0;
-        border-radius: 10px;
-        padding: 8px 34px 8px 12px;
-        font-size: 0.95rem;
-        font-weight: 600;
-        color: #fff;
-        background: #1d4ed8;
-        cursor: pointer;
-        appearance: none;
-        -webkit-appearance: none;
-        -moz-appearance: none;
-        background-image:
-            linear-gradient(45deg, transparent 50%, #ffffff 50%),
-            linear-gradient(135deg, #ffffff 50%, transparent 50%);
-        background-position:
-            calc(100% - 18px) 50%,
-            calc(100% - 12px) 50%;
-        background-size:
-            6px 6px,
-            6px 6px;
-        background-repeat: no-repeat;
-        transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
-    }
-
-    #log-source:hover {
-        background-color: #1e40af;
-    }
-
-    #log-source:focus {
-        outline: none;
-        box-shadow: none;
-    }
-
-    #log-source option {
-        background: #ffffff;
-        color: #0f172a;
     }
 
     #log-source option:hover,
     #log-source option:checked {
-        background: #1d4ed8;
+        background: #1e3a8a;
         color: #ffffff;
     }
 
     #rcon-submit {
-        background: #1d4ed8;
+        background: #1e3a8a;
     }
 
     #rcon-submit:hover {
@@ -309,7 +277,8 @@
         min-width: 0;
         border: 0;
         border-radius: 8px;
-        padding: 8px 10px;
+        height: 40px;
+        padding: 0 10px;
         font-size: 0.9rem;
         color: #1f2a37;
         background: #eef2ff;
@@ -323,18 +292,17 @@
 
     .console-box {
         display: block;
-        margin: 0;
+        margin: 0 12px 12px;
         min-height: 0;
         max-height: none;
         overflow: auto;
         white-space: pre-wrap;
         word-break: break-word;
-        padding: 14px;
+        padding: 12px;
         font-size: 0.86rem;
         line-height: 1.45;
-        border-top: 1px solid var(--console-border);
-        border: 4px solid #ffffff;
-        border-radius: 0 0 14px 14px;
+        border: 0;
+        border-radius: 12px;
         background-clip: padding-box;
         background: #eef2ff;
         color: #1f2a37;
@@ -342,10 +310,14 @@
         scrollbar-color: #94a3b8 #ffffff;
         scrollbar-width: thin;
     }
+    .console-box.has-vscroll {
+        margin-right: 0;
+        padding-right: 0;
+    }
 
     .console-box::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
+        width: 12px;
+        height: 12px;
     }
 
     .console-box::-webkit-scrollbar-track {
@@ -355,7 +327,9 @@
     .console-box::-webkit-scrollbar-thumb {
         background: #94a3b8;
         border-radius: 10px;
-        border: 2px solid #ffffff;
+        border-style: solid;
+        border-width: 2px 0 2px 2px;
+        border-color: #ffffff;
     }
 
     .console-box::-webkit-scrollbar-thumb:hover {
@@ -430,6 +404,21 @@
         justify-content: flex-end;
         gap: 8px;
     }
+    .modal-more-btn {
+        margin: 2px 0 10px;
+    }
+    .modal-details {
+        margin: 0 0 12px;
+        padding: 10px;
+        border-radius: 10px;
+        background: #eef2ff;
+        color: #1f2a37;
+        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+        font-size: 0.82rem;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
 
     .btn-secondary {
         background: #475569;
@@ -444,7 +433,6 @@
         color: #e6edf3;
     }
 
-    html.theme-dark .sidebar,
     html.theme-dark .header,
     html.theme-dark .panel,
     html.theme-dark .modal-card {
@@ -452,7 +440,6 @@
         color: #e6edf3;
     }
 
-    html.theme-dark .sidebar-title,
     html.theme-dark .group-title,
     html.theme-dark .modal-text {
         color: #9fb0c6;
@@ -491,15 +478,14 @@
 
     html.theme-dark .console-box {
         background: #111111;
-        border-color: #11161d;
-        border-top-color: #11161d;
+        border: 0;
         scrollbar-color: #334155 #11161d;
         scrollbar-width: thin;
     }
 
     html.theme-dark .console-box::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
+        width: 12px;
+        height: 12px;
     }
 
     html.theme-dark .console-box::-webkit-scrollbar-track {
@@ -509,7 +495,9 @@
     html.theme-dark .console-box::-webkit-scrollbar-thumb {
         background: #334155;
         border-radius: 10px;
-        border: 2px solid #11161d;
+        border-style: solid;
+        border-width: 2px 0 2px 2px;
+        border-color: #11161d;
     }
 
     html.theme-dark .console-box::-webkit-scrollbar-thumb:hover {
@@ -532,6 +520,10 @@
 
     html.theme-dark .modal-image {
         border-color: #334155;
+    }
+    html.theme-dark .modal-details {
+        background: #1f2733;
+        color: #e6edf3;
     }
 
     @media (max-width: 1400px) and (min-width: 901px) {

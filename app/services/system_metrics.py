@@ -106,6 +106,7 @@ def get_storage_usage():
     percent = (used / total) * 100.0
 
     def _fmt(value):
+        """Runtime helper _fmt."""
         units = ["B", "K", "M", "G", "T", "P"]
         v = float(max(0, value))
         idx = 0

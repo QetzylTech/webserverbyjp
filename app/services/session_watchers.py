@@ -109,6 +109,69 @@ def start_backup_session_watcher(ctx):
     watcher.start()
 
 
+def _run_low_storage_emergency_shutdown(ctx):
+    """Warn players via RCON, wait 30s, then force an emergency shutdown backup."""
+    try:
+        warning = (
+            "say [ALERT] Server storage is critically low (<10% free). "
+            "Emergency shutdown in 30 seconds."
+        )
+        if ctx.get_status() == "active" and ctx.is_rcon_enabled():
+            try:
+                ctx._run_mcrcon(warning, timeout=8)
+            except Exception as exc:
+                ctx.log_mcweb_exception("low_storage_rcon_warn", exc)
+
+        time.sleep(30)
+        if ctx.get_status() == "active":
+            ctx.set_service_status_intent("shutting")
+            ctx.graceful_stop_minecraft(trigger="emergency")
+            ctx.clear_session_start_time()
+            ctx.reset_backup_schedule_state()
+            ctx.log_mcweb_action("emergency-shutdown", rejection_message="Low storage emergency shutdown executed.")
+    except Exception as exc:
+        ctx.log_mcweb_exception("low_storage_emergency_shutdown", exc)
+    finally:
+        with ctx.storage_emergency_lock:
+            ctx.storage_emergency_active = False
+
+
+def storage_safety_watcher(ctx):
+    """Trigger emergency shutdown workflow when storage stays below safe threshold."""
+    while True:
+        try:
+            service_status = ctx.get_status()
+            low_storage = ctx.is_storage_low()
+
+            if service_status == "active" and low_storage:
+                should_start = False
+                with ctx.storage_emergency_lock:
+                    if not ctx.storage_emergency_active:
+                        ctx.storage_emergency_active = True
+                        should_start = True
+                if should_start:
+                    ctx.log_mcweb_action("emergency-shutdown", rejection_message=ctx.low_storage_error_message())
+                    threading.Thread(target=_run_low_storage_emergency_shutdown, args=(ctx,), daemon=True).start()
+            elif not low_storage:
+                with ctx.storage_emergency_lock:
+                    ctx.storage_emergency_active = False
+        except Exception as exc:
+            ctx.log_mcweb_exception("storage_safety_watcher", exc)
+
+        interval = (
+            ctx.STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS
+            if ctx.get_status() == "active"
+            else ctx.STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS
+        )
+        time.sleep(interval)
+
+
+def start_storage_safety_watcher(ctx):
+    """Start the low-storage safety watcher daemon thread."""
+    watcher = threading.Thread(target=storage_safety_watcher, args=(ctx,), daemon=True)
+    watcher.start()
+
+
 def initialize_session_tracking(ctx):
     """Initialize session file and periodic backup counters on process startup."""
     ctx.ensure_session_file()

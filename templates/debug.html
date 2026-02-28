@@ -1,0 +1,146 @@
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debug</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='home.css', v=static_version('home.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='debug.css', v=static_version('debug.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
+</head>
+<body data-page="debug">
+<div class="layout">
+    {% include "partials/nav.html" %}
+    <main class="content">
+        <div class="debug-container">
+            <div id="debug-shell" class="debug-shell">
+                <div class="debug-main">
+                    <section class="debug-panel debug-header-panel pane-primary">
+                        <div class="debug-header-top">
+                            <div class="debug-header-main">
+                                <h1 class="debug-header-title">Debug</h1>
+                                <div class="debug-header-editor-actions">
+                                    <button class="debug-open-editor" id="open-props-editor" type="button">Edit server.properties</button>
+                                    <button class="debug-open-explorer btn-backup" id="open-file-explorer" type="button">Env Value Editor</button>
+                                </div>
+                            </div>
+                            <p class="debug-header-note">Debug mode is enabled at boot. Changes here are runtime-only and reset after app restart.</p>
+                        </div>
+                        {% if debug_message %}
+                        <p class="debug-message">{{ debug_message }}</p>
+                        {% endif %}
+                        <div class="debug-ops">
+                            <form method="post" action="/debug/start">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="btn-start" type="submit">Start</button>
+                            </form>
+                            <form method="post" action="/debug/backup" id="debug-backup-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <select class="debug-password" name="mode" id="debug-backup-mode">
+                                    <option value="manual">Manual</option>
+                                    <option value="auto">Auto Snapshot</option>
+                                    <option value="scheduled">Scheduled</option>
+                                </select>
+                                <input class="debug-password" type="number" min="1" step="1" name="minutes_from_now" id="debug-backup-minutes" placeholder="Minutes from now (scheduled)" style="display:none;">
+                                <button class="btn-backup" type="submit">Backup</button>
+                            </form>
+                            <form method="post" action="/debug/stop">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input class="debug-password" type="password" name="sudo_password" autocomplete="current-password" placeholder="Sudo password for stop" required>
+                                <button class="btn-stop" type="submit">Stop</button>
+                            </form>
+                        </div>
+                    </section>
+                    <section class="debug-panel debug-explorer-panel pane-primary">
+                        <div class="debug-explorer-header">
+                            <h2 class="debug-explorer-title">Read-only File Explorer</h2>
+                        </div>
+                        <div class="debug-explorer-controls">
+                            <div id="debug-explorer-view-switch" class="debug-explorer-view-toggle" data-mode="list" role="group" aria-label="Explorer view mode">
+                                <button id="debug-explorer-list-view" class="debug-explorer-toggle active" type="button">List</button>
+                                <button id="debug-explorer-grid-view" class="debug-explorer-toggle" type="button">Grid</button>
+                            </div>
+                            <input id="debug-explorer-path" class="debug-explorer-path" type="text" value="" placeholder="minecraft root" readonly>
+                            <button id="debug-explorer-up" class="debug-explorer-btn" type="button">Parent</button>
+                            <button id="debug-explorer-refresh" class="debug-explorer-btn" type="button">Refresh</button>
+                        </div>
+                        <div id="debug-explorer-list" class="debug-explorer-list">
+                            <div class="debug-explorer-empty">Loading...</div>
+                        </div>
+                    </section>
+                </div>
+                <div id="debug-viewer-resizer" class="debug-viewer-resizer" aria-hidden="true"></div>
+                <aside id="debug-viewer" class="debug-viewer pane-editor" aria-hidden="true">
+                    <div class="debug-viewer-header">
+                        <h2 id="debug-viewer-title" class="debug-viewer-title">server.properties editor</h2>
+                        <div class="debug-pane-actions">
+                            <input id="debug-viewer-password" class="debug-pane-password" type="password" autocomplete="current-password" placeholder="Sudo password" required>
+                            <button id="debug-viewer-apply" class="debug-pane-apply" type="button">Apply</button>
+                            <button id="debug-viewer-reset" class="debug-pane-reset" type="button">Reset</button>
+                            <button id="debug-viewer-close" class="debug-pane-close" type="button" aria-label="Close editor">x</button>
+                        </div>
+                    </div>
+                    <p id="debug-viewer-path" class="debug-viewer-path">{{ debug_server_properties_path }}</p>
+                    <div id="debug-props-error" class="debug-props-error" hidden></div>
+                    <form id="debug-props-form" class="debug-props-form"></form>
+                </aside>
+                <aside id="debug-explorer-drawer" class="debug-explorer-drawer pane-editor" aria-hidden="true">
+                    <div class="debug-explorer-header">
+                        <h2 class="debug-explorer-title">Env Value Editor</h2>
+                        <div class="debug-pane-actions">
+                            <input class="debug-pane-password" type="password" name="sudo_password" form="debug-env-form" autocomplete="current-password" placeholder="Sudo password" required>
+                            <button class="debug-pane-apply" type="submit" name="action" value="apply" form="debug-env-form">Apply</button>
+                            <button class="debug-pane-reset" type="submit" name="action" value="reset_all" form="debug-env-form">Reset</button>
+                            <button id="debug-explorer-close" class="debug-pane-close" type="button" aria-label="Close editor">x</button>
+                        </div>
+                    </div>
+                    <section class="debug-panel debug-env-panel">
+                        <form id="debug-env-form" method="post" action="/debug/env">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <div class="debug-table-wrap">
+                                <table class="debug-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Key</th>
+                                            <th>Value (session override)</th>
+                                            <th>Env value</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in debug_rows %}
+                                        <tr>
+                                            <td class="debug-key">
+                                                {{ row.key }}
+                                                {% if row.overridden %}
+                                                <span class="debug-overridden">OVERRIDDEN</span>
+                                                {% endif %}
+                                            </td>
+                                            <td><input class="debug-input" name="env_{{ row.key }}" value="{{ row.value }}"></td>
+                                            <td class="debug-original">{{ row.original }}</td>
+                                            <td>
+                                                <div class="debug-row-actions">
+                                                    <button class="debug-row-reset" type="button" data-reset-target="env_{{ row.key }}" data-original="{{ row.original | e }}">Reset</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </form>
+                    </section>
+                </aside>
+            </div>
+        </div>
+    </main>
+</div>
+<script>
+window.__MCWEB_DEBUG_CONFIG = {
+    csrfToken: {{ csrf_token | tojson }},
+};
+</script>
+<script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
+<script src="{{ url_for('static', filename='debug.js', v=static_version('debug.js')) }}"></script>
+</body>
+</html>

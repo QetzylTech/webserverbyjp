@@ -47,7 +47,8 @@ Important keys:
 - `RCON_PORT`
 - `DISPLAY_TZ`
 - backup/idle/metrics interval keys
-- `WORLD_DIR`, `BACKUP_STATE_FILE` (for `scripts/backup.sh`)
+- `BACKUP_STATE_FILE`
+- `DEBUG` (controls debug page availability at app boot)
 
 3. Configure `server.properties`
 
@@ -68,40 +69,70 @@ Notes:
 
 4. `backup.sh` behavior
 
-`scripts/backup.sh` reads tunables from `mcweb.env` (`WORLD_DIR`, `BACKUP_DIR`, `BACKUP_STATE_FILE`, `RCON_HOST`, `RCON_PORT`).
+`scripts/backup.sh` reads tunables from `mcweb.env` (`BACKUP_DIR`, `AUTO_SNAPSHOT_DIR`, `BACKUP_STATE_FILE`, `RCON_HOST`, `RCON_PORT`, `DEBUG`).
 
-`WORLD_DIR` must be set in `mcweb.env`. The script aborts if missing.
+World folder resolution:
+- when `DEBUG=false`: world folder is derived from `server.properties` `level-name`
+- when `DEBUG=true`: world folder is forced to `/opt/Minecraft/config`
 
-Backup filename suffixes are trigger-based:
-- auto interval backup: `world_<timestamp>_auto.zip`
-- manual backup button: `world_<timestamp>_manual.zip`
-- session-end backup: `world_<timestamp>_session_end.zip`
+Backup output is trigger-based:
+- auto interval backup: incremental snapshot directory
+  - default location: `<BACKUP_DIR>/snapshots/world_<timestamp>_auto/`
+  - implementation: `rsync -a --delete` with `--link-dest` to previous `_auto` snapshot
+- manual backup button: full zip `world_<timestamp>_manual.zip`
+- session-end backup: full zip `world_<timestamp>_session_end.zip`
+
+Optional override:
+- `AUTO_SNAPSHOT_DIR` sets where auto snapshots are stored (default is `<BACKUP_DIR>/snapshots`).
 
 Make executable:
 `chmod +x /opt/Minecraft/webserverbyjp/scripts/backup.sh`
 
-5. Install dependencies
+5. Debug mode behavior
+
+`DEBUG` is read at app boot and controls debug route visibility:
+- `DEBUG=true`: `/debug` and debug tools are available
+- `DEBUG=false`: `/debug` and `/debug/*` return 404 and Debug nav link is hidden
+
+Debug boot handling for `server.properties`:
+- when `DEBUG=true`:
+  - active `server.properties` is preserved as `server.properties.real` (same directory, if missing)
+  - active `server.properties` is regenerated from `.real`
+  - forced values are applied:
+    - `level-name=debug_world`
+    - `motd=debugging in progress`
+- when `DEBUG=false` and `.real` exists:
+  - active file is restored from `.real`
+  - if active file still contains debug world/motd, it is archived to `data/server.properties.debug`
+
+Debug action authentication:
+- debug `server.properties` Apply requires sudo password validation
+- debug env editor Apply/Reset requires sudo password validation
+- debug Stop requires sudo password validation
+
+6. Install dependencies
 
 Runtime dependencies:
 - Python 3
 - Flask (`pip install flask`)
 - `mcrcon` (must be in PATH)
 - `zip`
+- `rsync` (required for auto snapshots)
 - `sudo`, `systemd`
 
 Example:
 sudo apt update
-sudo apt install -y python3 python3-pip zip mcrcon nginx
+sudo apt install -y python3 python3-pip zip rsync mcrcon nginx
 python3 -m pip install flask
 
-6. Run the dashboard
+7. Run the dashboard
 
 From the project folder:
 `python3 mcweb.py`
 
 Bind address and port come from `mcweb.env` (`WEB_HOST`, `WEB_PORT`).
 
-7. Nginx reverse proxy (optional, no `:8080` in URL)
+8. Nginx reverse proxy (optional, no `:8080` in URL)
 
 Example server block:
 
@@ -122,11 +153,11 @@ Then reload Nginx:
 sudo nginx -t
 sudo systemctl reload nginx
 
-8. Optional: run `mcweb.py` as a service
+9. Optional: run `mcweb.py` as a service
 
 For production, run `mcweb.py` with a process manager (systemd, supervisor, etc.) so it restarts automatically.
 
-9. Systemd + sudoers (recommended)
+10. Systemd + sudoers (recommended)
 
 If `mcweb.py` runs under systemd and uses `sudo` for service/backup actions, add a sudoers rule (via `visudo`) for the service account.
 
@@ -139,7 +170,7 @@ Notes:
 - Verify your actual `systemctl` path (`/bin/systemctl` vs `/usr/bin/systemctl`) with:
   `command -v systemctl`
 
-10. Tests
+11. Tests
 
 Current test files:
 - `tests/test_config.py`
@@ -147,4 +178,33 @@ Current test files:
 - `tests/test_control_plane.py`
 
 Run tests:
-`python -m unittest tests.test_config tests.test_file_utils tests.test_control_plane`
+`python -m unittest discover -s tests -p "test_*.py"`
+
+12. Safety and restore notes
+
+Low storage protection:
+- startup is blocked when storage is below configured safe threshold
+- home page shows the low-storage warning immediately
+- if storage drops low while server is running, an RCON warning is sent and emergency shutdown runs after 30 seconds
+- emergency shutdown backup files use `_emergency` suffix
+
+Backup reliability:
+- backups use trigger-based suffixes (`_manual`, `_session_end`, `_emergency`, etc.)
+- when `DEBUG=true`, backup filenames also append `_debug` (in addition to any existing suffix)
+- backup flow restores `save-on` on abnormal exits to avoid leaving autosave disabled
+
+Restore behavior:
+- restore creates a new world directory named from the current world + timestamp
+- restored data is applied to the new world directory
+- `server.properties` `level-name` is switched to the new world directory name
+- previous world path is recorded in `data/old_world.txt`
+- pre-restore snapshot creation is required; restore is canceled if snapshot creation fails
+- undo restore is available using the latest pre-restore snapshot
+
+13. TODO
+
+- [ ] Add automatic retention/cleanup for old restored world directories (using `data/old_world.txt` for visibility and safe pruning)
+- [ ] Add UI surfacing for explicit debug-stop auth failures (`Password incorrect`) instead of generic stop failure
+- [ ] Add integration tests for debug auth gates (`/debug/server-properties`, `/debug/env`, `/debug/stop`)
+- [ ] Add end-to-end tests for low-storage startup block and emergency shutdown path
+- [ ] Add restore dry-run validation mode to inspect zip structure and target paths before applying

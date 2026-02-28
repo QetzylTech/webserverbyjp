@@ -1,0 +1,374 @@
+:root {
+    --btn-height: 40px;
+    --ui-blue: #1e3a8a;
+    --ui-blue-hover: #1e40af;
+    --ui-teal: #0f766e;
+    --ui-teal-hover: #0d9488;
+    --ui-red: #b91c1c;
+    --ui-red-hover: #991b1b;
+    --ui-disabled: #94a3b8;
+    --ui-disabled-hover: #8193ab;
+    --pane-radius: 12px;
+    --pane-content-radius: 10px;
+    --pane-padding: 12px;
+    --pane-scrollbar-size: 12px;
+    --pane-scrollbar-thumb: #94a3b8;
+    --pane-scrollbar-thumb-hover: #64748b;
+    --pane-scrollbar-track: #ffffff;
+    --pane-scrollbar-track-dark: #11161d;
+    --pane-scrollbar-thumb-dark: #334155;
+    --pane-scrollbar-thumb-hover-dark: #475569;
+    --pane-slide-duration: 220ms;
+    --pane-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --pane-gap: 12px;
+}
+
+button,
+.file-action-btn,
+.modal-actions button {
+    height: var(--btn-height);
+}
+
+.btn-backup,
+#rcon-submit,
+.debug-explorer-btn,
+.debug-explorer-toggle,
+.debug-row-reset,
+.file-download-btn,
+.file-viewer-download,
+.backup-restore-rollback,
+.modal-btn-submit,
+.debug-pane-reset {
+    background: var(--ui-blue);
+    color: #ffffff;
+}
+
+.btn-backup:hover,
+#rcon-submit:hover,
+.debug-explorer-btn:hover,
+.debug-explorer-toggle:hover,
+.debug-row-reset:hover,
+.file-download-btn:hover,
+.file-viewer-download:hover,
+.backup-restore-rollback:hover,
+.modal-btn-submit:hover,
+.debug-pane-reset:hover {
+    background: var(--ui-blue-hover);
+}
+
+.btn-start,
+.file-view-btn,
+.backup-restore-cancel,
+.debug-open-editor {
+    background: var(--ui-teal);
+    color: #ffffff;
+}
+
+.btn-start:hover,
+.file-view-btn:hover,
+.backup-restore-cancel:hover,
+.debug-open-editor:hover {
+    background: var(--ui-teal-hover);
+}
+
+.btn-stop,
+.file-restore-btn,
+.backup-restore-start,
+.debug-pane-apply {
+    background: var(--ui-red);
+    color: #ffffff;
+}
+
+.btn-stop:hover,
+.file-restore-btn:hover,
+.backup-restore-start:hover,
+.debug-pane-apply:hover {
+    background: var(--ui-red-hover);
+}
+
+/* Global dropdown style (matches Home log-source dropdown). */
+select,
+#log-source,
+.sort-select,
+select.debug-password,
+select.debug-props-input {
+    border: 0;
+    border-radius: 10px;
+    height: var(--btn-height);
+    padding: 0 34px 0 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #ffffff;
+    background: var(--ui-blue);
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, #ffffff 50%),
+        linear-gradient(135deg, #ffffff 50%, transparent 50%);
+    background-position:
+        calc(100% - 18px) 50%,
+        calc(100% - 12px) 50%;
+    background-size:
+        6px 6px,
+        6px 6px;
+    background-repeat: no-repeat;
+    transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
+}
+
+select:hover,
+#log-source:hover,
+.sort-select:hover,
+select.debug-password:hover,
+select.debug-props-input:hover {
+    background-color: var(--ui-blue-hover);
+}
+
+select:focus,
+#log-source:focus,
+.sort-select:focus,
+select.debug-password:focus,
+select.debug-props-input:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+select option,
+#log-source option,
+.sort-select option,
+select.debug-password option,
+select.debug-props-input option {
+    background: #ffffff;
+    color: #0f172a;
+}
+
+button:disabled,
+.file-action-btn:disabled,
+.sort-select:disabled,
+select.debug-password:disabled,
+#log-source:disabled,
+#log-source:disabled {
+    background: var(--ui-disabled);
+    color: #ffffff;
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+button:disabled:hover,
+.file-action-btn:disabled:hover,
+.sort-select:disabled:hover,
+select.debug-password:disabled:hover,
+#log-source:disabled:hover {
+    background: var(--ui-disabled-hover);
+    color: #ffffff;
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+/* Shared pane surfaces via semantic pane classes */
+.panel.pane-primary,
+.debug-panel.pane-primary {
+    border: 0;
+    border-radius: var(--pane-radius);
+    background: var(--surface);
+    padding: 14px;
+}
+
+.file-viewer.pane-editor,
+.debug-viewer.pane-editor,
+.debug-explorer-drawer.pane-editor {
+    min-width: 0;
+    border: 0;
+    border-radius: var(--pane-radius);
+    background: var(--surface);
+    padding: 12px;
+}
+
+/* Shared scrollable pane content */
+.console-box,
+.file-viewer-content,
+.debug-explorer-list,
+.debug-table-wrap,
+.debug-props-form {
+    border-radius: var(--pane-content-radius);
+    scrollbar-color: var(--pane-scrollbar-thumb) var(--pane-scrollbar-track);
+    scrollbar-width: thin;
+}
+
+.console-box::-webkit-scrollbar,
+.file-viewer-content::-webkit-scrollbar,
+.debug-explorer-list::-webkit-scrollbar,
+.debug-table-wrap::-webkit-scrollbar,
+.debug-props-form::-webkit-scrollbar {
+    width: var(--pane-scrollbar-size);
+    height: var(--pane-scrollbar-size);
+}
+
+.console-box::-webkit-scrollbar-track,
+.file-viewer-content::-webkit-scrollbar-track,
+.debug-explorer-list::-webkit-scrollbar-track,
+.debug-table-wrap::-webkit-scrollbar-track,
+.debug-props-form::-webkit-scrollbar-track {
+    background: var(--pane-scrollbar-track);
+}
+
+.console-box::-webkit-scrollbar-thumb,
+.file-viewer-content::-webkit-scrollbar-thumb,
+.debug-explorer-list::-webkit-scrollbar-thumb,
+.debug-table-wrap::-webkit-scrollbar-thumb,
+.debug-props-form::-webkit-scrollbar-thumb {
+    background: var(--pane-scrollbar-thumb);
+    border-radius: var(--pane-content-radius);
+    border-style: solid;
+    border-width: 2px 0 2px 2px;
+    border-color: var(--pane-scrollbar-track);
+}
+
+.console-box::-webkit-scrollbar-thumb:hover,
+.file-viewer-content::-webkit-scrollbar-thumb:hover,
+.debug-explorer-list::-webkit-scrollbar-thumb:hover,
+.debug-table-wrap::-webkit-scrollbar-thumb:hover,
+.debug-props-form::-webkit-scrollbar-thumb:hover {
+    background: var(--pane-scrollbar-thumb-hover);
+}
+
+/* Shared pane resizers */
+.file-viewer-resizer,
+.debug-viewer-resizer {
+    border-radius: 8px;
+    background: transparent;
+    transition: background 0.15s ease;
+    user-select: none;
+    touch-action: none;
+}
+
+@keyframes pane-slide-in-x {
+    from {
+        opacity: 0;
+        transform: translateX(calc(100% + var(--pane-gap)));
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pane-slide-out-x {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(calc(100% + var(--pane-gap)));
+    }
+}
+
+@keyframes pane-slide-in-y {
+    from {
+        opacity: 0;
+        transform: translateY(calc(100% + var(--pane-gap)));
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pane-slide-out-y {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(calc(100% + var(--pane-gap)));
+    }
+}
+
+.pane-slide-in-x {
+    animation: pane-slide-in-x var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+.pane-slide-out-x {
+    animation: pane-slide-out-x var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+.pane-slide-in-y {
+    animation: pane-slide-in-y var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+.pane-slide-out-y {
+    animation: pane-slide-out-y var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+@keyframes pane-make-way-x {
+    0% {
+        margin-right: var(--pane-gap);
+    }
+    100% {
+        margin-right: 0;
+    }
+}
+
+@keyframes pane-make-way-y {
+    0% {
+        margin-bottom: var(--pane-gap);
+    }
+    100% {
+        margin-bottom: 0;
+    }
+}
+
+.pane-make-way-x {
+    animation: pane-make-way-x var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+.pane-make-way-y {
+    animation: pane-make-way-y var(--pane-slide-duration) var(--pane-slide-ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pane-slide-in-x,
+    .pane-slide-out-x,
+    .pane-slide-in-y,
+    .pane-slide-out-y,
+    .pane-make-way-x,
+    .pane-make-way-y {
+        animation: none !important;
+    }
+}
+
+html.theme-dark .console-box,
+html.theme-dark .file-viewer-content,
+html.theme-dark .debug-explorer-list,
+html.theme-dark .debug-table-wrap,
+html.theme-dark .debug-props-form {
+    scrollbar-color: var(--pane-scrollbar-thumb-dark) var(--pane-scrollbar-track-dark);
+}
+
+html.theme-dark .console-box::-webkit-scrollbar-track,
+html.theme-dark .file-viewer-content::-webkit-scrollbar-track,
+html.theme-dark .debug-explorer-list::-webkit-scrollbar-track,
+html.theme-dark .debug-table-wrap::-webkit-scrollbar-track,
+html.theme-dark .debug-props-form::-webkit-scrollbar-track {
+    background: var(--pane-scrollbar-track-dark);
+}
+
+html.theme-dark .console-box::-webkit-scrollbar-thumb,
+html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb,
+html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb,
+html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb,
+html.theme-dark .debug-props-form::-webkit-scrollbar-thumb {
+    background: var(--pane-scrollbar-thumb-dark);
+    border-color: var(--pane-scrollbar-track-dark);
+}
+
+html.theme-dark .console-box::-webkit-scrollbar-thumb:hover,
+html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb:hover,
+html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb:hover,
+html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb:hover,
+html.theme-dark .debug-props-form::-webkit-scrollbar-thumb:hover {
+    background: var(--pane-scrollbar-thumb-hover-dark);
+}

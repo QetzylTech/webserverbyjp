@@ -392,8 +392,9 @@
 
     const applySystemTheme = () => {
       const themeLink = document.getElementById('hljs-theme');
-      if (!themeLink) return;
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('theme-dark', !!prefersDark);
+      if (!themeLink) return;
       const nextHref = prefersDark ? themeLink.dataset.dark : themeLink.dataset.light;
       if (nextHref && themeLink.getAttribute('href') !== nextHref) {
         themeLink.setAttribute('href', nextHref);
@@ -405,6 +406,8 @@
       const media = window.matchMedia('(prefers-color-scheme: dark)');
       if (typeof media.addEventListener === 'function') {
         media.addEventListener('change', applySystemTheme);
+      } else if (typeof media.addListener === 'function') {
+        media.addListener(applySystemTheme);
       }
     }
 

@@ -1,0 +1,816 @@
+.debug-container {
+        max-width: none;
+        margin: 0;
+        width: 100%;
+        height: 100dvh;
+        padding: 12px;
+        overflow: hidden;
+    }
+    .debug-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        gap: 12px;
+        align-items: stretch;
+        height: calc(100dvh - 24px);
+        transition:
+            grid-template-columns var(--pane-slide-duration, 220ms) var(--pane-slide-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+            grid-template-rows var(--pane-slide-duration, 220ms) var(--pane-slide-ease, cubic-bezier(0.22, 1, 0.36, 1));
+        will-change: grid-template-columns, grid-template-rows;
+        --viewer-width: 42vw;
+        --explorer-width: 42vw;
+        --viewer-height: 42dvh;
+        --resizer-width: 12px;
+    }
+    .debug-main {
+        min-width: 0;
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 12px;
+        height: 100%;
+        visibility: visible;
+        opacity: 1;
+    }
+    .debug-shell.viewer-open {
+        grid-template-columns: minmax(0, 1fr) var(--resizer-width) minmax(360px, var(--viewer-width));
+        gap: 0;
+    }
+    .debug-shell.explorer-open {
+        grid-template-columns: minmax(0, 1fr) var(--resizer-width) minmax(360px, var(--explorer-width));
+        gap: 0;
+    }
+    .debug-shell.explorer-open .debug-main {
+        grid-column: 1;
+        grid-row: 1;
+    }
+    .debug-shell.explorer-open .debug-explorer-drawer {
+        grid-column: 3;
+        grid-row: 1;
+    }
+    .debug-shell.explorer-open .debug-viewer-resizer {
+        display: block;
+        grid-column: 2;
+        grid-row: 1;
+    }
+    .debug-shell.explorer-open .debug-viewer {
+        display: none;
+    }
+    .debug-viewer-resizer {
+        display: none;
+        width: var(--resizer-width);
+        height: calc(100dvh - 24px);
+        position: sticky;
+        top: 12px;
+        cursor: col-resize;
+        border-radius: 8px;
+        background: transparent;
+    }
+    .debug-shell.viewer-open .debug-viewer-resizer {
+        display: block;
+        grid-column: 2;
+        grid-row: 1;
+    }
+    .debug-viewer-resizer:hover {
+        background: rgba(148, 163, 184, 0.35);
+    }
+    .debug-viewer-resizer.is-dragging {
+        background: rgba(59, 130, 246, 0.35);
+    }
+    .debug-shell.viewer-open .debug-main {
+        grid-column: 1;
+        grid-row: 1;
+    }
+    .debug-shell.viewer-open .debug-viewer {
+        grid-column: 3;
+        grid-row: 1;
+    }
+    .debug-panel {
+    }
+    .debug-header-panel {
+        min-height: 0;
+    }
+    .debug-env-panel {
+        min-height: 0;
+        display: block;
+        overflow: hidden;
+        padding: 14px 14px 12px;
+    }
+    .debug-explorer-panel {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        gap: 10px;
+        padding: 12px;
+    }
+    .debug-env-panel.has-scrollbar {
+        padding-right: 0;
+    }
+    .debug-env-panel form {
+        min-height: 0;
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+    .debug-message {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 0.95rem;
+    }
+    .debug-header-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+    .debug-header-main {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        flex: 0 1 auto;
+    }
+    .debug-header-editor-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .debug-header-title {
+        margin: 0;
+    }
+    .debug-header-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        flex: 1 1 360px;
+        text-align: right;
+    }
+    .debug-table-wrap {
+        overflow: auto;
+        max-height: none;
+        min-height: 0;
+        height: 100%;
+        border-radius: 10px;
+        position: relative;
+        background: #eef2ff;
+        scrollbar-color: #94a3b8 #ffffff;
+        scrollbar-width: thin;
+    }
+    .debug-explorer-drawer {
+        height: calc(100dvh - 24px);
+        max-height: calc(100dvh - 24px);
+        position: sticky;
+        top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        opacity: 0;
+        transform: translateX(calc(100% + 12px));
+        pointer-events: none;
+        transition: transform 240ms ease, opacity 240ms ease;
+    }
+    .debug-shell.explorer-open .debug-explorer-drawer {
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+    }
+    .debug-explorer-drawer .debug-env-panel {
+        background: transparent;
+        border-radius: 0;
+        padding: 0;
+        flex: 1 1 auto;
+    }
+    .debug-shell.pane-switching .debug-viewer,
+    .debug-shell.pane-switching .debug-explorer-drawer {
+        transition: none;
+    }
+    .debug-explorer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+    }
+    .debug-pane-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .debug-pane-password {
+        border: 0;
+        border-radius: 10px;
+        height: 36px;
+        padding: 0 10px;
+        min-width: 180px;
+        background: #eef2ff;
+        color: var(--text);
+        font: inherit;
+    }
+    .debug-explorer-title {
+        margin: 0;
+        font-size: 1rem;
+    }
+    .debug-pane-apply,
+    .debug-pane-reset {
+        border: 0;
+        border-radius: 10px;
+        height: 40px;
+        padding: 0 12px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        color: #fff;
+    }
+    .debug-pane-apply {
+        background: #b91c1c;
+    }
+    .debug-pane-apply:hover {
+        background: #991b1b;
+    }
+    .debug-pane-reset {
+        background: #1e3a8a;
+    }
+    .debug-pane-reset:hover {
+        background: #1e40af;
+    }
+    .debug-pane-close {
+        border: 0;
+        border-radius: 10px;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        font: inherit;
+        font-weight: 600;
+        font-size: 1.2rem;
+        line-height: 1;
+        cursor: pointer;
+        background: #eef2ff;
+        color: var(--text);
+    }
+    .debug-pane-close:hover {
+        background: #94a3b8;
+    }
+    .debug-explorer-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .debug-explorer-path {
+        border: 0;
+        border-radius: 10px;
+        background: #eef2ff;
+        color: var(--text);
+        font: inherit;
+        height: 40px;
+        padding: 0 10px;
+        flex: 1 1 240px;
+        min-width: 0;
+    }
+    .debug-explorer-btn {
+        border: 0;
+        border-radius: 10px;
+        height: 40px;
+        padding: 0 12px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        color: #fff;
+        background: #1e3a8a;
+    }
+    .debug-explorer-btn:hover {
+        background: #1e40af;
+    }
+    .debug-explorer-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        border-radius: 10px;
+        background: #eef2ff;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        scrollbar-color: #94a3b8 #ffffff;
+        scrollbar-width: thin;
+    }
+    .debug-explorer-list.has-vscroll {
+        padding-right: 0;
+    }
+    .debug-explorer-list.grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, 96px);
+        gap: 10px;
+        justify-content: start;
+        align-content: start;
+    }
+    .debug-explorer-item {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        align-items: center;
+        gap: 6px;
+        border: 0;
+        width: 100%;
+        text-align: left;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin-bottom: 0;
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        min-height: 40px;
+    }
+    .debug-explorer-list.grid .debug-explorer-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 6px;
+        text-align: center;
+        padding: 8px 6px;
+        width: 96px;
+        min-height: 92px;
+        justify-self: stretch;
+    }
+    .debug-explorer-item:hover {
+        background: rgba(59, 130, 246, 0.14);
+    }
+    .debug-explorer-icon-img {
+        width: 24px;
+        height: 24px;
+        display: block;
+        object-fit: contain;
+    }
+    .debug-explorer-list.grid .debug-explorer-icon-img {
+        width: 28px;
+        height: 28px;
+    }
+    .debug-explorer-name {
+        display: block;
+        font-size: 0.82rem;
+        line-height: 1.2;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+    .debug-explorer-list.grid .debug-explorer-name {
+        max-width: 84px;
+        max-height: 2.4em;
+        overflow: hidden;
+    }
+    .debug-explorer-empty {
+        color: var(--muted);
+        padding: 10px;
+    }
+    .debug-explorer-view-toggle {
+        position: relative;
+        display: inline-grid;
+        grid-template-columns: repeat(2, minmax(56px, 1fr));
+        align-items: center;
+        height: 40px;
+        border-radius: 10px;
+        background: #1e3a8a;
+        padding: 2px;
+        isolation: isolate;
+        overflow: hidden;
+    }
+    .debug-explorer-view-toggle::before {
+        content: "";
+        position: absolute;
+        top: 2px;
+        bottom: 2px;
+        left: 2px;
+        width: calc(50% - 2px);
+        border-radius: 8px;
+        background: #1e40af;
+        transition: transform 0.16s ease;
+        z-index: 0;
+    }
+    .debug-explorer-view-toggle[data-mode="grid"]::before {
+        transform: translateX(100%);
+    }
+    .debug-explorer-toggle {
+        border: 0;
+        background: transparent;
+        height: 100%;
+        padding: 0 12px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        color: #c7d2fe;
+        position: relative;
+        z-index: 1;
+        transition: color 0.14s ease;
+    }
+    .debug-explorer-toggle:hover {
+        color: #ffffff;
+    }
+    .debug-explorer-toggle.active {
+        color: #ffffff;
+    }
+    .debug-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+    }
+    .debug-table thead {
+        position: sticky;
+        top: -1px;
+        z-index: 6;
+        background: #eef2ff;
+    }
+    .debug-table th,
+    .debug-table td {
+        padding: 8px;
+        border-top: 1px solid var(--border);
+        vertical-align: top;
+        text-align: left;
+    }
+    .debug-table thead th {
+        background: #eef2ff;
+        z-index: 7;
+        border-top: 0;
+        box-shadow: 0 1px 0 var(--border);
+    }
+    .debug-key { font-weight: 700; white-space: nowrap; }
+    .debug-input {
+        width: 100%;
+        padding: 8px;
+        border: 0;
+        border-radius: 8px;
+        background: #eef2ff;
+        color: var(--text);
+        font: inherit;
+    }
+    .debug-original {
+        color: var(--muted);
+        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .debug-overridden {
+        display: inline-block;
+        margin-left: 8px;
+        color: #166534;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+    .debug-row-actions {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+    }
+    .debug-row-reset {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: #1e3a8a;
+        color: #fff;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .debug-row-reset:hover {
+        background: #1e40af;
+    }
+    .debug-ops {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .debug-ops > form {
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .debug-password {
+        padding: 10px;
+        border: 0;
+        border-radius: 10px;
+        background: #eef2ff;
+        color: var(--text);
+        min-width: 220px;
+    }
+    .debug-open-editor {
+        border: 0;
+        border-radius: 10px;
+        padding: 9px 12px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        background: #0f766e;
+        color: #fff;
+    }
+    .debug-open-editor,
+    .debug-open-explorer,
+    .debug-ops .btn-start,
+    .debug-ops .btn-backup,
+    .debug-ops .btn-stop {
+        height: 40px;
+        padding: 0 14px;
+        display: inline-flex;
+        align-items: center;
+        line-height: 1;
+    }
+    .debug-ops .debug-password {
+        height: 40px;
+    }
+    .debug-viewer {
+        height: calc(100dvh - 24px);
+        max-height: calc(100dvh - 24px);
+        position: sticky;
+        top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        opacity: 0;
+        transform: translateX(calc(100% + 12px));
+        pointer-events: none;
+        transition: transform 240ms ease, opacity 240ms ease;
+    }
+    .debug-shell.viewer-open .debug-viewer {
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+    }
+    .debug-viewer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+    }
+    .debug-viewer-title {
+        margin: 0;
+        font-size: 1rem;
+        line-height: 1.2;
+        word-break: break-word;
+    }
+    .debug-viewer-path {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.83rem;
+    }
+    .debug-props-error {
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: #fee2e2;
+        color: #991b1b;
+        font-size: 0.85rem;
+    }
+    .debug-props-form {
+        margin: 0;
+        padding: 10px;
+        background: #eef2ff;
+        border-radius: 10px;
+        overflow: auto;
+        flex: 1 1 auto;
+        min-height: 0;
+        scrollbar-color: #94a3b8 #ffffff;
+        scrollbar-width: thin;
+    }
+    .debug-props-form.has-vscroll {
+        padding-right: 0;
+    }
+    .debug-props-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+    }
+    .debug-props-table th,
+    .debug-props-table td {
+        padding: 8px;
+        border-top: 1px solid var(--border);
+        vertical-align: top;
+        text-align: left;
+    }
+    .debug-props-table thead th {
+        position: sticky;
+        top: -1px;
+        background: #eef2ff;
+        z-index: 2;
+        border-top: 0;
+        box-shadow: 0 1px 0 var(--border);
+    }
+    .debug-props-key {
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .debug-props-input {
+        width: 100%;
+        padding: 8px;
+        border: 0;
+        border-radius: 8px;
+        background: #ffffff;
+        color: var(--text);
+        font: inherit;
+    }
+    .debug-props-fixed {
+        color: #166534;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+    .debug-props-original {
+        color: var(--muted);
+        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .debug-table-wrap::-webkit-scrollbar,
+    .debug-explorer-list::-webkit-scrollbar,
+    .debug-props-form::-webkit-scrollbar {
+        width: 28px;
+        height: 28px;
+    }
+    .debug-table-wrap::-webkit-scrollbar-track,
+    .debug-explorer-list::-webkit-scrollbar-track,
+    .debug-props-form::-webkit-scrollbar-track {
+        background: #ffffff;
+    }
+    .debug-table-wrap::-webkit-scrollbar-thumb,
+    .debug-explorer-list::-webkit-scrollbar-thumb,
+    .debug-props-form::-webkit-scrollbar-thumb {
+        background: #94a3b8;
+        border-radius: 10px;
+        border-style: solid;
+        border-width: 2px 0 2px 2px;
+        border-color: #ffffff;
+    }
+    .debug-table-wrap::-webkit-scrollbar-thumb:hover,
+    .debug-explorer-list::-webkit-scrollbar-thumb:hover,
+    .debug-props-form::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
+    }
+    html.theme-dark .debug-panel {
+        background: #161b22;
+        color: #e6edf3;
+    }
+    html.theme-dark .debug-table thead,
+    html.theme-dark .debug-table th { background: #1f2733; }
+    html.theme-dark .debug-input,
+    html.theme-dark .debug-password,
+    html.theme-dark .debug-explorer-path { background: #1f2733; color: #e6edf3; }
+    html.theme-dark .debug-overridden { color: #86efac; }
+    html.theme-dark .debug-row-reset { background: #1e3a8a; }
+    html.theme-dark .debug-explorer-list { background: #1f2733; }
+    html.theme-dark .debug-table-wrap { background: #1f2733; }
+    html.theme-dark .debug-explorer-item { background: transparent; color: #f8fafc; }
+    html.theme-dark .debug-explorer-item:hover { background: rgba(147, 197, 253, 0.14); }
+    html.theme-dark .debug-explorer-drawer {
+        background: #161b22;
+        color: #e6edf3;
+    }
+    html.theme-dark .debug-pane-apply { background: #b91c1c; }
+    html.theme-dark .debug-pane-reset { background: #1e3a8a; }
+    html.theme-dark .debug-pane-close {
+        background: #253247;
+        color: #dbe7ff;
+    }
+    html.theme-dark .debug-pane-close:hover { background: #3b4e6a; }
+    html.theme-dark .debug-pane-password {
+        background: #1f2733;
+        color: #e6edf3;
+    }
+    html.theme-dark .debug-viewer {
+        background: #161b22;
+        color: #e6edf3;
+    }
+    html.theme-dark .debug-props-error {
+        background: #3f1d1d;
+        color: #fecaca;
+    }
+    html.theme-dark .debug-props-form {
+        background: #111111;
+        scrollbar-color: #4b5563 #0b1220;
+    }
+    html.theme-dark .debug-props-table thead th {
+        background: #1f2733;
+    }
+    html.theme-dark .debug-props-input {
+        background: #1f2733;
+        color: #e6edf3;
+    }
+    html.theme-dark .debug-props-fixed { color: #86efac; }
+    html.theme-dark .debug-props-original { color: #9fb0c6; }
+    html.theme-dark .debug-table-wrap,
+    html.theme-dark .debug-explorer-list {
+        scrollbar-color: #4b5563 #0b1220;
+    }
+    html.theme-dark .debug-table-wrap::-webkit-scrollbar-track,
+    html.theme-dark .debug-explorer-list::-webkit-scrollbar-track,
+    html.theme-dark .debug-props-form::-webkit-scrollbar-track {
+        background: #0b1220;
+    }
+    html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb,
+    html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb,
+    html.theme-dark .debug-props-form::-webkit-scrollbar-thumb {
+        background: #4b5563;
+        border-style: solid;
+        border-width: 2px 0 2px 2px;
+        border-color: #0b1220;
+    }
+    html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb:hover,
+    html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb:hover,
+    html.theme-dark .debug-props-form::-webkit-scrollbar-thumb:hover {
+        background: #6b7280;
+    }
+    html.theme-dark .debug-viewer-resizer:hover {
+        background: rgba(71, 85, 105, 0.45);
+    }
+    html.theme-dark .debug-viewer-resizer.is-dragging {
+        background: rgba(56, 189, 248, 0.45);
+    }
+    @media (max-width: 1100px) {
+        .debug-header-note {
+            flex-basis: 100%;
+            text-align: left;
+        }
+        .debug-shell {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr);
+        }
+        .debug-shell.viewer-open {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr) var(--resizer-width) minmax(220px, var(--viewer-height));
+            gap: 0;
+        }
+        .debug-shell.explorer-open {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr) var(--resizer-width) minmax(220px, var(--viewer-height));
+            gap: 0;
+        }
+        .debug-viewer-resizer {
+            width: 100%;
+            height: var(--resizer-width);
+            position: relative;
+            top: auto;
+            cursor: row-resize;
+        }
+        .debug-shell.viewer-open .debug-main,
+        .debug-shell.explorer-open .debug-main {
+            grid-column: 1;
+            grid-row: 1;
+        }
+        .debug-shell.viewer-open .debug-viewer-resizer,
+        .debug-shell.explorer-open .debug-viewer-resizer {
+            display: block;
+            grid-column: 1;
+            grid-row: 2;
+        }
+        .debug-viewer,
+        .debug-explorer-drawer {
+            display: none;
+            position: relative;
+            top: auto;
+            right: auto;
+            bottom: auto;
+            width: 100%;
+            z-index: auto;
+            height: 100%;
+            max-height: none;
+            min-width: 0;
+            border-radius: 12px;
+            opacity: 1;
+            transform: none;
+            pointer-events: auto;
+        }
+        .debug-shell.explorer-open .debug-explorer-drawer {
+            grid-column: 1;
+            grid-row: 3;
+            display: flex;
+        }
+        .debug-shell.viewer-open .debug-viewer {
+            grid-column: 1;
+            grid-row: 3;
+            display: flex;
+        }
+        .debug-table-wrap,
+        .debug-props-form {
+            overflow-x: hidden;
+        }
+        .debug-table,
+        .debug-props-table {
+            table-layout: fixed;
+        }
+        .debug-table th,
+        .debug-table td,
+        .debug-props-table th,
+        .debug-props-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .debug-key,
+        .debug-props-key {
+            white-space: normal;
+        }
+    }

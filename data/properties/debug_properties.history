@@ -1,0 +1,6 @@
+{"ts": "2026-02-26T11:54:44.903543Z", "event": "snapshot_for_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T115444Z.bak"}
+{"ts": "2026-02-26T11:55:36.527714Z", "event": "restore_after_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T115444Z.bak"}
+{"ts": "2026-02-26T13:13:11.170331Z", "event": "snapshot_for_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T131311Z.bak"}
+{"ts": "2026-02-26T13:19:05.372677Z", "event": "restore_after_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T131311Z.bak"}
+{"ts": "2026-02-26T13:20:18.433987Z", "event": "snapshot_for_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T132018Z.bak"}
+{"ts": "2026-02-26T13:20:36.639095Z", "event": "restore_after_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T132018Z.bak"}

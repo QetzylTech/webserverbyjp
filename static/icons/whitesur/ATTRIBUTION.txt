@@ -1,0 +1,12 @@
+WhiteSur icon assets used in this folder were sourced from:
+https://github.com/vinceliuice/WhiteSur-icon-theme
+
+Upstream project: WhiteSur Icon Theme
+License: GPL-3.0
+
+Included subset:
+- folder.svg (from alternative/places/scalable/folder-blue.svg)
+- image.svg (from alternative/mimes/scalable/image-x-generic.svg)
+- archive.svg (from alternative/mimes/scalable/application-x-alpm-package.svg)
+- text.svg (from alternative/mimes/scalable/text-x-makefile.svg)
+- file.svg (from alternative/mimes/scalable/application-software.svg)

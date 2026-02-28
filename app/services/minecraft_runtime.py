@@ -7,13 +7,22 @@ import shutil
 import re
 
 
-def log_source_settings(ctx, source):
-    """Return normalized log source settings for SSE/file/journal streams."""
+def normalize_log_source(ctx, source):
+    """Normalize and validate one log source key."""
     normalized = (source or "").strip().lower()
     if normalized not in ctx.LOG_SOURCE_KEYS:
         return None
+    return normalized
+
+
+def log_source_settings(ctx, source):
+    """Return normalized log source settings for SSE/file/journal streams."""
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return None
     if normalized == "minecraft":
         return {
+            "source": normalized,
             "type": "journal",
             "context": "minecraft_log_stream",
             "unit": ctx.SERVICE,
@@ -21,12 +30,22 @@ def log_source_settings(ctx, source):
         }
     if normalized == "backup":
         return {
+            "source": normalized,
             "type": "file",
             "context": "backup_log_stream",
             "path": ctx.BACKUP_LOG_FILE,
             "text_limit": 200,
         }
+    if normalized == "mcweb_log":
+        return {
+            "source": normalized,
+            "type": "file",
+            "context": "mcweb_log_stream",
+            "path": ctx.MCWEB_LOG_FILE,
+            "text_limit": 200,
+        }
     return {
+        "source": normalized,
         "type": "file",
         "context": "mcweb_action_log_stream",
         "path": ctx.MCWEB_ACTION_LOG_FILE,
@@ -39,27 +58,35 @@ def get_log_source_text(ctx, source):
     settings = log_source_settings(ctx, source)
     if settings is None:
         return None
-    if source == "minecraft":
+    normalized = settings["source"]
+    if normalized == "minecraft":
         return ctx._get_cached_minecraft_log_text()
-    if source == "backup":
+    if normalized == "backup":
         return ctx._get_cached_backup_log_text()
+    if normalized == "mcweb_log":
+        path = settings["path"]
+        lines = ctx._read_recent_file_lines(path, settings["text_limit"])
+        return "\n".join(lines).strip() or "(no logs)"
     return ctx._get_cached_mcweb_log_text()
 
 
 def publish_log_stream_line(ctx, source, line):
     """Publish one log line to stream subscribers and cache backends."""
-    state = ctx.log_stream_states.get(source)
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return
+    state = ctx.log_stream_states.get(normalized)
     if state is None:
         return
     with state["cond"]:
         state["seq"] += 1
         state["events"].append((state["seq"], line))
         state["cond"].notify_all()
-    if source == "minecraft":
+    if normalized == "minecraft":
         ctx._append_minecraft_log_cache_line(line)
-    elif source == "backup":
+    elif normalized == "backup":
         ctx._append_backup_log_cache_line(line)
-    elif source == "mcweb":
+    elif normalized == "mcweb":
         ctx._append_mcweb_log_cache_line(line)
 
 
@@ -113,9 +140,10 @@ def log_source_fetcher_loop(ctx, source):
     settings = log_source_settings(ctx, source)
     if settings is None:
         return
+    normalized = settings["source"]
 
     while True:
-        state = ctx.log_stream_states.get(source)
+        state = ctx.log_stream_states.get(normalized)
         if state is None:
             return
         # Avoid keeping journalctl/tail processes alive when nobody is subscribed.
@@ -157,8 +185,8 @@ def log_source_fetcher_loop(ctx, source):
                 clean = line.rstrip("\r\n")
                 if not clean:
                     continue
-                publish_log_stream_line(ctx, source, clean)
-                if source == "minecraft":
+                publish_log_stream_line(ctx, normalized, clean)
+                if normalized == "minecraft":
                     schedule_crash_stop_if_needed(ctx, clean)
         except Exception as exc:
             ctx.log_mcweb_exception(settings["context"], exc)
@@ -173,7 +201,10 @@ def log_source_fetcher_loop(ctx, source):
 
 def ensure_log_stream_fetcher_started(ctx, source):
     """Start one background fetcher thread for a given log source."""
-    state = ctx.log_stream_states.get(source)
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return
+    state = ctx.log_stream_states.get(normalized)
     if state is None:
         return
     if state["started"]:
@@ -181,14 +212,17 @@ def ensure_log_stream_fetcher_started(ctx, source):
     with state["lifecycle_lock"]:
         if state["started"]:
             return
-        watcher = threading.Thread(target=log_source_fetcher_loop, args=(ctx, source), daemon=True)
+        watcher = threading.Thread(target=log_source_fetcher_loop, args=(ctx, normalized), daemon=True)
         watcher.start()
         state["started"] = True
 
 
 def increment_log_stream_clients(ctx, source):
     """Increment active SSE client count for a log source."""
-    state = ctx.log_stream_states.get(source)
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return
+    state = ctx.log_stream_states.get(normalized)
     if state is None:
         return
     with state["lifecycle_lock"]:
@@ -197,7 +231,10 @@ def increment_log_stream_clients(ctx, source):
 
 def decrement_log_stream_clients(ctx, source):
     """Decrement SSE client count and terminate idle fetch process."""
-    state = ctx.log_stream_states.get(source)
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return
+    state = ctx.log_stream_states.get(normalized)
     if state is None:
         return
     with state["lifecycle_lock"]:
@@ -222,11 +259,23 @@ def is_rcon_startup_ready(ctx, service_status=None):
         if ctx.rcon_startup_ready:
             return True
 
-    result = subprocess.run(
-        ["journalctl", "-u", ctx.SERVICE, "-n", "500", "--no-pager"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", ctx.SERVICE, "-n", "500", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=ctx.RCON_STARTUP_JOURNAL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        ctx.log_mcweb_log(
+            "rcon-startup-check-timeout",
+            command=f"journalctl -u {ctx.SERVICE} -n 500",
+            rejection_message=f"Timed out after {ctx.RCON_STARTUP_JOURNAL_TIMEOUT_SECONDS:.1f}s.",
+        )
+        return False
+    except Exception as exc:
+        ctx.log_mcweb_exception("is_rcon_startup_ready", exc)
+        return False
     output = (result.stdout or "") + (result.stderr or "")
     ready = bool(ctx.RCON_STARTUP_READY_PATTERN.search(output))
     if ready:

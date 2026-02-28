@@ -5,6 +5,38 @@ import threading
 import time
 
 
+def _is_rcon_noise_line(line):
+    """Return whether a minecraft log line is known RCON shutdown/startup noise."""
+    lower = (line or "").lower()
+    if "thread rcon client" in lower:
+        return True
+    if "minecraft/rconclient" in lower and "shutting down" in lower:
+        return True
+    return False
+
+
+def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
+    """Load recent minecraft file logs, preferring non-RCON-noise lines."""
+    lines = []
+    latest_path = None
+    try:
+        candidates = [p for p in ctx.MINECRAFT_LOGS_DIR.glob("*.log") if p.is_file()]
+        if candidates:
+            latest_path = max(candidates, key=lambda p: p.stat().st_mtime_ns)
+    except OSError:
+        latest_path = None
+
+    if latest_path is not None:
+        # Read a larger tail window so filtering still leaves enough visible lines.
+        source_lines = ctx._read_recent_file_lines(latest_path, max(max_visible_lines * 8, 2000))
+        filtered = [line for line in source_lines if not _is_rcon_noise_line(line)]
+        lines = filtered[-max_visible_lines:]
+    with ctx.minecraft_log_cache_lock:
+        ctx.minecraft_log_cache_lines.clear()
+        ctx.minecraft_log_cache_lines.extend(lines)
+        ctx.minecraft_log_cache_loaded = True
+
+
 def load_backup_log_cache_from_disk(ctx):
     """Reload backup log cache from disk into bounded in-memory storage."""
     lines = ctx._read_recent_file_lines(ctx.BACKUP_LOG_FILE, 200)
@@ -42,13 +74,32 @@ def get_cached_backup_log_text(ctx):
 
 def load_minecraft_log_cache_from_journal(ctx):
     """Prime minecraft log cache from recent journalctl output."""
-    result = subprocess.run(
-        ["journalctl", "-u", ctx.SERVICE, "-n", "1000", "--no-pager"],
-        capture_output=True,
-        text=True,
-    )
-    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    service_status = ctx.get_status()
+    if service_status in ctx.OFF_STATES:
+        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500)
+        return
+
+    output = ""
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", ctx.SERVICE, "-n", "1000", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=ctx.JOURNAL_LOAD_TIMEOUT_SECONDS,
+        )
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+    except subprocess.TimeoutExpired:
+        ctx.log_mcweb_log(
+            "log-load-timeout",
+            command=f"journalctl -u {ctx.SERVICE} -n 1000",
+            rejection_message=f"Timed out after {ctx.JOURNAL_LOAD_TIMEOUT_SECONDS:.1f}s.",
+        )
+    except Exception as exc:
+        ctx.log_mcweb_exception("load_minecraft_log_cache_from_journal", exc)
     lines = output.splitlines() if output else []
+    if not lines:
+        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500)
+        return
     with ctx.minecraft_log_cache_lock:
         ctx.minecraft_log_cache_lines.clear()
         ctx.minecraft_log_cache_lines.extend(lines)
@@ -292,12 +343,14 @@ def collect_dashboard_metrics(ctx):
     ram_usage = slow["ram_usage"]
     cpu_frequency = slow["cpu_frequency"]
     storage_usage = slow["storage_usage"]
+    low_storage_blocked = ctx.is_storage_low(storage_usage)
     players_online = ctx.get_players_online()
     tick_rate = ctx.get_tick_rate()
     session_duration = ctx.get_session_duration_text()
     service_status_display = ctx.get_service_status_display(service_status, players_online)
     backup_schedule = ctx.get_backup_schedule_times(service_status)
     backup_status, backup_status_class = ctx.get_backup_status()
+    backup_warning = ctx.get_backup_warning_state(ctx.BACKUP_WARNING_TTL_SECONDS)
 
     return {
         "service_status": service_status_display,
@@ -311,15 +364,20 @@ def collect_dashboard_metrics(ctx):
         "cpu_frequency_class": get_cpu_frequency_class(ctx, cpu_frequency),
         "storage_usage": storage_usage,
         "storage_usage_class": get_storage_usage_class(ctx, storage_usage),
+        "low_storage_blocked": low_storage_blocked,
+        "low_storage_message": ctx.low_storage_error_message(storage_usage) if low_storage_blocked else "",
         "players_online": players_online,
         "tick_rate": tick_rate,
         "session_duration": session_duration,
         "idle_countdown": ctx.get_idle_countdown(service_status, players_online),
         "backup_status": backup_status,
         "backup_status_class": backup_status_class,
+        "backup_warning_seq": int(backup_warning.get("seq", 0) or 0),
+        "backup_warning_message": str(backup_warning.get("message", "") or ""),
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
         "server_time": ctx.get_server_time_text(),
+        "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
     }
 
@@ -406,15 +464,20 @@ def get_cached_dashboard_metrics(ctx):
         "cpu_frequency_class": "stat-red",
         "storage_usage": "unknown",
         "storage_usage_class": "stat-red",
+        "low_storage_blocked": False,
+        "low_storage_message": "",
         "players_online": "unknown",
         "tick_rate": "unknown",
         "session_duration": "--",
         "idle_countdown": "--:--",
         "backup_status": "Idle",
         "backup_status_class": "stat-yellow",
+        "backup_warning_seq": 0,
+        "backup_warning_message": "",
         "last_backup_time": "--",
         "next_backup_time": "--",
         "server_time": ctx.get_server_time_text(),
+        "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
     }
 

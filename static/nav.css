@@ -1,4 +1,9 @@
 .sidebar {
+    position: sticky;
+    top: 12px;
+    align-self: start;
+    height: calc(100vh - 24px);
+    overflow: auto;
     border: 0;
     border-radius: 14px;
     background: var(--surface);
@@ -49,7 +54,7 @@
 
 .nav-link.active {
     color: #ffffff;
-    background: #1d4ed8;
+    background: #1e3a8a;
 }
 
 .nav-toggle {
@@ -167,7 +172,7 @@ html.theme-dark .nav-link:hover {
 }
 
 html.theme-dark .nav-link.active {
-    background: #1d4ed8;
+    background: #1e3a8a;
     color: #ffffff;
 }
 

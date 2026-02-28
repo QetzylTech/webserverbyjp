@@ -7,38 +7,109 @@
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
 <link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
 </head>
-<body>
+<body data-page="{{ current_page }}">
     <div class="layout">
         {% include "partials/nav.html" %}
         <main class="content">
             <div class="wrap">
-                <section class="panel" aria-labelledby="file-panel-title">
+                <section class="panel pane-primary" aria-labelledby="file-panel-title">
                 <h1 id="file-panel-title">{{ panel_title }}</h1>
-                <p class="hint">{{ panel_hint }}</p>
+                {% if current_page == "backups" %}
+                <div class="backup-controls">
+                    <div class="sort-row">
+                        <label for="backup-sort" class="sort-label">Sort by</label>
+                        <select id="backup-sort" class="sort-select">
+                            <option value="newest">Latest to oldest</option>
+                            <option value="oldest">Oldest to latest</option>
+                            <option value="size">Size</option>
+                        </select>
+                    </div>
+                    <div class="filter-row">
+                        <span class="filter-label">Filter</span>
+                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="manual" checked>Manual</label>
+                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="auto" checked>Auto</label>
+                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="session" checked>Session</label>
+                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="prerestore" checked>Prerestore</label>
+                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="others" checked>Others</label>
+                    </div>
+                </div>
+                {% else %}
+                <div class="sort-row">
+                    <label for="file-sort" class="sort-label">Sort by</label>
+                    <select id="file-sort" class="sort-select">
+                        <option value="newest">Newest to oldest</option>
+                        <option value="oldest">Oldest to newest</option>
+                        <option value="size">Size</option>
+                        <option value="alpha">Alphabetical</option>
+                        <option value="reverse_alpha">Reverse alphabetical</option>
+                    </select>
+                </div>
+                {% endif %}
                 <div id="download-error" class="download-error"></div>
                 {% if items %}
                 <ul class="list">
                     {% for item in items %}
-                    <li>
+                    <li data-name="{{ item.name | lower }}" data-mtime="{{ item.mtime }}" data-size="{{ item.size_bytes }}">
                         {% if current_page == "backups" %}
-                        <button
-                            class="file-download-btn"
-                            type="button"
-                            data-download-url="{{ download_base }}/{{ item.name }}"
-                            data-filename="{{ item.name }}"
-                        >{{ item.name }}</button>
+                        <span class="file-name">{{ item.name }}</span>
+                        <div class="file-actions">
+                            <button
+                                class="file-action-btn file-download-btn"
+                                type="button"
+                                data-download-url="{{ download_base }}/{{ item.name }}"
+                                data-filename="{{ item.name }}"
+                            >Download</button>
+                            <button
+                                class="file-action-btn file-restore-btn"
+                                type="button"
+                                data-filename="{{ item.name }}"
+                            >Restore</button>
+                        </div>
                         {% else %}
-                        <a class="file-link" href="{{ download_base }}/{{ item.name }}">{{ item.name }}</a>
+                        <span class="file-name">{{ item.name }}</span>
+                        <div class="file-actions">
+                            <a class="file-action-btn file-download-btn file-download-link" href="{{ download_base }}/{{ item.name }}">Download</a>
+                            <button
+                                class="file-action-btn file-view-btn"
+                                type="button"
+                                data-view-url="/view-file/{{ current_page }}/{{ item.name }}"
+                                data-download-url="{{ download_base }}/{{ item.name }}"
+                                data-filename="{{ item.name }}"
+                            >View</button>
+                        </div>
                         {% endif %}
                         <span class="meta">{{ item.modified }} | {{ item.size_text }}</span>
                     </li>
                     {% endfor %}
                 </ul>
+                <div id="list-empty-dynamic" class="empty" style="display:none;">No files match current filters.</div>
                 {% else %}
                 <div class="empty">{{ empty_text }}</div>
                 {% endif %}
                 </section>
+                <div id="file-viewer-resizer" class="file-viewer-resizer" aria-hidden="true"></div>
+                <aside id="file-viewer" class="file-viewer pane-editor" aria-hidden="true">
+                    <div class="file-viewer-header">
+                        <h2 id="file-viewer-title" class="file-viewer-title">File Viewer</h2>
+                        <div class="file-viewer-actions">
+                            {% if current_page != "backups" %}
+                            <button id="file-viewer-download" class="file-viewer-download" type="button" disabled>Download</button>
+                            <button id="file-viewer-close" class="file-viewer-close" type="button">Close</button>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div id="backup-restore-controls" class="backup-restore-controls pane-editor" hidden>
+                        <input id="backup-restore-password" class="backup-restore-password" type="password" autocomplete="current-password" placeholder="Sudo password">
+                        <div class="backup-restore-actions">
+                            <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
+                            <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
+                            <button id="backup-restore-rollback" class="backup-restore-rollback" type="button" disabled>Rollback</button>
+                        </div>
+                    </div>
+                    <pre id="file-viewer-content" class="file-viewer-content"></pre>
+                </aside>
             </div>
         </main>
     </div>
@@ -69,6 +140,7 @@
         heartbeatIntervalMs: {{ file_page_heartbeat_interval_ms | tojson }},
     };
 </script>
+<script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
 <script src="{{ url_for('static', filename='files.js', v=static_version('files.js')) }}"></script>
 </body>
 </html>

@@ -32,16 +32,18 @@
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
     let pendingSudoForm = null;
-    const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb"];
+    const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb", "mcweb_log"];
     const LOG_SOURCE_STREAM_PATHS = {
         minecraft: "/log-stream/minecraft",
         backup: "/log-stream/backup",
         mcweb: "/log-stream/mcweb",
+        mcweb_log: "/log-stream/mcweb_log",
     };
     const LOG_SOURCE_TEXT_PATHS = {
         minecraft: "/log-text/minecraft",
         backup: "/log-text/backup",
         mcweb: "/log-text/mcweb",
+        mcweb_log: "/log-text/mcweb_log",
     };
     let selectedLogSource = "minecraft";
     let minecraftSourceLines = [];
@@ -49,17 +51,21 @@
         minecraft: [],
         backup: [],
         mcweb: [],
+        mcweb_log: [],
     };
     let logSourceHtml = {
         minecraft: "",
         backup: "",
         mcweb: "",
+        mcweb_log: "",
     };
     let logStreams = {
         minecraft: null,
         backup: null,
         mcweb: null,
+        mcweb_log: null,
     };
+    let deviceNameMap = {};
     let logAutoScrollEnabled = true;
 
     // Refresh cadence configuration (milliseconds).
@@ -67,6 +73,8 @@
 
     let metricsEventSource = null;
     let countdownTimer = null;
+    let lowStorageModalShown = false;
+    let lastBackupWarningSeq = 0;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
 
@@ -74,6 +82,21 @@
         if (!target) return true;
         const distance = target.scrollHeight - target.clientHeight - target.scrollTop;
         return distance <= thresholdPx;
+    }
+    function syncVerticalScrollbarClass(target) {
+        if (!target) return;
+        const hasVerticalScrollbar = target.scrollHeight > target.clientHeight + 1;
+        target.classList.toggle("has-vscroll", hasVerticalScrollbar);
+    }
+    function watchVerticalScrollbarClass(target) {
+        if (!target) return;
+        syncVerticalScrollbarClass(target);
+        target.addEventListener("scroll", () => syncVerticalScrollbarClass(target), { passive: true });
+        window.addEventListener("resize", () => syncVerticalScrollbarClass(target));
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(() => syncVerticalScrollbarClass(target));
+            ro.observe(target);
+        }
     }
 
     function scrollLogToBottom() {
@@ -85,8 +108,7 @@
     function getLogSource() {
         const select = document.getElementById("log-source");
         const value = (select && select.value) ? select.value : "minecraft";
-        if (value === "backup") return "backup";
-        if (value === "mcweb") return "mcweb";
+        if (LOG_SOURCE_KEYS.includes(value)) return value;
         return "minecraft";
     }
 
@@ -159,6 +181,19 @@
             .replace(/'/g, "&#39;");
     }
 
+    function ipReplacement(ipText) {
+        const ip = (ipText || "").trim();
+        if (!ip) return "unmapped-device";
+        const mapped = deviceNameMap[ip];
+        return mapped && mapped.trim() ? mapped.trim() : "unmapped-device";
+    }
+
+    function replaceIpsWithDeviceNames(text) {
+        const raw = text || "";
+        const withIpv4 = raw.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, (ip) => ipReplacement(ip));
+        return withIpv4.replace(/\b(?:[A-Fa-f0-9]{0,4}:){3,7}[A-Fa-f0-9]{0,4}\b/g, (ip) => ipReplacement(ip));
+    }
+
     function bracketClass(token) {
         if (/^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]$/.test(token)) return "log-ts";
         if (/[/]\s*error\]/i.test(token) || /[/]\s*fatal\]/i.test(token)) return "log-level-error";
@@ -181,7 +216,7 @@
     }
 
     function formatBracketAwareLogLine(line, highlightErrorLine) {
-        const raw = line || "";
+        const raw = replaceIpsWithDeviceNames(line || "");
         if (highlightErrorLine) {
             const lower = raw.toLowerCase();
             if (lower.includes("error") || lower.includes("overloaded") || lower.includes("delayed")) {
@@ -317,6 +352,24 @@
         }
     }
 
+    async function loadDeviceNameMap() {
+        try {
+            const response = await fetch("/device-name-map", { cache: "no-store" });
+            if (!response.ok) return;
+            const payload = await response.json();
+            const nextMap = payload && payload.map ? payload.map : {};
+            deviceNameMap = (nextMap && typeof nextMap === "object") ? nextMap : {};
+            LOG_SOURCE_KEYS.forEach((source) => {
+                if ((logSourceBuffers[source] || []).length > 0) {
+                    logSourceHtml[source] = formatLogHtmlForSource(source);
+                }
+            });
+            renderActiveLog();
+        } catch (_) {
+            // Keep IP redaction fallback labels even when map fetch fails.
+        }
+    }
+
     function openSudoModal(form) {
         pendingSudoForm = form;
         const modal = document.getElementById("sudo-modal");
@@ -354,15 +407,75 @@
         modal.classList.add("open");
     }
 
-    function showErrorModal(message) {
+    function summarizeError(errorCode, action) {
+        if (errorCode === "csrf_invalid") {
+            return "Security check failed. Refresh the page and try again.";
+        }
+        if (errorCode === "backup_failed") {
+            return "Backup did not complete. Check backup status/logs and retry.";
+        }
+        if (errorCode === "backup_warning") {
+            return "Backup completed with warnings. Review backup logs.";
+        }
+        if (errorCode === "internal_error") {
+            return "The server hit an unexpected problem while processing your request.";
+        }
+        if (errorCode === "start_failed") {
+            return "Server failed to start. Check service logs and configuration.";
+        }
+        if (errorCode === "low_storage_space") {
+            return "Storage space is too low. Free at least 10% before starting the server.";
+        }
+        if (action === "/rcon") {
+            return "Command could not be completed.";
+        }
+        if (action === "/backup") {
+            return "Backup could not be completed.";
+        }
+        return "The action could not be completed.";
+    }
+
+    function showErrorModal(message, options = {}) {
         // Never stack error modal on top of the password modal.
         closeSudoModal();
         const modal = document.getElementById("error-modal");
         const text = document.getElementById("error-modal-text");
+        const moreBtn = document.getElementById("error-modal-more");
+        const details = document.getElementById("error-modal-details");
         if (!modal || !text) return;
-        text.textContent = message || "";
+        const code = (options.errorCode || "").trim();
+        const action = (options.action || "").trim();
+        const summary = summarizeError(code, action);
+        text.textContent = summary;
+        if (moreBtn && details) {
+            const detailParts = [];
+            if (code) detailParts.push(`Error code: ${code}`);
+            if (action) detailParts.push(`Action: ${action}`);
+            if (message) detailParts.push(`Message: ${message}`);
+            const detailText = detailParts.join("\n");
+            const hasDetails = detailText.length > 0;
+            details.textContent = detailText;
+            details.hidden = true;
+            moreBtn.textContent = "Show more";
+            moreBtn.hidden = !hasDetails;
+        }
         modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
+        fetch("/ui-error-log", {
+            method: "POST",
+            headers: {
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRF-Token": csrfToken || "",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                error_code: code || "",
+                action: action || "",
+                message: message || "",
+            }),
+            keepalive: true,
+            cache: "no-store",
+        }).catch(() => {});
     }
 
     function renderCpuPerCore(items) {
@@ -394,6 +507,7 @@
         const backupsStatus = document.getElementById("backups-status");
         const service = document.getElementById("service-status");
         const serverTime = document.getElementById("server-time");
+        const controlPanelTitle = document.getElementById("control-panel-title");
         const startBtn = document.getElementById("start-btn");
         const stopBtn = document.getElementById("stop-btn");
         const backupBtn = document.getElementById("backup-btn");
@@ -424,6 +538,7 @@
         if (service && data.service_status) service.textContent = data.service_status;
         if (service && data.service_status_class) service.className = data.service_status_class;
         if (serverTime && data.server_time) serverTime.textContent = data.server_time;
+        if (controlPanelTitle && data.world_name) controlPanelTitle.textContent = `${data.world_name} Control Panel`;
         if (serviceDurationPrefix && service && sessionDuration) {
             if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
                 sessionDuration.style.display = "";
@@ -434,6 +549,10 @@
             }
         }
         const rconEnabled = data.rcon_enabled === true;
+        const lowStorageBlocked = data.low_storage_blocked === true;
+        const lowStorageMessage = (data.low_storage_message || "").trim();
+        const backupWarningSeq = Number(data.backup_warning_seq || 0);
+        const backupWarningMessage = (data.backup_warning_message || "").trim();
         if (data.service_running_status === "active") {
             if (startBtn) startBtn.disabled = true;
             if (stopBtn) stopBtn.disabled = false;
@@ -445,10 +564,30 @@
                     : "RCON unavailable (missing rcon.password)";
             }
         } else {
-            if (startBtn) startBtn.disabled = false;
+            if (startBtn) startBtn.disabled = lowStorageBlocked;
             if (stopBtn) stopBtn.disabled = true;
             if (rconInput) rconInput.disabled = true;
             if (rconSubmit) rconSubmit.disabled = true;
+        }
+        if (lowStorageBlocked) {
+            if (!lowStorageModalShown && lowStorageMessage) {
+                showErrorModal(lowStorageMessage, {
+                    errorCode: "low_storage_space",
+                    action: window.location.pathname || "/",
+                });
+                lowStorageModalShown = true;
+            }
+        } else {
+            lowStorageModalShown = false;
+        }
+        if (backupWarningMessage && backupWarningSeq > lastBackupWarningSeq) {
+            showErrorModal(backupWarningMessage, {
+                errorCode: "backup_warning",
+                action: "/backup",
+            });
+            lastBackupWarningSeq = backupWarningSeq;
+        } else if (backupWarningSeq > lastBackupWarningSeq) {
+            lastBackupWarningSeq = backupWarningSeq;
         }
         applyRefreshMode(data.service_status);
     }
@@ -495,14 +634,20 @@
                 if (isPasswordRejected) {
                     showMessageModal(message);
                 } else {
-                    showErrorModal(message);
+                    showErrorModal(message, {
+                        errorCode: payload && payload.error ? String(payload.error) : "",
+                        action,
+                    });
                 }
                 return;
             }
 
             await refreshMetrics();
         } catch (err) {
-            showErrorModal("Action failed. Please try again.");
+            showErrorModal("Network request failed.", {
+                errorCode: "network_error",
+                action,
+            });
         }
     }
 
@@ -606,7 +751,7 @@
         clearRefreshTimers();
     }
 
-    window.addEventListener("load", () => {
+    window.addEventListener("load", async () => {
         initSidebarNav();
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
             form.addEventListener("submit", async (event) => {
@@ -655,10 +800,20 @@
             });
         }
         const errorOk = document.getElementById("error-modal-ok");
+        const errorMore = document.getElementById("error-modal-more");
         if (errorOk) {
             errorOk.addEventListener("click", () => {
                 const modal = document.getElementById("error-modal");
                 if (modal) modal.classList.remove("open");
+            });
+        }
+        if (errorMore) {
+            errorMore.addEventListener("click", () => {
+                const details = document.getElementById("error-modal-details");
+                if (!details) return;
+                const nextHidden = !details.hidden;
+                details.hidden = nextHidden;
+                errorMore.textContent = nextHidden ? "Show more" : "Show less";
             });
         }
 
@@ -666,7 +821,13 @@
             if (alertMessageCode === "password_incorrect") {
                 showMessageModal(alertMessage);
             } else {
-                showErrorModal(alertMessage);
+                showErrorModal(alertMessage, {
+                    errorCode: alertMessageCode,
+                    action: window.location.pathname || "",
+                });
+                if (alertMessageCode === "low_storage_space") {
+                    lowStorageModalShown = true;
+                }
             }
             const url = new URL(window.location.href);
             url.searchParams.delete("msg");
@@ -704,9 +865,11 @@
             existingLog.addEventListener("scroll", () => {
                 logAutoScrollEnabled = isLogNearBottom(existingLog);
             });
+            watchVerticalScrollbarClass(existingLog);
         }
         selectedLogSource = getLogSource();
         updateLogSourceUi();
+        await loadDeviceNameMap();
         setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
         if (existingLog) {
             renderActiveLog();
