@@ -14,6 +14,7 @@ from datetime import datetime
 import time
 import threading
 import re
+import shutil
 from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
@@ -23,9 +24,17 @@ SERVICE = "minecraft"
 BACKUP_SCRIPT = "/opt/Minecraft/backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
 SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
-DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
+# "PST" here means Philippines Standard Time (UTC+8), not Pacific Time.
+DISPLAY_TZ = ZoneInfo("Asia/Manila")
 SUDO_PASSWORD = "SuperCute"
 RCON_PASSWORD = "SuperCute"
+RCON_HOST = "127.0.0.1"
+RCON_PORT = 25575
+SERVER_PROPERTIES_CANDIDATES = [
+    Path("/opt/Minecraft/server.properties"),
+    Path("/opt/Minecraft/server/server.properties"),
+    Path(__file__).resolve().parent / "server.properties",
+]
 
 # Backup/automation timing controls.
 BACKUP_INTERVAL_HOURS = 6
@@ -36,20 +45,30 @@ IDLE_CHECK_INTERVAL_SECONDS = 15
 # Shared watcher state (protected by locks below).
 idle_zero_players_since = None
 idle_lock = threading.Lock()
-backup_last_run_at = None
-backup_last_completed_at = None
-backup_had_periodic_run = False
 backup_periodic_runs = 0
 backup_lock = threading.Lock()
 backup_active_jobs = 0
-backup_last_started_at = None
-backup_last_finished_at = None
-backup_last_success = None
 backup_last_error = ""
+backup_waiting_for_last_change = False
+backup_waiting_baseline_snapshot = {}
+backup_last_successful_at = None
 session_tracking_initialized = False
 session_tracking_lock = threading.Lock()
+service_status_intent = None
+service_status_intent_lock = threading.Lock()
 
 OFF_STATES = {"inactive", "failed"}
+
+# Cache Minecraft runtime probes so rapid UI polling does not spam RCON.
+MC_QUERY_INTERVAL_SECONDS = 3
+mc_query_lock = threading.Lock()
+mc_last_query_at = 0.0
+mc_cached_players_online = "unknown"
+mc_cached_tick_rate = "unknown"
+rcon_config_lock = threading.Lock()
+rcon_cached_password = RCON_PASSWORD
+rcon_cached_port = RCON_PORT
+rcon_last_config_read_at = 0.0
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -190,6 +209,13 @@ HTML = """
         align-items: center;
     }
 
+    .server-time {
+        color: var(--muted);
+        font-size: 0.9rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
     .actions form {
         margin: 0;
     }
@@ -273,7 +299,8 @@ HTML = """
         white-space: nowrap;
     }
 
-    .panel-controls input[type="text"] {
+    .panel-controls input[type="text"],
+    .panel-controls select {
         flex: 1;
         min-width: 0;
         border: 1px solid #cbd5e1;
@@ -415,6 +442,7 @@ HTML = """
             <div class="title-row">
                 <h1>Marites Server Control</h1>
                 <div class="actions">
+                    <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
                     <form class="ajax-form" method="post" action="/start">
                         <button id="start-btn" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
                     </form>
@@ -455,7 +483,7 @@ HTML = """
                         <span>Backup status: <b id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</b></span>
                         <span>Last backup: <b id="last-backup-time">{{ last_backup_time }}</b></span>
                         <span>Next backup: <b id="next-backup-time">{{ next_backup_time }}</b></span>
-                        <span>Backups folder: <b>{{ backups_status }}</b></span>
+                        <span>Backups folder: <b id="backups-status">{{ backups_status }}</b></span>
                     </div>
                 </div>
             </div>
@@ -467,14 +495,14 @@ HTML = """
     <section class="logs">
         <article class="panel">
             <div class="panel-header">
-                <h3>Minecraft Log (last 50 lines)</h3>
+                <h3>Minecraft Log</h3>
                 <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
                     <label class="panel-filter">
                         <input id="hide-rcon-noise" type="checkbox" checked>
                         Hide RCON noise
                     </label>
                     <input type="hidden" name="sudo_password">
-                    <input id="rcon-command" type="text" name="rcon_command" placeholder="Enter Minecraft server command (e.g., say hello)" {% if service_running_status != "active" %}disabled{% endif %} required>
+                    <input id="rcon-command" type="text" name="rcon_command" placeholder="Enter Minecraft server command" {% if service_running_status != "active" %}disabled{% endif %} required>
                     <button id="rcon-submit" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Submit</button>
                 </form>
             </div>
@@ -540,14 +568,14 @@ HTML = """
 
     function setRawMinecraftLogText(rawText) {
         rawMinecraftLogLines = (rawText || "").split("\\n");
-        if (rawMinecraftLogLines.length > 3000) {
-            rawMinecraftLogLines = rawMinecraftLogLines.slice(-3000);
+        if (rawMinecraftLogLines.length > 500) {
+            rawMinecraftLogLines = rawMinecraftLogLines.slice(-500);
         }
     }
 
     function appendRawMinecraftLogLine(line) {
         rawMinecraftLogLines.push(line || "");
-        if (rawMinecraftLogLines.length > 3000) {
+        if (rawMinecraftLogLines.length > 500) {
             rawMinecraftLogLines.shift();
         }
     }
@@ -688,6 +716,13 @@ HTML = """
         const action = form.getAttribute("action") || "/";
         const method = (form.getAttribute("method") || "POST").toUpperCase();
         const suppressErrors = options.suppressErrors === true;
+        if (action === "/backup") {
+            const backupStatus = document.getElementById("backup-status");
+            if (backupStatus) {
+                backupStatus.textContent = "Running";
+                backupStatus.className = "stat-green";
+            }
+        }
         const formData = new FormData(form);
         if (options.sudoPassword !== undefined) {
             formData.set("sudo_password", options.sudoPassword);
@@ -741,7 +776,9 @@ HTML = """
             const backupStatus = document.getElementById("backup-status");
             const lastBackup = document.getElementById("last-backup-time");
             const nextBackup = document.getElementById("next-backup-time");
+            const backupsStatus = document.getElementById("backups-status");
             const service = document.getElementById("service-status");
+            const serverTime = document.getElementById("server-time");
             const startBtn = document.getElementById("start-btn");
             const stopBtn = document.getElementById("stop-btn");
             const rconInput = document.getElementById("rcon-command");
@@ -766,8 +803,10 @@ HTML = """
             if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
             if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
             if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
+            if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
             if (service && data.service_status) service.textContent = data.service_status;
             if (service && data.service_status_class) service.className = data.service_status_class;
+            if (serverTime && data.server_time) serverTime.textContent = data.server_time;
             if (serviceDurationPrefix && service && sessionDuration) {
                 if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
                     sessionDuration.style.display = "";
@@ -803,10 +842,12 @@ HTML = """
             const cpu = document.getElementById("cpu-per-core");
             const freq = document.getElementById("cpu-frequency");
             const storage = document.getElementById("storage-usage");
+            const serverTime = document.getElementById("server-time");
             if (ram && data.ram_usage) ram.textContent = data.ram_usage;
             if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
             if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
             if (storage && data.storage_usage) storage.textContent = data.storage_usage;
+            if (serverTime && data.server_time) serverTime.textContent = data.server_time;
             if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
             if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
             if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
@@ -941,6 +982,33 @@ def get_status():
     )
     return result.stdout.strip()
 
+def set_service_status_intent(intent):
+    """Set transient UI status intent: 'starting', 'shutting', or None."""
+    global service_status_intent
+    with service_status_intent_lock:
+        service_status_intent = intent
+
+def get_service_status_intent():
+    """Read transient UI status intent."""
+    with service_status_intent_lock:
+        return service_status_intent
+
+def stop_service_systemd():
+    """Attempt to stop the service and verify it is no longer active."""
+    # Use only configured sudo-backed command to avoid interactive PolicyKit prompts.
+    try:
+        run_sudo(["systemctl", "stop", SERVICE])
+    except Exception:
+        pass
+
+    # Give systemd a short window to transition to inactive/failed.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if get_status() in OFF_STATES:
+            return True
+        time.sleep(0.5)
+    return False
+
 def run_sudo(cmd):
     """Run a command with sudo using the configured service password."""
     result = subprocess.run(
@@ -1028,7 +1096,7 @@ def get_session_duration_text(service_status=None):
 def get_minecraft_logs_raw():
     """Return raw recent journal lines for client-side filtering/display."""
     result = subprocess.run(
-        ["journalctl", "-u", SERVICE, "-n", "2000", "--no-pager"],
+        ["journalctl", "-u", SERVICE, "-n", "500", "--no-pager"],
         capture_output=True,
         text=True,
     )
@@ -1077,13 +1145,6 @@ def get_cpu_usage_per_core():
         usages.append(f"{usage:.1f}")
     return usages
 
-def format_cpu_per_core_text(cpu_per_core):
-    """Format per-core percentages for compact header display."""
-    if not cpu_per_core:
-        return "unknown"
-    # return " | ".join([f"Core{i} {val}%" for i, val in enumerate(cpu_per_core)])
-    return " | ".join([f"{val}%" for i, val in enumerate(cpu_per_core)])
-
 def _class_from_percent(value):
     """Map percentage to severity color class for the dashboard."""
     if value < 60:
@@ -1103,16 +1164,6 @@ def _extract_percent(usage_text):
         return float(match.group(1))
     except ValueError:
         return None
-
-def get_cpu_usage_class(cpu_per_core):
-    """Color class based on hottest CPU core usage."""
-    if not cpu_per_core:
-        return "stat-red"
-    try:
-        peak = max(float(v) for v in cpu_per_core)
-    except ValueError:
-        return "stat-red"
-    return _class_from_percent(peak)
 
 def get_cpu_per_core_items(cpu_per_core):
     """Return per-core values with independent color classes."""
@@ -1213,54 +1264,145 @@ def get_storage_usage():
     percent = parts[4]
     return f"{used} / {size} ({percent})"
 
-def get_players_online():
-    """Return online player count from mcrcon, or 'unknown'."""
-    result = subprocess.run(
-        ["mcrcon", "-p", RCON_PASSWORD, "list"],
-        capture_output=True,
-        text=True,
-        timeout=4,
-    )
-    if result.returncode != 0:
-        return "unknown"
+def _candidate_mcrcon_bins():
+    """Return possible mcrcon executable paths."""
+    candidates = []
+    found = shutil.which("mcrcon")
+    if found:
+        candidates.append(found)
+    for path in ("/usr/bin/mcrcon", "/usr/local/bin/mcrcon", "/opt/mcrcon/mcrcon"):
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
 
-    output = (result.stdout or "") + (result.stderr or "")
-    marker = "There are "
-    idx = output.find(marker)
-    if idx == -1:
-        return "unknown"
+def _clean_rcon_output(text):
+    """Normalize RCON output by removing color/control codes."""
+    cleaned = text or ""
+    # Strip ANSI escape sequences.
+    cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", cleaned)
+    # Strip Minecraft section-formatting codes.
+    cleaned = re.sub(r"\u00a7.", "", cleaned)
+    return cleaned
 
-    fragment = output[idx + len(marker):].strip()
-    count = fragment.split(" ", 1)[0]
-    return count if count.isdigit() else "unknown"
+def _refresh_rcon_config():
+    """Refresh RCON password/port from server.properties when available."""
+    global rcon_cached_password
+    global rcon_cached_port
+    global rcon_last_config_read_at
 
-def get_tick_rate():
-    """Return server tick time in milliseconds per tick when available."""
-    # Skip probing when systemd already reports server as not active.
-    if get_status() != "active":
-        return "unknown"
+    now = time.time()
+    with rcon_config_lock:
+        # Refresh at most once per minute.
+        if now - rcon_last_config_read_at < 60:
+            return rcon_cached_password, rcon_cached_port
 
-    # Try commands commonly available across Paper/Spigot/modded stacks.
+        rcon_last_config_read_at = now
+        parsed_password = None
+        parsed_port = None
+
+        for path in SERVER_PROPERTIES_CANDIDATES:
+            if not path.exists():
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except OSError:
+                continue
+
+            kv = {}
+            for raw in lines:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                kv[key.strip()] = value.strip()
+
+            if kv.get("enable-rcon", "").lower() == "false":
+                continue
+
+            if kv.get("rcon.password"):
+                parsed_password = kv.get("rcon.password")
+            if kv.get("rcon.port", "").isdigit():
+                parsed_port = int(kv.get("rcon.port"))
+            break
+
+        if parsed_password:
+            rcon_cached_password = parsed_password
+        if parsed_port:
+            rcon_cached_port = parsed_port
+
+        return rcon_cached_password, rcon_cached_port
+
+def _run_mcrcon(command, timeout=4):
+    """Run one RCON command against local server (with compatibility fallbacks)."""
+    password, port = _refresh_rcon_config()
+
+    last_result = None
+    for bin_path in _candidate_mcrcon_bins():
+        candidates = [
+            [bin_path, "-H", RCON_HOST, "-P", str(port), "-p", password, command],
+            [bin_path, "-H", RCON_HOST, "-p", password, command],
+            [bin_path, "-p", password, command],
+        ]
+        for argv in candidates:
+            try:
+                result = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                last_result = result
+                if result.returncode == 0:
+                    return result
+            except Exception as exc:
+                continue
+
+    if last_result is not None:
+        return last_result
+    raise RuntimeError("mcrcon invocation failed")
+
+def _parse_players_online(output):
+    """Parse player count from common `list` output variants."""
+    text = _clean_rcon_output(output).strip()
+    if not text:
+        return None
+
+    # Vanilla/Paper format: "There are N of a max of M players online".
+    match = re.search(r"There are\s+(\d+)\s+of a max of", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    # Some servers return explicit no-player sentence.
+    if re.search(r"\bno players online\b", text, re.IGNORECASE):
+        return "0"
+
+    # Generic fallback around "players online" phrase.
+    match = re.search(r"(\d+)\s+players?\s+online", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    # "Players online: N"
+    match = re.search(r"Players?\s+online:\s*(\d+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    return None
+
+def _probe_tick_rate():
+    """Probe tick time using multiple command variants and return '<ms> ms' or None."""
     for cmd in ("mspt", "tps", "forge tps", "spark tps"):
         try:
-            result = subprocess.run(
-                ["mcrcon", "-p", RCON_PASSWORD, cmd],
-                capture_output=True,
-                text=True,
-                timeout=4,
-            )
+            result = _run_mcrcon(cmd, timeout=8)
         except Exception:
             continue
 
         if result.returncode != 0:
             continue
 
-        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        output = _clean_rcon_output((result.stdout or "") + (result.stderr or "")).strip()
         if not output:
             continue
-
-        # Strip Minecraft section-formatting codes if present.
-        cleaned = re.sub(r"\u00a7.", "", output)
+        cleaned = output
 
         # Prefer direct mspt/ms values when available.
         ms_match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*ms", cleaned, re.IGNORECASE)
@@ -1287,25 +1429,103 @@ def get_tick_rate():
         if match:
             try:
                 tps = float(match.group(1).replace(",", "."))
-                # Guard against unrelated numbers in output.
                 if 0 < tps <= 30:
                     return f"{(1000.0 / tps):.1f} ms"
             except ValueError:
                 pass
 
-    return "unknown"
+    return None
+
+def _probe_minecraft_runtime_metrics(force=False):
+    """Return cached/updated (players_online, tick_rate) values."""
+    global mc_last_query_at
+    global mc_cached_players_online
+    global mc_cached_tick_rate
+
+    # Fast path: skip probing when service is down.
+    if get_status() != "active":
+        with mc_query_lock:
+            mc_cached_players_online = "unknown"
+            mc_cached_tick_rate = "unknown"
+        return "unknown", "unknown"
+
+    now = time.time()
+    with mc_query_lock:
+        if not force and (now - mc_last_query_at) < MC_QUERY_INTERVAL_SECONDS:
+            return mc_cached_players_online, mc_cached_tick_rate
+
+    players_value = None
+    tick_value = None
+
+    try:
+        result = _run_mcrcon("list", timeout=8)
+        if result.returncode == 0:
+            combined = (result.stdout or "") + (result.stderr or "")
+            players_value = _parse_players_online(combined)
+    except Exception:
+        players_value = None
+
+    try:
+        tick_value = _probe_tick_rate()
+    except Exception:
+        tick_value = None
+
+    with mc_query_lock:
+        # Keep last known values on transient RCON failures while service is active.
+        if players_value is not None:
+            mc_cached_players_online = players_value
+        elif mc_cached_players_online == "unknown":
+            mc_cached_players_online = "unknown"
+
+        if tick_value is not None:
+            mc_cached_tick_rate = tick_value
+        elif mc_cached_tick_rate == "unknown":
+            mc_cached_tick_rate = "unknown"
+
+        mc_last_query_at = now
+        return mc_cached_players_online, mc_cached_tick_rate
+
+def get_players_online():
+    """Return online player count from cached RCON probe."""
+    players_online, _ = _probe_minecraft_runtime_metrics()
+    return players_online
+
+def get_tick_rate():
+    """Return server tick time from cached RCON probe."""
+    _, tick_rate = _probe_minecraft_runtime_metrics()
+    return tick_rate
 
 def get_service_status_display(service_status, players_online):
-    """Map raw service + RCON readiness into UI-friendly status labels."""
-    # Use systemd lifecycle as the source-of-truth for service state.
+    """Map raw service + start/stop intent into rule-based UI status labels."""
+    # Rule 1: Off when systemd says service is off.
     if service_status in ("inactive", "failed"):
+        set_service_status_intent(None)
         return "Off"
+
+    # Transitional systemd states keep obvious lifecycle labels.
     if service_status == "activating":
         return "Starting"
     if service_status == "deactivating":
         return "Shutting Down"
+
+    # Active state: apply user-requested rules based on players + trigger intent.
     if service_status == "active":
-        return "Running"
+        players_is_integer = isinstance(players_online, str) and players_online.isdigit()
+        intent = get_service_status_intent()
+
+        # Rule 2: Running when systemd active and players is an integer.
+        if players_is_integer:
+            # Once players become resolvable, startup/shutdown transient intent is done.
+            if intent in ("starting", "shutting"):
+                set_service_status_intent(None)
+            return "Running"
+
+        # Rule 3 and 4: unknown players + trigger intent.
+        if intent == "shutting":
+            return "Shutting Down"
+        # Default unknown-on-active and explicit start intent both map to Starting.
+        return "Starting"
+
     return "Off"
 
 def get_service_status_class(service_status_display):
@@ -1319,71 +1539,76 @@ def get_service_status_class(service_status_display):
     return "stat-red"
 
 def graceful_stop_minecraft():
-    """Stop sequence: RCON stop -> backup -> systemd stop."""
+    """Stop sequence: systemd stop -> backup."""
     # Run steps in strict order, regardless of intermediate failures.
-    rcon_result = subprocess.run(
-        ["mcrcon", "-p", RCON_PASSWORD, "stop"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    backup_ok = run_backup_script(track_session_schedule=False)
-    systemd_result = run_sudo(["systemctl", "stop", SERVICE])
+    systemd_ok = stop_service_systemd()
+    backup_ok = run_backup_script()
     return {
-        "rcon_ok": rcon_result.returncode == 0,
+        "systemd_ok": systemd_ok,
         "backup_ok": backup_ok,
-        "systemd_ok": systemd_result.returncode == 0,
     }
 
 def stop_server_automatically():
     """Gracefully stop Minecraft (used by idle watcher)."""
-    global backup_had_periodic_run
-    global backup_periodic_runs
-
+    set_service_status_intent("shutting")
     graceful_stop_minecraft()
     clear_session_start_time()
-    with backup_lock:
-        backup_last_run_at = None
-        backup_had_periodic_run = False
-        backup_periodic_runs = 0
+    reset_backup_periodic_runs()
 
-def run_backup_script(track_session_schedule=True):
-    """Run backup script and update in-memory backup timestamps."""
-    global backup_last_run_at
-    global backup_last_completed_at
+def run_backup_script():
+    """Run backup script and update in-memory backup status."""
     global backup_active_jobs
-    global backup_last_started_at
-    global backup_last_finished_at
-    global backup_last_success
     global backup_last_error
+    global backup_last_successful_at
 
     with backup_lock:
         # Track active backup jobs for UI status.
         backup_active_jobs += 1
-        backup_last_started_at = time.time()
-        backup_last_success = None
         backup_last_error = ""
 
     success = False
+    before_snapshot = get_backup_zip_snapshot()
     try:
-        # Use sudo-backed execution for consistency with existing setup.
-        result = run_sudo([BACKUP_SCRIPT])
-        success = result.returncode == 0
-        if success:
-            now = time.time()
+        # Try direct execution first; some setups succeed even if script emits
+        # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
+        direct_result = subprocess.run(
+            [BACKUP_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        after_direct_snapshot = get_backup_zip_snapshot()
+        direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
+
+        if direct_result.returncode == 0 or direct_created_zip:
+            success = True
             with backup_lock:
-                backup_last_completed_at = now
-                if track_session_schedule:
-                    backup_last_run_at = now
+                backup_last_successful_at = time.time()
         else:
-            err = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
-            with backup_lock:
-                backup_last_error = err[:500] if err else "Backup command returned non-zero exit status."
+            # Fallback to sudo-backed execution when direct run truly failed.
+            sudo_result = run_sudo([BACKUP_SCRIPT])
+            after_sudo_snapshot = get_backup_zip_snapshot()
+            sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
+            success = sudo_result.returncode == 0 or sudo_created_zip
+            if success:
+                with backup_lock:
+                    backup_last_successful_at = time.time()
+
+            if not success:
+                err = (
+                    (sudo_result.stderr or "")
+                    + "\n"
+                    + (sudo_result.stdout or "")
+                    + "\n"
+                    + (direct_result.stderr or "")
+                    + "\n"
+                    + (direct_result.stdout or "")
+                ).strip()
+                with backup_lock:
+                    backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
     finally:
         with backup_lock:
             backup_active_jobs = max(0, backup_active_jobs - 1)
-            backup_last_finished_at = time.time()
-            backup_last_success = success
 
     return success
 
@@ -1392,6 +1617,10 @@ def format_backup_time(timestamp):
     if timestamp is None:
         return "--"
     return datetime.fromtimestamp(timestamp, tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
+
+def get_server_time_text():
+    """Return current server time for header display."""
+    return datetime.now(tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 def get_latest_backup_zip_timestamp():
     """Return mtime of newest ZIP backup file, if available."""
@@ -1407,10 +1636,46 @@ def get_latest_backup_zip_timestamp():
             latest = ts
     return latest
 
+def get_backup_zip_snapshot():
+    """Return snapshot of zip files as {path: mtime_ns} for change detection."""
+    snapshot = {}
+    if not BACKUP_DIR.exists() or not BACKUP_DIR.is_dir():
+        return snapshot
+    for path in BACKUP_DIR.glob("*.zip"):
+        try:
+            snapshot[str(path)] = path.stat().st_mtime_ns
+        except OSError:
+            continue
+    return snapshot
+
+def backup_snapshot_changed(before_snapshot, after_snapshot):
+    """Return True when backup artifacts changed (new file or updated mtime)."""
+    if not before_snapshot and after_snapshot:
+        return True
+    for file_path, after_mtime in after_snapshot.items():
+        before_mtime = before_snapshot.get(file_path)
+        if before_mtime is None:
+            return True
+        if after_mtime != before_mtime:
+            return True
+    return False
+
 def get_backup_schedule_times(service_status=None):
     """Return last/next backup timestamps for dashboard display."""
+    global backup_last_successful_at
+
     if service_status is None:
         service_status = get_status()
+
+    latest_zip_ts = get_latest_backup_zip_timestamp()
+    with backup_lock:
+        last_success_ts = backup_last_successful_at
+    if latest_zip_ts is None:
+        last_backup_ts = last_success_ts
+    elif last_success_ts is None:
+        last_backup_ts = latest_zip_ts
+    else:
+        last_backup_ts = max(latest_zip_ts, last_success_ts)
 
     next_backup_at = None
     if service_status not in OFF_STATES:
@@ -1421,18 +1686,80 @@ def get_backup_schedule_times(service_status=None):
             next_backup_at = anchor + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
 
     return {
-        "last_backup_time": format_backup_time(get_latest_backup_zip_timestamp()),
+        "last_backup_time": format_backup_time(last_backup_ts),
         "next_backup_time": format_backup_time(next_backup_at),
     }
 
-def get_backup_status():
+def get_backup_status(latest_backup_snapshot=None):
     """Return dashboard backup activity status label and color class."""
+    global backup_waiting_for_last_change
+    global backup_waiting_baseline_snapshot
+
+    if latest_backup_snapshot is None:
+        latest_backup_snapshot = get_backup_zip_snapshot()
+
     with backup_lock:
         active = backup_active_jobs > 0
+        waiting = backup_waiting_for_last_change
+        baseline_snapshot = backup_waiting_baseline_snapshot or {}
+
+    if waiting:
+        # Stay in Running state until the "last backup" source value changes.
+        if backup_snapshot_changed(baseline_snapshot, latest_backup_snapshot):
+            with backup_lock:
+                backup_waiting_for_last_change = False
+                backup_waiting_baseline_snapshot = {}
+            waiting = False
+        else:
+            return "Running", "stat-green"
 
     if active:
         return "Running", "stat-green"
     return "Idle", "stat-yellow"
+
+def reset_backup_periodic_runs():
+    """Reset periodic backup run counter."""
+    global backup_periodic_runs
+    with backup_lock:
+        backup_periodic_runs = 0
+
+def collect_dashboard_metrics():
+    """Collect shared dashboard metrics for both HTML and JSON responses."""
+    cpu_per_core = get_cpu_usage_per_core()
+    ram_usage = get_ram_usage()
+    cpu_frequency = get_cpu_frequency()
+    storage_usage = get_storage_usage()
+    service_status = get_status()
+    players_online = get_players_online()
+    tick_rate = get_tick_rate()
+    session_duration = get_session_duration_text(service_status)
+    service_status_display = get_service_status_display(service_status, players_online)
+    backup_schedule = get_backup_schedule_times(service_status)
+    latest_backup_snapshot = get_backup_zip_snapshot()
+    backup_status, backup_status_class = get_backup_status(latest_backup_snapshot)
+
+    return {
+        "service_status": service_status_display,
+        "service_status_class": get_service_status_class(service_status_display),
+        "service_running_status": service_status,
+        "backups_status": get_backups_status(),
+        "ram_usage": ram_usage,
+        "ram_usage_class": get_ram_usage_class(ram_usage),
+        "cpu_per_core_items": get_cpu_per_core_items(cpu_per_core),
+        "cpu_frequency": cpu_frequency,
+        "cpu_frequency_class": get_cpu_frequency_class(cpu_frequency),
+        "storage_usage": storage_usage,
+        "storage_usage_class": get_storage_usage_class(storage_usage),
+        "players_online": players_online,
+        "tick_rate": tick_rate,
+        "session_duration": session_duration,
+        "idle_countdown": get_idle_countdown(service_status, players_online),
+        "backup_status": backup_status,
+        "backup_status_class": backup_status_class,
+        "last_backup_time": backup_schedule["last_backup_time"],
+        "next_backup_time": backup_schedule["next_backup_time"],
+        "server_time": get_server_time_text(),
+    }
 
 def format_countdown(seconds):
     """Render remaining seconds as MM:SS."""
@@ -1497,7 +1824,6 @@ def backup_session_watcher():
     If a session ends before reaching the backup interval, run one backup at
     shutdown so short sessions still produce a backup artifact.
     """
-    global backup_had_periodic_run
     global backup_periodic_runs
 
     while True:
@@ -1531,19 +1857,16 @@ def backup_session_watcher():
                     should_run_shutdown_backup = True
 
                     clear_session_start_time()
-                    backup_last_run_at = None
-                    backup_had_periodic_run = False
                     backup_periodic_runs = 0
 
             if should_run_periodic_backup:
                 # Keep schedule counters in sync only when backup succeeds.
-                if run_backup_script(track_session_schedule=True):
+                if run_backup_script():
                     with backup_lock:
-                        backup_had_periodic_run = True
                         backup_periodic_runs += 1
 
             if should_run_shutdown_backup:
-                run_backup_script(track_session_schedule=False)
+                run_backup_script()
         except Exception:
             # Keep watcher alive on transient command failures.
             pass
@@ -1589,13 +1912,6 @@ def _session_write_failed_response():
         return jsonify({"ok": False, "error": "session_write_failed", "message": f"{message} {_status_debug_note()}"}), 500
     return redirect("/?msg=session_write_failed")
 
-def _ensure_session_anchor_or_fail(service_status):
-    """Ensure session anchor exists when service is not off."""
-    if service_status in OFF_STATES:
-        return True
-    session_start = get_session_start_time(service_status)
-    return session_start is not None
-
 def _ensure_session_anchor_for_start_or_fail():
     """Set session start for explicit start action and validate persistence."""
     ts = write_session_start_time()
@@ -1604,14 +1920,6 @@ def _ensure_session_anchor_for_start_or_fail():
 def _ensure_session_clear_for_stop_or_fail():
     """Clear session file after stop and validate persistence."""
     return clear_session_start_time()
-
-def _maybe_attach_session_write_error(payload, service_status):
-    """Attach session write status note to metrics payload when anchor is missing."""
-    if service_status in OFF_STATES:
-        return payload
-    if read_session_start_time() is None:
-        payload["session_warning"] = _status_debug_note()
-    return payload
 
 def ensure_session_tracking_initialized():
     """Run session tracking initialization once per process."""
@@ -1683,39 +1991,29 @@ def index():
     elif message_code == "backup_failed":
         alert_message = "Backup failed."
 
-    cpu_per_core = get_cpu_usage_per_core()
-    ram_usage = get_ram_usage()
-    cpu_frequency = get_cpu_frequency()
-    storage_usage = get_storage_usage()
-    service_status = get_status()
-    players_online = get_players_online()
-    tick_rate = get_tick_rate()
-    session_duration = get_session_duration_text(service_status)
-    service_status_display = get_service_status_display(service_status, players_online)
-    backup_schedule = get_backup_schedule_times(service_status)
-    backup_status, backup_status_class = get_backup_status()
+    data = collect_dashboard_metrics()
     return render_template_string(
         HTML,
-        service_status=service_status_display,
-        service_status_class=get_service_status_class(service_status_display),
-        service_running_status=service_status,
-        backups_status=get_backups_status(),
-        cpu_per_core_text=format_cpu_per_core_text(cpu_per_core),
-        cpu_per_core_items=get_cpu_per_core_items(cpu_per_core),
-        cpu_frequency=cpu_frequency,
-        cpu_frequency_class=get_cpu_frequency_class(cpu_frequency),
-        storage_usage=storage_usage,
-        storage_usage_class=get_storage_usage_class(storage_usage),
-        players_online=players_online,
-        tick_rate=tick_rate,
-        session_duration=session_duration,
-        idle_countdown=get_idle_countdown(service_status, players_online),
-        backup_status=backup_status,
-        backup_status_class=backup_status_class,
-        last_backup_time=backup_schedule["last_backup_time"],
-        next_backup_time=backup_schedule["next_backup_time"],
-        ram_usage=ram_usage,
-        ram_usage_class=get_ram_usage_class(ram_usage),
+        service_status=data["service_status"],
+        service_status_class=data["service_status_class"],
+        service_running_status=data["service_running_status"],
+        backups_status=data["backups_status"],
+        cpu_per_core_items=data["cpu_per_core_items"],
+        cpu_frequency=data["cpu_frequency"],
+        cpu_frequency_class=data["cpu_frequency_class"],
+        storage_usage=data["storage_usage"],
+        storage_usage_class=data["storage_usage_class"],
+        players_online=data["players_online"],
+        tick_rate=data["tick_rate"],
+        session_duration=data["session_duration"],
+        idle_countdown=data["idle_countdown"],
+        backup_status=data["backup_status"],
+        backup_status_class=data["backup_status_class"],
+        last_backup_time=data["last_backup_time"],
+        next_backup_time=data["next_backup_time"],
+        server_time=data["server_time"],
+        ram_usage=data["ram_usage"],
+        ram_usage_class=data["ram_usage_class"],
         minecraft_logs_raw=get_minecraft_logs_raw(),
         alert_message=alert_message,
     )
@@ -1769,85 +2067,48 @@ def minecraft_log_stream():
 def metrics():
     """Return dynamic dashboard metrics as JSON."""
     # This endpoint is polled by the UI; keep payload compact and explicit.
-    cpu_per_core = get_cpu_usage_per_core()
-    ram_usage = get_ram_usage()
-    cpu_frequency = get_cpu_frequency()
-    storage_usage = get_storage_usage()
-    service_status = get_status()
-    players_online = get_players_online()
-    tick_rate = get_tick_rate()
-    session_duration = get_session_duration_text(service_status)
-    service_status_display = get_service_status_display(service_status, players_online)
-    backup_schedule = get_backup_schedule_times(service_status)
-    backup_status, backup_status_class = get_backup_status()
-    payload = {
-        "service_status": service_status_display,
-        "service_status_class": get_service_status_class(service_status_display),
-        "service_running_status": service_status,
-        "ram_usage": ram_usage,
-        "ram_usage_class": get_ram_usage_class(ram_usage),
-        "cpu_per_core_text": format_cpu_per_core_text(cpu_per_core),
-        "cpu_per_core_items": get_cpu_per_core_items(cpu_per_core),
-        "cpu_frequency": cpu_frequency,
-        "cpu_frequency_class": get_cpu_frequency_class(cpu_frequency),
-        "storage_usage": storage_usage,
-        "storage_usage_class": get_storage_usage_class(storage_usage),
-        "players_online": players_online,
-        "tick_rate": tick_rate,
-        "session_duration": session_duration,
-        "idle_countdown": get_idle_countdown(service_status, players_online),
-        "backup_status": backup_status,
-        "backup_status_class": backup_status_class,
-        "last_backup_time": backup_schedule["last_backup_time"],
-        "next_backup_time": backup_schedule["next_backup_time"],
-    }
-    return jsonify(payload)
+    return jsonify(collect_dashboard_metrics())
 
 @app.route("/start", methods=["POST"])
 def start():
     """Start Minecraft service and initialize backup session state."""
-    global backup_last_run_at
-    global backup_had_periodic_run
-    global backup_periodic_runs
-
+    set_service_status_intent("starting")
     # Start via systemd so status/auto-watchers remain aligned to one source.
     # Start service using systemd as source-of-truth for process lifecycle.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
     if not _ensure_session_anchor_for_start_or_fail():
         return _session_write_failed_response()
-    with backup_lock:
-        backup_last_run_at = None
-        backup_had_periodic_run = False
-        backup_periodic_runs = 0
+    reset_backup_periodic_runs()
     return _ok_response()
 
 @app.route("/stop", methods=["POST"])
 def stop():
     """Stop Minecraft service using user-supplied sudo password."""
-    global backup_last_run_at
-    global backup_had_periodic_run
-    global backup_periodic_runs
-
     sudo_password = request.form.get("sudo_password", "")
     if not validate_sudo_password(sudo_password):
         return _password_rejected_response()
 
+    set_service_status_intent("shutting")
     # Ordered shutdown path:
     # 1) RCON stop, 2) final backup, 3) systemd stop (inside helper).
     # Executes ordered shutdown (RCON stop -> backup -> systemd stop).
     graceful_stop_minecraft()
     _ensure_session_clear_for_stop_or_fail()
-    with backup_lock:
-        backup_last_run_at = None
-        backup_had_periodic_run = False
-        backup_periodic_runs = 0
+    reset_backup_periodic_runs()
     return _ok_response()
 
 @app.route("/backup", methods=["POST"])
 def backup():
     """Run backup script manually from dashboard."""
+    global backup_waiting_for_last_change
+    global backup_waiting_baseline_snapshot
+
+    with backup_lock:
+        backup_waiting_for_last_change = True
+        backup_waiting_baseline_snapshot = get_backup_zip_snapshot()
+
     # Manual backup should not shift the periodic schedule anchor.
-    if not run_backup_script(track_session_schedule=False):
+    if not run_backup_script():
         detail = ""
         with backup_lock:
             detail = backup_last_error
@@ -1874,13 +2135,23 @@ def rcon():
     if not validate_sudo_password(sudo_password):
         return _password_rejected_response()
 
-    # Fire-and-forget command execution; output is visible in server logs.
-    subprocess.run(
-        ["mcrcon", "-p", RCON_PASSWORD, command],
-        capture_output=True,
-        text=True,
-        timeout=8,
-    )
+    # Execute through the shared RCON runner so host/port/password fallbacks apply.
+    try:
+        result = _run_mcrcon(command, timeout=8)
+    except Exception:
+        if _is_ajax_request():
+            return jsonify({"ok": False, "message": "RCON command failed to execute."}), 500
+        return redirect("/")
+
+    if result.returncode != 0:
+        detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+        message = "RCON command failed."
+        if detail:
+            message = f"RCON command failed: {detail[:400]}"
+        if _is_ajax_request():
+            return jsonify({"ok": False, "message": message}), 500
+        return redirect("/")
+
     return _ok_response()
 
 if __name__ == "__main__":
