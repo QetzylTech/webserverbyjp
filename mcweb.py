@@ -7,7 +7,7 @@ This app provides:
 - Automatic idle shutdown and session-based backup scheduling
 """
 
-from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context, session, has_request_context
+from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context, session, has_request_context, send_from_directory, abort
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -36,6 +36,7 @@ SERVICE = "minecraft"
 # BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
 BACKUP_SCRIPT = Path(__file__).resolve().parent / "backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
+CRASH_REPORTS_DIR = Path("/opt/Minecraft/crash-reports")
 BACKUP_LOG_FILE = Path(__file__).resolve().parent / "logs/backup.log"
 MCWEB_LOG_DIR = Path(__file__).resolve().parent / "logs"
 MCWEB_ACTION_LOG_FILE = MCWEB_LOG_DIR / "mcweb-actions.log"
@@ -158,9 +159,136 @@ HTML = """
         color: var(--text);
     }
 
+    .layout {
+        height: 100dvh;
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        overflow: hidden;
+    }
+
+    .sidebar {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        color: var(--text);
+        padding: 14px 10px;
+        margin: 12px 0 12px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        box-shadow: none;
+    }
+
+    .sidebar-title {
+        margin: 4px 8px 10px;
+        font-size: 0.9rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
+    }
+
+    .nav-link {
+        display: block;
+        color: var(--text);
+        text-decoration: none;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        font-weight: 600;
+        background: #f8fafc;
+    }
+
+    .nav-link:hover {
+        color: var(--text);
+        background: #eef2ff;
+        border-color: #c7d2fe;
+    }
+
+    .nav-link.active {
+        color: #ffffff;
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+    }
+    .nav-toggle {
+        display: none;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(15, 23, 42, 0.16);
+        border-radius: 10px;
+        background: #ffffff;
+        color: #0f172a;
+        font-size: 1.2rem;
+        font-weight: 700;
+        line-height: 1;
+        z-index: 1300;
+        cursor: pointer;
+        box-shadow: none;
+        transition: transform 0.2s ease;
+    }
+    .nav-backdrop {
+        display: none;
+    }
+
+    .nav-toggle-bar {
+        display: block;
+        width: 18px;
+        height: 2px;
+        border-radius: 2px;
+        background: #0f172a;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+
+    .nav-toggle-bar + .nav-toggle-bar {
+        margin-top: 4px;
+    }
+
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(1) {
+        transform: translateY(6px) rotate(45deg);
+    }
+
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(2) {
+        opacity: 0;
+    }
+
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(3) {
+        transform: translateY(-6px) rotate(-45deg);
+    }
+
+    .nav-toggle {
+        display: none;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(15, 23, 42, 0.16);
+        border-radius: 10px;
+        background: #ffffff;
+        color: #0f172a;
+        font-size: 1.2rem;
+        font-weight: 700;
+        line-height: 1;
+        z-index: 1300;
+        cursor: pointer;
+        box-shadow: none;
+    }
+
+    .nav-backdrop {
+        display: none;
+    }
+
+    .content {
+        min-width: 0;
+        overflow: hidden;
+    }
+
     .container {
-        max-width: 1200px;
-        margin: 0 auto;
+        max-width: none;
+        margin: 0;
+        width: 100%;
         height: 100dvh;
         padding: 12px;
         display: flex;
@@ -203,7 +331,7 @@ HTML = """
 
     .stats-groups {
         display: grid;
-        grid-template-columns: minmax(420px, 1.35fr) minmax(260px, 1fr) minmax(260px, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
         width: 100%;
     }
@@ -217,7 +345,7 @@ HTML = """
     }
 
     .server-stats {
-        min-width: 420px;
+        min-width: 0;
     }
 
     .group-title {
@@ -236,11 +364,16 @@ HTML = """
         gap: 4px;
         color: var(--muted);
         font-size: 0.88rem;
+        width: 100%;
+        min-width: 0;
     }
 
     .status-row b {
         color: var(--text);
         font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        max-width: 100%;
     }
 
     .stat-green { color: #166534 !important; }
@@ -249,7 +382,10 @@ HTML = """
     .stat-red { color: #b91c1c !important; }
 
     .status-row span {
-        white-space: nowrap;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        max-width: 100%;
     }
 
     .actions {
@@ -368,7 +504,7 @@ HTML = """
 
     #log-source:focus {
         outline: none;
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+        box-shadow: none;
     }
 
     #log-source option {
@@ -517,13 +653,64 @@ HTML = """
         background: #334155;
     }
 
-    @media (max-width: 1100px) and (min-width: 901px) {
+    @media (max-width: 1400px) and (min-width: 901px) {
         .stats-groups {
-            grid-template-columns: repeat(2, minmax(260px, 1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
-        .stats-groups > .stats-group:nth-child(3) {
+        .stats-groups > .server-stats {
             grid-column: 1 / -1;
+        }
+    }
+
+    @media (max-width: 1100px) {
+        .layout {
+            grid-template-columns: minmax(0, 1fr);
+            overflow: visible;
+        }
+
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 245px;
+            z-index: 1250;
+            transform: translateX(-105%);
+            transition: transform 0.2s ease;
+            box-shadow: none;
+        }
+
+        .sidebar.open {
+            transform: translateX(0);
+        }
+
+        .nav-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .nav-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.35);
+            z-index: 1240;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .nav-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .nav-backdrop.open + .layout .nav-toggle,
+        .nav-toggle.nav-open {
+            transform: translateX(245px);
         }
     }
 
@@ -532,6 +719,16 @@ HTML = """
             height: auto;
             min-height: 100%;
             overflow: auto;
+        }
+
+        .layout {
+            height: auto;
+            min-height: 100dvh;
+            overflow: visible;
+        }
+
+        .content {
+            overflow: visible;
         }
 
         .container {
@@ -543,6 +740,11 @@ HTML = """
         .title-row {
             flex-direction: column;
             align-items: flex-start;
+        }
+
+        .title-row h1 {
+            width: 100%;
+            text-align: center;
         }
 
         .actions {
@@ -563,7 +765,8 @@ HTML = """
         }
 
         .panel {
-            height: auto;
+            height: 500px;
+            max-height: 500px;
         }
 
         .panel-header {
@@ -577,13 +780,28 @@ HTML = """
         }
 
         .console-box {
-            min-height: calc(80 * 1.45em + 28px);
-            flex: 0 0 auto;
+            min-height: 0;
+            flex: 1 1 auto;
+            overflow: auto;
         }
     }
 </style>
 </head>
 <body>
+<button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+</button>
+<div id="nav-backdrop" class="nav-backdrop"></div>
+<div class="layout">
+    <aside id="side-nav" class="sidebar">
+        <div class="sidebar-title">Navigation</div>
+        <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+        <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+        <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Logs</a>
+    </aside>
+    <main class="content">
 <div class="container">
     <!-- Header area: title, action buttons, and all stat cards. -->
     <section class="header">
@@ -668,6 +886,8 @@ HTML = """
             <pre id="minecraft-log" class="console-box">{{ minecraft_logs_raw }}</pre>
         </article>
     </section>
+</div>
+</main>
 </div>
 <!-- Password gate modal for privileged operations (stop + RCON submit). -->
 <div id="sudo-modal" class="modal-overlay" aria-hidden="true">
@@ -1225,7 +1445,36 @@ HTML = """
         countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
     }
 
+    function initSidebarNav() {
+        const toggle = document.getElementById("nav-toggle");
+        const sidebar = document.getElementById("side-nav");
+        const backdrop = document.getElementById("nav-backdrop");
+        if (!toggle || !sidebar || !backdrop) return;
+
+        function closeNav() {
+            sidebar.classList.remove("open");
+            backdrop.classList.remove("open");
+            toggle.classList.remove("nav-open");
+            toggle.setAttribute("aria-expanded", "false");
+        }
+
+        function toggleNav() {
+            const nextOpen = !sidebar.classList.contains("open");
+            sidebar.classList.toggle("open", nextOpen);
+            backdrop.classList.toggle("open", nextOpen);
+            toggle.classList.toggle("nav-open", nextOpen);
+            toggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+        }
+
+        toggle.addEventListener("click", toggleNav);
+        backdrop.addEventListener("click", closeNav);
+        window.addEventListener("resize", () => {
+            if (window.innerWidth > 1100) closeNav();
+        });
+    }
+
     window.addEventListener("load", () => {
+        initSidebarNav();
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
             form.addEventListener("submit", async (event) => {
                 event.preventDefault();
@@ -1337,6 +1586,433 @@ HTML = """
 </html>
 """
 
+FILES_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page_title }}</title>
+<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<style>
+    :root {
+        --bg: #f3f6fb;
+        --surface: #ffffff;
+        --text: #1f2a37;
+        --muted: #5a6878;
+        --border: #d8dee6;
+        --accent: #1e40af;
+        --accent-hover: #1b3a9a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        height: 100%;
+    }
+    body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+        background: linear-gradient(180deg, #eef3fb 0%, var(--bg) 100%);
+        color: var(--text);
+        overflow: hidden;
+    }
+    .layout {
+        height: 100dvh;
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        overflow: hidden;
+    }
+    .sidebar {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        color: var(--text);
+        padding: 14px 10px;
+        margin: 12px 0 12px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        box-shadow: none;
+    }
+    .sidebar-title {
+        margin: 4px 8px 10px;
+        font-size: 0.9rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
+    }
+    .nav-link {
+        display: block;
+        color: var(--text);
+        text-decoration: none;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        font-weight: 600;
+        background: #f8fafc;
+    }
+    .nav-link:hover {
+        color: var(--text);
+        background: #eef2ff;
+        border-color: #c7d2fe;
+    }
+    .nav-link.active {
+        color: #ffffff;
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+    }
+    .nav-toggle {
+        display: none;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(15, 23, 42, 0.16);
+        border-radius: 10px;
+        background: #ffffff;
+        color: #0f172a;
+        font-size: 1.2rem;
+        font-weight: 700;
+        line-height: 1;
+        z-index: 1300;
+        cursor: pointer;
+        box-shadow: none;
+        transition: transform 0.2s ease;
+    }
+    .nav-backdrop {
+        display: none;
+    }
+    .nav-toggle-bar {
+        display: block;
+        width: 18px;
+        height: 2px;
+        border-radius: 2px;
+        background: #0f172a;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+    .nav-toggle-bar + .nav-toggle-bar {
+        margin-top: 4px;
+    }
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(1) {
+        transform: translateY(6px) rotate(45deg);
+    }
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(2) {
+        opacity: 0;
+    }
+    .nav-toggle.nav-open .nav-toggle-bar:nth-child(3) {
+        transform: translateY(-6px) rotate(-45deg);
+    }
+    .content {
+        min-width: 0;
+        overflow: auto;
+    }
+    .wrap {
+        max-width: none;
+        margin: 0;
+        padding: 12px;
+    }
+    .topbar {
+        display: flex;
+        justify-content: flex-start;
+        align-items: flex-end;
+        margin-bottom: 16px;
+    }
+    .title {
+        margin: 0;
+        font-size: 1.4rem;
+        font-weight: 700;
+    }
+    .panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+        min-height: calc(100dvh - 92px);
+    }
+    .panel h2 {
+        margin: 0 0 6px;
+        font-size: 1.4rem;
+        letter-spacing: 0.2px;
+    }
+    .panel .hint {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.92rem;
+    }
+    .list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .list li {
+        padding: 8px 0;
+        border-top: 1px solid var(--border);
+    }
+    .list li:first-child {
+        border-top: 0;
+    }
+    .file-link {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+        word-break: break-all;
+    }
+    .file-link:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+    }
+    .file-download-btn {
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 1rem;
+        font-family: inherit;
+        padding: 0;
+        margin: 0;
+        cursor: pointer;
+        text-align: left;
+        word-break: break-all;
+    }
+    .file-download-btn:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+    }
+    .file-download-btn:focus {
+        outline: none;
+        text-decoration: underline;
+    }
+    .download-error {
+        display: none;
+        margin: 0 0 10px 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #fecaca;
+        background: #fef2f2;
+        color: #991b1b;
+        font-size: 0.9rem;
+    }
+    .download-error.open {
+        display: block;
+    }
+    .meta {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 0.86rem;
+    }
+    .empty {
+        color: var(--muted);
+        padding: 8px 0;
+    }
+    @media (max-width: 1100px) {
+        .layout {
+            grid-template-columns: minmax(0, 1fr);
+            overflow: visible;
+        }
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 245px;
+            z-index: 1250;
+            transform: translateX(-105%);
+            transition: transform 0.2s ease;
+            box-shadow: none;
+        }
+        .sidebar.open {
+            transform: translateX(0);
+        }
+        .nav-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .nav-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.35);
+            z-index: 1240;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .nav-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .nav-backdrop.open + .layout .nav-toggle,
+        .nav-toggle.nav-open {
+            transform: translateX(245px);
+        }
+        .wrap {
+            padding-top: 56px;
+        }
+    }
+    @media (max-width: 900px) {
+        html, body {
+            height: auto;
+            min-height: 100%;
+        }
+        body {
+            overflow: auto;
+        }
+        .panel {
+            min-height: 0;
+        }
+    }
+</style>
+</head>
+<body>
+    <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+    </button>
+    <div id="nav-backdrop" class="nav-backdrop"></div>
+    <div class="layout">
+        <aside id="side-nav" class="sidebar">
+            <div class="sidebar-title">Navigation</div>
+            <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+            <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+            <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Logs</a>
+        </aside>
+        <main class="content">
+            <div class="wrap">
+                <section class="panel">
+                <h2>{{ panel_title }}</h2>
+                <p class="hint">{{ panel_hint }}</p>
+                <div id="download-error" class="download-error"></div>
+                {% if items %}
+                <ul class="list">
+                    {% for item in items %}
+                    <li>
+                        {% if current_page == "backups" %}
+                        <button
+                            class="file-download-btn"
+                            type="button"
+                            data-download-url="{{ download_base }}/{{ item.name }}"
+                            data-filename="{{ item.name }}"
+                        >{{ item.name }}</button>
+                        {% else %}
+                        <a class="file-link" href="{{ download_base }}/{{ item.name }}">{{ item.name }}</a>
+                        {% endif %}
+                        <span class="meta">{{ item.modified }} | {{ item.size_text }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="empty">{{ empty_text }}</div>
+                {% endif %}
+                </section>
+            </div>
+        </main>
+    </div>
+<script>
+    (function () {
+        const csrfToken = {{ csrf_token | tojson }};
+        const toggle = document.getElementById("nav-toggle");
+        const sidebar = document.getElementById("side-nav");
+        const backdrop = document.getElementById("nav-backdrop");
+        if (!toggle || !sidebar || !backdrop) return;
+
+        function closeNav() {
+            sidebar.classList.remove("open");
+            backdrop.classList.remove("open");
+            toggle.classList.remove("nav-open");
+            toggle.setAttribute("aria-expanded", "false");
+        }
+
+        function toggleNav() {
+            const nextOpen = !sidebar.classList.contains("open");
+            sidebar.classList.toggle("open", nextOpen);
+            backdrop.classList.toggle("open", nextOpen);
+            toggle.classList.toggle("nav-open", nextOpen);
+            toggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+        }
+
+        toggle.addEventListener("click", toggleNav);
+        backdrop.addEventListener("click", closeNav);
+        window.addEventListener("resize", function () {
+            if (window.innerWidth > 1100) closeNav();
+        });
+
+        const errorBox = document.getElementById("download-error");
+
+        function setDownloadError(text) {
+            if (!errorBox) return;
+            if (!text) {
+                errorBox.textContent = "";
+                errorBox.classList.remove("open");
+                return;
+            }
+            errorBox.textContent = text;
+            errorBox.classList.add("open");
+        }
+
+        document.querySelectorAll(".file-download-btn").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+                setDownloadError("");
+                const url = btn.getAttribute("data-download-url") || "";
+                const filename = btn.getAttribute("data-filename") || "backup.zip";
+                if (!url) return;
+
+                const password = window.prompt("Enter sudo password to continue.");
+                if (password === null) return;
+
+                const body = new URLSearchParams();
+                body.set("csrf_token", csrfToken || "");
+                body.set("sudo_password", password);
+
+                let response;
+                try {
+                    response = await fetch(url, {
+                        method: "POST",
+                        headers: {
+                            "X-Requested-With": "XMLHttpRequest",
+                            "X-CSRF-Token": csrfToken || "",
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                        },
+                        body: body.toString(),
+                    });
+                } catch (err) {
+                    setDownloadError("Download failed. Please try again.");
+                    return;
+                }
+
+                if (!response.ok) {
+                    let message = "Password incorrect. Download cancelled.";
+                    try {
+                        const payload = await response.json();
+                        if (payload && payload.message) message = payload.message;
+                    } catch (_) {
+                        // Keep default message on non-JSON responses.
+                    }
+                    setDownloadError(message);
+                    return;
+                }
+
+                const blob = await response.blob();
+                const fileUrl = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = fileUrl;
+                anchor.download = filename;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(fileUrl);
+            });
+        });
+    })();
+</script>
+</body>
+</html>
+"""
+
 # ----------------------------
 # System and privilege helpers
 # ----------------------------
@@ -1351,6 +2027,63 @@ def get_status():
 def _sanitize_log_fragment(text):
     # Flatten user/system text into one line for action logs.
     return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+
+def _format_file_size(num_bytes):
+    # Human-readable size for listing panels.
+    value = float(max(0, num_bytes or 0))
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} {units[idx]}"
+    return f"{value:.1f} {units[idx]}"
+
+def _list_download_files(base_dir, pattern):
+    # Return file metadata sorted newest first.
+    items = []
+    if not base_dir.exists() or not base_dir.is_dir():
+        return items
+
+    for path in base_dir.glob(pattern):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        ts = stat.st_mtime
+        items.append({
+            "name": path.name,
+            "mtime": ts,
+            "modified": datetime.fromtimestamp(ts, tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z"),
+            "size_text": _format_file_size(stat.st_size),
+        })
+
+    items.sort(key=lambda item: item["mtime"], reverse=True)
+    return items
+
+def _safe_filename_in_dir(base_dir, filename):
+    # Ensure requested file is a direct child file of base_dir.
+    if not filename:
+        return None
+    name = Path(filename).name
+    if name != filename:
+        return None
+    candidate = (base_dir / name)
+    try:
+        base_resolved = base_dir.resolve()
+        candidate_resolved = candidate.resolve()
+    except OSError:
+        return None
+    try:
+        candidate_resolved.relative_to(base_resolved)
+    except ValueError:
+        return None
+    if not candidate_resolved.exists() or not candidate_resolved.is_file():
+        return None
+    return name
 
 def _get_client_ip():
     # Prefer reverse-proxy headers, then direct client address.
@@ -2766,6 +3499,7 @@ def index():
     data = get_cached_dashboard_metrics()
     return render_template_string(
         HTML,
+        current_page="home",
         service_status=data["service_status"],
         service_status_class=data["service_status_class"],
         service_running_status=data["service_running_status"],
@@ -2792,6 +3526,58 @@ def index():
         alert_message=alert_message,
         alert_message_code=message_code,
     )
+
+@app.route("/files")
+def files_page():
+    # Backward-compatible alias for old combined downloads page.
+    return redirect("/backups")
+
+@app.route("/backups")
+def backups_page():
+    # Dedicated backups downloads page.
+    return render_template_string(
+        FILES_HTML,
+        current_page="backups",
+        page_title="Backups",
+        panel_title="Backups",
+        panel_hint="Latest to oldest from /home/marites/backups",
+        items=_list_download_files(BACKUP_DIR, "*.zip"),
+        download_base="/download/backups",
+        empty_text="No backup zip files found.",
+        csrf_token=_ensure_csrf_token(),
+    )
+
+@app.route("/crash-logs")
+def crash_logs_page():
+    # Dedicated crash reports downloads page.
+    return render_template_string(
+        FILES_HTML,
+        current_page="crash_logs",
+        page_title="Crash Logs",
+        panel_title="Crash Logs",
+        panel_hint="Latest to oldest from /opt/Minecraft/crash-reports",
+        items=_list_download_files(CRASH_REPORTS_DIR, "*.txt"),
+        download_base="/download/crash-logs",
+        empty_text="No crash logs found.",
+        csrf_token=_ensure_csrf_token(),
+    )
+
+@app.route("/download/backups/<path:filename>", methods=["POST"])
+def download_backup(filename):
+    sudo_password = request.form.get("sudo_password", "")
+    if not validate_sudo_password(sudo_password):
+        return _password_rejected_response()
+    safe_name = _safe_filename_in_dir(BACKUP_DIR, filename)
+    if safe_name is None:
+        return abort(404)
+    return send_from_directory(str(BACKUP_DIR), safe_name, as_attachment=True)
+
+@app.route("/download/crash-logs/<path:filename>")
+def download_crash_log(filename):
+    safe_name = _safe_filename_in_dir(CRASH_REPORTS_DIR, filename)
+    if safe_name is None:
+        return abort(404)
+    return send_from_directory(str(CRASH_REPORTS_DIR), safe_name, as_attachment=True)
 
 @app.route("/log-stream/<source>")
 def log_stream(source):
