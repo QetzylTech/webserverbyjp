@@ -1,0 +1,61 @@
+# Python bytecode and caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test, lint, and type-check artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Logs and runtime output
+logs/
+*.log
+
+# Local secrets and environment files
+mcweb.env
+*.env
+*.env.local
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Local runtime/server state and sensitive data
+**/server.properties
+**/server.properties.real
+**/server.properties.debug
+
+data/users.txt
+data/session.txt
+data/state.txt
+data/*devices*.csv
+data/cleanup.json
+data/cleanup history.json
+data/cleanup_non_normal.txt
+data/properties/*.bak

@@ -33,7 +33,20 @@ def _build_protected_paths(candidates, by_category, rules):
     protected = set()
     newest_n = _safe_int(rules.get("guards", {}).get("never_delete_newest_n_per_category", 1), 1, minimum=0, maximum=1000)
     if newest_n > 0:
-        for rows in by_category.values():
+        backup_rows = [row for row in by_category.get("backup_zip", [])]
+        if backup_rows:
+            by_bucket = {}
+            for row in backup_rows:
+                bucket = _backup_bucket(row.get("name", ""))
+                by_bucket.setdefault(bucket, []).append(row)
+            for rows in by_bucket.values():
+                rows.sort(key=lambda item: item["mtime"], reverse=True)
+                for row in rows[:newest_n]:
+                    protected.add(row["path"])
+
+        for category, rows in by_category.items():
+            if category == "backup_zip":
+                continue
             for row in rows[:newest_n]:
                 protected.add(row["path"])
 

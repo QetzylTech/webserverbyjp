@@ -109,9 +109,10 @@ DEBUG_PAGE_VISIBLE = DEBUG_ENABLED or DEV_ENABLED
 MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_str("MAINTENANCE_SCOPE_BACKUP_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAINTENANCE_SCOPE_STALE_WORLD_DIR = _cfg_str("MAINTENANCE_SCOPE_STALE_WORLD_DIR", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_str("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
-MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N = _cfg_int("MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N", 1, minimum=0)
-MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP = _cfg_str("MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP", "true").strip().lower() in {"1", "true", "yes", "on"}
-MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD = _cfg_str("MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Hard safety guards are intentionally fixed and not env-configurable.
+MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N = 1
+MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP = True
+MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD = True
 RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
 RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
 SERVER_PROPERTIES_CANDIDATES = [

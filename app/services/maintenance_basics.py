@@ -322,7 +322,7 @@ def _cleanup_apply_scope_from_state(state, rules, scope=""):
         categories["backup_zip"] = bool(state["MAINTENANCE_SCOPE_BACKUP_ZIP"])
         categories["stale_world_dir"] = bool(state["MAINTENANCE_SCOPE_STALE_WORLD_DIR"])
         categories["old_world_zip"] = bool(state["MAINTENANCE_SCOPE_OLD_WORLD_ZIP"])
-    guards["never_delete_newest_n_per_category"] = _safe_int(state["MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N"], 1, minimum=0, maximum=1000)
+    guards["never_delete_newest_n_per_category"] = _safe_int(state["MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N"], 1, minimum=1, maximum=1000)
     guards["never_delete_last_backup_overall"] = bool(state["MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP"])
     guards["protect_active_world"] = bool(state["MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD"])
     return rules
