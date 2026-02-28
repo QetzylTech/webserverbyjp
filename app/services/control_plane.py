@@ -355,14 +355,17 @@ def _update_property_text(original_text, key, value):
     return "\n".join(out) + "\n"
 
 
-def _record_old_world_reference(ctx, old_world_dir, new_world_dir):
-    """Append old/new world switch reference to data/old_world.txt."""
+def _record_restore_history(ctx, backup_name, old_world_dir, archived_old_world_dir, new_world_dir):
+    """Append restore world switch reference to data/restore.history."""
     try:
         data_dir = Path(ctx.session_state.session_file).parent
         data_dir.mkdir(parents=True, exist_ok=True)
-        log_file = data_dir / "old_world.txt"
+        log_file = data_dir / "restore.history"
         stamp = datetime.now(tz=ctx.DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
-        line = f"{stamp} | old={old_world_dir} | new={new_world_dir}\n"
+        line = (
+            f"{stamp} | backup={backup_name} | old={old_world_dir} "
+            f"| archived={archived_old_world_dir} | new={new_world_dir}\n"
+        )
         with log_file.open("a", encoding="utf-8") as fh:
             fh.write(line)
         return True
@@ -374,6 +377,27 @@ def _sanitize_backup_name_component(value):
     """Sanitize filename component for backup/pre-restore artifact names."""
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "")).strip("_")
     return safe or "world"
+
+
+def _archive_old_world_dir(ctx, old_world_dir, stamp):
+    """Move previous world directory to data/old_worlds and return destination."""
+    data_dir = Path(ctx.session_state.session_file).parent
+    old_worlds_dir = data_dir / "old_worlds"
+    mkdir_result = run_sudo(ctx, ["mkdir", "-p", str(old_worlds_dir)])
+    if mkdir_result.returncode != 0:
+        return None, "Failed to create old_worlds archive directory."
+
+    base_name = f"{old_world_dir.name}_{stamp}"
+    archived_old_world_dir = old_worlds_dir / base_name
+    suffix = 1
+    while archived_old_world_dir.exists():
+        archived_old_world_dir = old_worlds_dir / f"{base_name}_{suffix}"
+        suffix += 1
+
+    move_result = run_sudo(ctx, ["mv", str(old_world_dir), str(archived_old_world_dir)])
+    if move_result.returncode != 0:
+        return None, "Failed to archive previous world directory."
+    return archived_old_world_dir, ""
 
 
 def _restore_source_from_extraction(ctx, extract_root):
@@ -397,7 +421,7 @@ def _restore_source_from_extraction(ctx, extract_root):
 
 
 def restore_world_backup(ctx, backup_filename, progress_callback=None):
-    """Restore backup into a new world dir, switch level-name, and keep old world as reference."""
+    """Restore backup into a new world dir, switch level-name, and archive old world."""
     def progress(message):
         """Runtime helper progress."""
         if progress_callback:
@@ -484,17 +508,30 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             return _restore_failed("Restore copy failed while applying backup data.")
         progress("Restore data applied to new world directory.")
 
+        progress("Archiving previous world directory.")
+        archived_old_world_dir, archive_err = _archive_old_world_dir(ctx, world_dir, stamp)
+        if archived_old_world_dir is None:
+            return _restore_failed(archive_err or "Failed to archive previous world directory.")
+
         try:
             next_props = _update_property_text(props_text, "level-name", new_world_dir.name)
             props_path.write_text(next_props, encoding="utf-8")
         except OSError:
+            rollback_result = run_sudo(ctx, ["mv", str(archived_old_world_dir), str(world_dir)])
+            if rollback_result.returncode != 0:
+                return _restore_failed(
+                    "Restore applied, but failed to update server.properties level-name and failed to rollback archived world."
+                )
             return _restore_failed("Restore applied, but failed to update server.properties level-name.")
 
-        if not _record_old_world_reference(ctx, world_dir, new_world_dir):
+        if not _record_restore_history(ctx, safe_name, world_dir, archived_old_world_dir, new_world_dir):
             ctx.log_mcweb_action(
                 "restore-backup",
                 command=safe_name,
-                rejection_message=f"Restored and switched world, but failed to update old_world.txt for {world_dir}.",
+                rejection_message=(
+                    f"Restored and switched world, but failed to update restore.history for {world_dir} "
+                    f"-> {archived_old_world_dir}."
+                ),
             )
         ctx.WORLD_DIR = new_world_dir
         progress(f"server.properties level-name switched to: {new_world_dir.name}")
@@ -522,6 +559,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             "pre_restore_snapshot_name": pre_restore_snapshot.name,
             "backup_file": safe_name,
             "switched_from_world": str(world_dir),
+            "archived_old_world": str(archived_old_world_dir),
             "switched_to_world": str(new_world_dir),
             "service_restarted": restarted,
         }

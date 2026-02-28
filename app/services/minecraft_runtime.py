@@ -7,6 +7,16 @@ import shutil
 import re
 
 
+def is_rcon_noise_line(line):
+    """Return whether a minecraft log line is known RCON startup/shutdown noise."""
+    lower = (line or "").lower()
+    if "thread rcon client" in lower:
+        return True
+    if "minecraft/rconclient" in lower and "shutting down" in lower:
+        return True
+    return False
+
+
 def normalize_log_source(ctx, source):
     """Normalize and validate one log source key."""
     normalized = (source or "").strip().lower()
@@ -26,7 +36,7 @@ def log_source_settings(ctx, source):
             "type": "journal",
             "context": "minecraft_log_stream",
             "unit": ctx.SERVICE,
-            "text_limit": 1000,
+            "text_limit": ctx.MINECRAFT_LOG_TEXT_LIMIT,
         }
     if normalized == "backup":
         return {
@@ -34,7 +44,7 @@ def log_source_settings(ctx, source):
             "type": "file",
             "context": "backup_log_stream",
             "path": ctx.BACKUP_LOG_FILE,
-            "text_limit": 200,
+            "text_limit": ctx.BACKUP_LOG_TEXT_LIMIT,
         }
     if normalized == "mcweb_log":
         return {
@@ -42,14 +52,14 @@ def log_source_settings(ctx, source):
             "type": "file",
             "context": "mcweb_log_stream",
             "path": ctx.MCWEB_LOG_FILE,
-            "text_limit": 200,
+            "text_limit": ctx.MCWEB_LOG_TEXT_LIMIT,
         }
     return {
         "source": normalized,
         "type": "file",
         "context": "mcweb_action_log_stream",
         "path": ctx.MCWEB_ACTION_LOG_FILE,
-        "text_limit": 200,
+        "text_limit": ctx.MCWEB_ACTION_LOG_TEXT_LIMIT,
     }
 
 
@@ -184,6 +194,8 @@ def log_source_fetcher_loop(ctx, source):
                         break
                 clean = line.rstrip("\r\n")
                 if not clean:
+                    continue
+                if normalized == "minecraft" and is_rcon_noise_line(clean):
                     continue
                 publish_log_stream_line(ctx, normalized, clean)
                 if normalized == "minecraft":

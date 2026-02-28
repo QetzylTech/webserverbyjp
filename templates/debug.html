@@ -24,10 +24,16 @@
                                     <button class="debug-open-explorer btn-backup" id="open-file-explorer" type="button">Env Value Editor</button>
                                 </div>
                             </div>
+                            {% if debug_actions_enabled %}
                             <p class="debug-header-note">Debug mode is enabled at boot. Changes here are runtime-only and reset after app restart.</p>
+                            {% else %}
+                            <p class="debug-header-note">Dummy mode: UI actions are interactive but disconnected from backend routes. Set both `MCWEB_PROFILE=debug` and `DEBUG=true` to enable real actions.</p>
+                            {% endif %}
                         </div>
                         {% if debug_message %}
-                        <p class="debug-message">{{ debug_message }}</p>
+                        <p id="debug-message" class="debug-message">{{ debug_message }}</p>
+                        {% else %}
+                        <p id="debug-message" class="debug-message" hidden></p>
                         {% endif %}
                         <div class="debug-ops">
                             <form method="post" action="/debug/start">
@@ -46,7 +52,7 @@
                             </form>
                             <form method="post" action="/debug/stop">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <input class="debug-password" type="password" name="sudo_password" autocomplete="current-password" placeholder="Sudo password for stop" required>
+                                <input class="debug-password" type="password" name="sudo_password" autocomplete="current-password" placeholder="Sudo password for stop" {% if debug_actions_enabled %}required{% endif %}>
                                 <button class="btn-stop" type="submit">Stop</button>
                             </form>
                         </div>
@@ -74,7 +80,7 @@
                     <div class="debug-viewer-header">
                         <h2 id="debug-viewer-title" class="debug-viewer-title">server.properties editor</h2>
                         <div class="debug-pane-actions">
-                            <input id="debug-viewer-password" class="debug-pane-password" type="password" autocomplete="current-password" placeholder="Sudo password" required>
+                            <input id="debug-viewer-password" class="debug-pane-password" type="password" autocomplete="current-password" placeholder="Sudo password" {% if debug_actions_enabled %}required{% endif %}>
                             <button id="debug-viewer-apply" class="debug-pane-apply" type="button">Apply</button>
                             <button id="debug-viewer-reset" class="debug-pane-reset" type="button">Reset</button>
                             <button id="debug-viewer-close" class="debug-pane-close" type="button" aria-label="Close editor">x</button>
@@ -88,7 +94,7 @@
                     <div class="debug-explorer-header">
                         <h2 class="debug-explorer-title">Env Value Editor</h2>
                         <div class="debug-pane-actions">
-                            <input class="debug-pane-password" type="password" name="sudo_password" form="debug-env-form" autocomplete="current-password" placeholder="Sudo password" required>
+                            <input class="debug-pane-password" type="password" name="sudo_password" form="debug-env-form" autocomplete="current-password" placeholder="Sudo password" {% if debug_actions_enabled %}required{% endif %}>
                             <button class="debug-pane-apply" type="submit" name="action" value="apply" form="debug-env-form">Apply</button>
                             <button class="debug-pane-reset" type="submit" name="action" value="reset_all" form="debug-env-form">Reset</button>
                             <button id="debug-explorer-close" class="debug-pane-close" type="button" aria-label="Close editor">x</button>
@@ -138,8 +144,10 @@
 <script>
 window.__MCWEB_DEBUG_CONFIG = {
     csrfToken: {{ csrf_token | tojson }},
+    actionsEnabled: {{ debug_actions_enabled | tojson }},
 };
 </script>
+<script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
 <script src="{{ url_for('static', filename='debug.js', v=static_version('debug.js')) }}"></script>
 </body>

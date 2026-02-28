@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maintenance</title>
+<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='maintenance.css', v=static_version('maintenance.css')) }}">
+</head>
+<body data-page="maintenance">
+<div class="layout">
+    {% include "partials/nav.html" %}
+    <main class="content">
+        <div class="wrap maintenance-wrap">
+            <section class="panel maintenance-panel pane-primary maintenance-viewer">
+                <div class="maintenance-viewer-head">
+                    <div class="maintenance-head">
+                        <h1>Maintenance</h1>
+                        <div class="maintenance-toggle" data-mode="{{ maintenance_mode }}">
+                            <button type="button" class="maintenance-toggle-btn{% if maintenance_mode == 'backups' %} active{% endif %}" data-mode-target="backups">Backups</button>
+                            <button type="button" class="maintenance-toggle-btn{% if maintenance_mode == 'stale' %} active{% endif %}" data-mode-target="stale">Stale Worlds</button>
+                        </div>
+                    </div>
+                    {% if alert_message %}
+                    <p class="maintenance-alert">{{ alert_message }}</p>
+                    {% endif %}
+                    <p class="maintenance-meta">
+                        Backup folder: <strong>{{ backup_dir }}</strong> |
+                        Current world: <strong>{{ world_dir }}</strong>
+                    </p>
+                    <p class="maintenance-meta">
+                        Backup zip files: <strong>{{ backups_total }}</strong> |
+                        Total size: <strong>{{ "%.3f"|format((backups_size_bytes or 0) / (1024 * 1024 * 1024)) }}</strong> GB |
+                        Stale old worlds: <strong>{{ stale_worlds_total }}</strong>
+                    </p>
+                </div>
+
+                <div class="maintenance-file-list mode-backups{% if maintenance_mode != 'backups' %} hidden{% endif %}" data-mode-panel="backups">
+                    <h2>Backup Files</h2>
+                    <ul class="list">
+                        {% for item in backup_preview_items %}
+                        <li class="maintenance-file{% if item.deletable %} deletable{% endif %}" data-bucket="{{ item.bucket }}" data-mtime="{{ item.mtime }}">
+                            <span class="file-name name">{{ item.name }}</span>
+                            <span class="meta" data-meta-base="{{ item.bucket }} | {{ item.size }} bytes">{{ item.bucket }} | {{ item.size }} bytes{% if item.deletable %} | deletable{% endif %}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <div class="maintenance-file-list mode-stale{% if maintenance_mode != 'stale' %} hidden{% endif %}" data-mode-panel="stale">
+                    <h2>Stale Worlds</h2>
+                    <ul class="list">
+                        {% for item in stale_preview_items %}
+                        <li class="maintenance-file{% if item.deletable %} deletable{% endif %}" data-mtime="{{ item.mtime }}">
+                            <span class="file-name name">{{ item.name }}</span>
+                            <span class="meta" data-meta-base="{{ item.size }} bytes">{{ item.size }} bytes{% if item.deletable %} | deletable{% endif %}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </section>
+
+            <section class="panel maintenance-panel pane-primary maintenance-controls">
+                <div class="maintenance-head">
+                    <h2>Cleanup Controls</h2>
+                    <div class="maintenance-toggle" data-mode="{{ maintenance_mode }}">
+                        <button type="button" class="maintenance-toggle-btn{% if maintenance_mode == 'backups' %} active{% endif %}" data-mode-target="backups">Backups</button>
+                        <button type="button" class="maintenance-toggle-btn{% if maintenance_mode == 'stale' %} active{% endif %}" data-mode-target="stale">Stale Worlds</button>
+                    </div>
+                </div>
+
+                <form method="post" action="/maintenance/cleanup-backups" class="maintenance-form{% if maintenance_mode != 'backups' %} hidden{% endif %}" data-mode-panel="backups">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="mode" value="backups">
+                    <label>Keep newest manual backups (count)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_manual_count" type="number" min="0" step="1" value="{{ keep_manual }}">
+                            <input type="hidden" name="rule_keep_manual_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_manual_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Keep newest uncategorized backups (count)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_other_count" type="number" min="0" step="1" value="{{ keep_other }}">
+                            <input type="hidden" name="rule_keep_other_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_other_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Delete auto backups older than (days)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_auto_days" type="number" min="0" step="1" value="{{ keep_auto_days }}">
+                            <input type="hidden" name="rule_keep_auto_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_auto_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Delete session-end backups older than (days)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_session_days" type="number" min="0" step="1" value="{{ keep_session_days }}">
+                            <input type="hidden" name="rule_keep_session_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_session_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Delete pre-restore backups older than (days)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_pre_restore_days" type="number" min="0" step="1" value="{{ keep_pre_restore_days }}">
+                            <input type="hidden" name="rule_keep_pre_restore_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_pre_restore_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Sudo password (required to delete) <input name="sudo_password" type="password" autocomplete="current-password" required></label>
+                    <label class="maintenance-check"><input name="dry_run" type="checkbox" value="true" checked> Preview only (dry run)</label>
+                    <button class="btn-backup" type="submit">Run Backup Cleanup</button>
+                </form>
+
+                <form method="post" action="/maintenance/cleanup-stale-worlds" class="maintenance-form{% if maintenance_mode != 'stale' %} hidden{% endif %}" data-mode-panel="stale">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="mode" value="stale">
+                    <label>Always keep newest stale worlds (count)
+                        <div class="maintenance-rule-row">
+                            <input name="keep_stale_count" type="number" min="0" step="1" value="{{ keep_stale_count }}">
+                            <input type="hidden" name="rule_keep_stale_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_keep_stale_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Delete stale worlds older than (days)
+                        <div class="maintenance-rule-row">
+                            <input name="stale_max_age_days" type="number" min="0" step="1" value="{{ stale_max_age_days }}">
+                            <input type="hidden" name="rule_stale_age_enabled" value="true">
+                            <button type="button" class="rule-toggle-btn on" data-rule-toggle="rule_stale_age_enabled">ON</button>
+                        </div>
+                    </label>
+                    <label>Sudo password (required to delete) <input name="sudo_password" type="password" autocomplete="current-password" required></label>
+                    <label class="maintenance-check"><input name="dry_run" type="checkbox" value="true" checked> Preview only (dry run)</label>
+                    <button class="btn-backup" type="submit">Run Stale World Cleanup</button>
+                </form>
+            </section>
+        </div>
+    </main>
+</div>
+<script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
+<script src="{{ url_for('static', filename='maintenance.js', v=static_version('maintenance.js')) }}"></script>
+</body>
+</html>

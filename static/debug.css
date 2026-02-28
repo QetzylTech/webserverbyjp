@@ -217,30 +217,13 @@
     }
     .debug-pane-apply,
     .debug-pane-reset {
-        border: 0;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-        color: #fff;
-    }
-    .debug-pane-apply {
-        background: #b91c1c;
-    }
-    .debug-pane-apply:hover {
-        background: #991b1b;
-    }
-    .debug-pane-reset {
-        background: #1e3a8a;
-    }
-    .debug-pane-reset:hover {
-        background: #1e40af;
     }
     .debug-pane-close {
-        border: 0;
-        border-radius: 10px;
         width: 40px;
         height: 40px;
         padding: 0;
@@ -249,11 +232,6 @@
         font-size: 1.2rem;
         line-height: 1;
         cursor: pointer;
-        background: #eef2ff;
-        color: var(--text);
-    }
-    .debug-pane-close:hover {
-        background: #94a3b8;
     }
     .debug-explorer-controls {
         display: flex;
@@ -273,18 +251,11 @@
         min-width: 0;
     }
     .debug-explorer-btn {
-        border: 0;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-        color: #fff;
-        background: #1e3a8a;
-    }
-    .debug-explorer-btn:hover {
-        background: #1e40af;
     }
     .debug-explorer-list {
         flex: 1 1 auto;
@@ -373,8 +344,6 @@
         grid-template-columns: repeat(2, minmax(56px, 1fr));
         align-items: center;
         height: 40px;
-        border-radius: 10px;
-        background: #1e3a8a;
         padding: 2px;
         isolation: isolate;
         overflow: hidden;
@@ -387,7 +356,6 @@
         left: 2px;
         width: calc(50% - 2px);
         border-radius: 8px;
-        background: #1e40af;
         transition: transform 0.16s ease;
         z-index: 0;
     }
@@ -402,16 +370,8 @@
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-        color: #c7d2fe;
         position: relative;
         z-index: 1;
-        transition: color 0.14s ease;
-    }
-    .debug-explorer-toggle:hover {
-        color: #ffffff;
-    }
-    .debug-explorer-toggle.active {
-        color: #ffffff;
     }
     .debug-table {
         width: 100%;
@@ -449,7 +409,6 @@
     }
     .debug-original {
         color: var(--muted);
-        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
         font-size: 0.82rem;
         white-space: pre-wrap;
         word-break: break-word;
@@ -467,17 +426,10 @@
         align-items: center;
     }
     .debug-row-reset {
-        border: 0;
-        border-radius: 8px;
         padding: 6px 8px;
-        background: #1e3a8a;
-        color: #fff;
         font-size: 0.82rem;
         font-weight: 600;
         cursor: pointer;
-    }
-    .debug-row-reset:hover {
-        background: #1e40af;
     }
     .debug-ops {
         display: flex;
@@ -500,14 +452,10 @@
         min-width: 220px;
     }
     .debug-open-editor {
-        border: 0;
-        border-radius: 10px;
         padding: 9px 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-        background: #0f766e;
-        color: #fff;
     }
     .debug-open-editor,
     .debug-open-explorer,
@@ -620,7 +568,6 @@
     }
     .debug-props-original {
         color: var(--muted);
-        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
         font-size: 0.82rem;
         white-space: pre-wrap;
         word-break: break-word;
@@ -660,7 +607,6 @@
     html.theme-dark .debug-password,
     html.theme-dark .debug-explorer-path { background: #1f2733; color: #e6edf3; }
     html.theme-dark .debug-overridden { color: #86efac; }
-    html.theme-dark .debug-row-reset { background: #1e3a8a; }
     html.theme-dark .debug-explorer-list { background: #1f2733; }
     html.theme-dark .debug-table-wrap { background: #1f2733; }
     html.theme-dark .debug-explorer-item { background: transparent; color: #f8fafc; }
@@ -669,13 +615,6 @@
         background: #161b22;
         color: #e6edf3;
     }
-    html.theme-dark .debug-pane-apply { background: #b91c1c; }
-    html.theme-dark .debug-pane-reset { background: #1e3a8a; }
-    html.theme-dark .debug-pane-close {
-        background: #253247;
-        color: #dbe7ff;
-    }
-    html.theme-dark .debug-pane-close:hover { background: #3b4e6a; }
     html.theme-dark .debug-pane-password {
         background: #1f2733;
         color: #e6edf3;

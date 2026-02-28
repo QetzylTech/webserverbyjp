@@ -12,13 +12,9 @@
     }
     body {
         margin: 0;
-        font-family: "Segoe UI", Tahoma, Arial, sans-serif;
         background: #eef2ff;
         color: var(--text);
         overflow: hidden;
-    }
-    button {
-        height: 40px;
     }
     .layout {
         height: 100dvh;
@@ -87,29 +83,13 @@
         height: 100%;
         min-height: 0;
         margin: 0;
-        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        overflow-y: hidden;
         overflow-x: hidden;
-        overscroll-behavior: contain;
-        scrollbar-color: #94a3b8 #ffffff;
-        scrollbar-width: thin;
     }
-    .panel::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
-    }
-    .panel::-webkit-scrollbar-track {
-        background: #ffffff;
-        margin-block: 8px;
-    }
-    .panel::-webkit-scrollbar-thumb {
-        background: #94a3b8;
-        border-radius: 10px;
-        border-style: solid;
-        border-width: 2px 0 2px 2px;
-        border-color: #ffffff;
-    }
-    .panel::-webkit-scrollbar-thumb:hover {
-        background: #64748b;
+    body[data-page] .panel.pane-primary {
+        padding: 12px;
     }
     .panel h1,
     .panel h2 {
@@ -168,21 +148,6 @@
         font-size: 0.92rem;
         font-weight: 600;
     }
-    .sort-select {
-        margin: 0;
-    }
-    .list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }
-    .list li {
-        padding: 8px 0;
-        border-top: 1px solid var(--border);
-    }
-    .list li:first-child {
-        border-top: 0;
-    }
     .file-link {
         color: var(--accent);
         text-decoration: none;
@@ -210,8 +175,6 @@
         text-decoration: underline;
     }
     .file-action-btn {
-        border: 0;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         display: inline-flex;
@@ -221,8 +184,6 @@
         font-weight: 600;
         text-decoration: none;
         cursor: pointer;
-        transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
-        color: #ffffff;
     }
     .file-action-btn:active {
         transform: translateY(1px);
@@ -230,18 +191,10 @@
     .file-action-btn:focus {
         outline: none;
     }
-    .file-download-btn {
-        background: #1e3a8a;
-    }
     .file-download-btn:hover {
-        background: #1e40af;
         text-decoration: none;
     }
-    .file-restore-btn {
-        background: #b91c1c;
-    }
     .file-restore-btn:hover {
-        background: #991b1b;
         text-decoration: none;
     }
     .download-error {
@@ -309,39 +262,13 @@
         justify-content: flex-end;
         gap: 8px;
     }
-    .modal-actions button {
-        border: 0;
-        border-radius: 10px;
-        padding: 0 12px;
-        font: inherit;
-        font-weight: 600;
-        cursor: pointer;
-    }
-    .modal-btn-cancel {
-        background: #e2e8f0;
-        color: #0f172a;
-    }
-    .modal-btn-cancel:hover {
-        background: #cbd5e1;
-    }
-    .modal-btn-submit {
-        background: #1e3a8a;
-        color: #ffffff;
-    }
-    .modal-btn-submit:hover {
-        background: #1e40af;
-    }
     .meta {
         display: block;
         margin-top: 2px;
         color: var(--muted);
         font-size: 0.86rem;
     }
-    .file-view-btn {
-        background: #0f766e;
-    }
     .file-view-btn:hover {
-        background: #0d9488;
         text-decoration: none;
     }
     .file-view-btn:focus {
@@ -408,91 +335,35 @@
     .backup-restore-start,
     .backup-restore-cancel,
     .backup-restore-rollback {
-        border: 0;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-    }
-    .backup-restore-start {
-        background: #b91c1c;
-        color: #ffffff;
-    }
-    .backup-restore-start:hover {
-        background: #991b1b;
-    }
-    .backup-restore-cancel {
-        background: #0f766e;
-        color: #ffffff;
-    }
-    .backup-restore-cancel:hover {
-        background: #0d9488;
-    }
-    .backup-restore-rollback {
-        background: #1e3a8a;
-        color: #ffffff;
-    }
-    .backup-restore-rollback:hover {
-        background: #1e40af;
-    }
-    .backup-restore-rollback:disabled {
-        background: #94a3b8;
-        cursor: not-allowed;
-        opacity: 0.65;
     }
     .file-viewer-download {
-        border: 0;
-        background: #1e3a8a;
-        color: #ffffff;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-    }
-    .file-viewer-download:hover {
-        background: #1e40af;
-    }
-    .file-viewer-download:disabled {
-        background: #94a3b8;
-        cursor: not-allowed;
-        opacity: 0.65;
     }
     .file-action-btn:disabled,
     .backup-restore-start:disabled,
     .backup-restore-cancel:disabled,
     .backup-restore-rollback:disabled,
     .file-viewer-download:disabled,
-    .modal-btn-submit:disabled {
-        background: #94a3b8;
-        color: #ffffff;
-        cursor: not-allowed;
-        opacity: 0.65;
-    }
     .file-action-btn:disabled:hover,
     .backup-restore-start:disabled:hover,
     .backup-restore-cancel:disabled:hover,
     .backup-restore-rollback:disabled:hover,
     .file-viewer-download:disabled:hover,
-    .modal-btn-submit:disabled:hover {
-        background: #94a3b8;
-    }
     .file-viewer-close {
-        border: 0;
-        background: #b91c1c;
-        color: #ffffff;
-        border-radius: 10px;
         height: 40px;
         padding: 0 12px;
         font: inherit;
         font-weight: 600;
         cursor: pointer;
-    }
-    .file-viewer-close:hover {
-        background: #991b1b;
     }
     .file-viewer-content {
         margin: 0;
@@ -505,7 +376,6 @@
         line-height: 1.45;
         flex: 1 1 auto;
         min-height: 0;
-        font-family: "Cascadia Code", Consolas, "Courier New", monospace;
         font-size: 0.88rem;
         white-space: pre-wrap;
         word-break: break-word;
@@ -563,28 +433,6 @@
         background: #161b22;
         color: #e6edf3;
     }
-    html.theme-dark .panel {
-        scrollbar-color: #334155 #11161d;
-        scrollbar-width: thin;
-    }
-    html.theme-dark .panel::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
-    }
-    html.theme-dark .panel::-webkit-scrollbar-track {
-        background: #11161d;
-        margin-block: 8px;
-    }
-    html.theme-dark .panel::-webkit-scrollbar-thumb {
-        background: #334155;
-        border-radius: 10px;
-        border-style: solid;
-        border-width: 2px 0 2px 2px;
-        border-color: #11161d;
-    }
-    html.theme-dark .panel::-webkit-scrollbar-thumb:hover {
-        background: #475569;
-    }
 
     html.theme-dark .meta,
     html.theme-dark .empty,
@@ -597,20 +445,6 @@
     html.theme-dark .filter-check {
         color: #e6edf3;
     }
-    html.theme-dark .sort-select {
-        background-color: #1e3a8a;
-        color: #ffffff;
-    }
-    html.theme-dark .sort-select:hover {
-        background-color: #1e40af;
-    }
-    html.theme-dark .sort-select:disabled,
-    html.theme-dark .sort-select:disabled:hover {
-        background: #94a3b8;
-        color: #ffffff;
-        cursor: not-allowed;
-        opacity: 0.65;
-    }
 
     html.theme-dark .file-link { color: #7aa2ff; }
     html.theme-dark .file-name {
@@ -618,24 +452,6 @@
     }
 
     html.theme-dark .file-link:hover { color: #9db8ff; }
-    html.theme-dark .file-download-btn { background: #1e3a8a; color: #ffffff; }
-    html.theme-dark .file-download-btn:hover { background: #1e40af; color: #ffffff; }
-    html.theme-dark .file-restore-btn {
-        background: #b91c1c;
-        color: #ffffff;
-    }
-    html.theme-dark .file-restore-btn:hover {
-        background: #991b1b;
-        color: #ffffff;
-    }
-    html.theme-dark .file-view-btn {
-        background: #0f766e;
-        color: #ffffff;
-    }
-    html.theme-dark .file-view-btn:hover {
-        background: #0d9488;
-        color: #ffffff;
-    }
     html.theme-dark .file-viewer {
         background: #161b22;
         color: #e6edf3;
@@ -643,20 +459,6 @@
     html.theme-dark .backup-restore-password {
         background: #1f2733;
         color: #e6edf3;
-    }
-    html.theme-dark .file-viewer-close {
-        background: #b91c1c;
-        color: #ffffff;
-    }
-    html.theme-dark .file-viewer-close:hover {
-        background: #991b1b;
-    }
-    html.theme-dark .file-viewer-download {
-        background: #1e3a8a;
-        color: #ffffff;
-    }
-    html.theme-dark .file-viewer-download:hover {
-        background: #1e40af;
     }
     html.theme-dark .file-viewer-content {
         background: #111111;
@@ -701,10 +503,6 @@
         background: rgba(56, 189, 248, 0.45);
     }
 
-    html.theme-dark .list li {
-        border-top-color: #2a3342;
-    }
-
     html.theme-dark .download-error {
         background: #341b1b;
         color: #ffb4b4;
@@ -715,21 +513,6 @@
         border-color: #334155;
         color: #e6edf3;
     }
-    html.theme-dark .modal-btn-cancel {
-        background: #475569;
-        color: #e6edf3;
-    }
-    html.theme-dark .modal-btn-cancel:hover {
-        background: #334155;
-    }
-    html.theme-dark .modal-btn-submit {
-        background: #1e3a8a;
-        color: #ffffff;
-    }
-    html.theme-dark .modal-btn-submit:hover {
-        background: #1e40af;
-    }
-
     html.theme-dark .modal-image {
         border-color: #334155;
     }

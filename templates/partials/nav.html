@@ -8,11 +8,18 @@
     <h2 id="sidebar-title" class="sidebar-title">Navigation</h2>
     <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
     <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+    {% if maintenance_enabled %}
+    <a class="nav-link {% if current_page == 'maintenance' %}active{% endif %}" href="/maintenance">Maintenance</a>
+    {% endif %}
+    <hr class="nav-separator">
     <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
     <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Reports</a>
+    <hr class="nav-separator">
     <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Instructions</a>
     <a class="nav-link" href="https://github.com/QetzylTech/Marites" target="_blank" rel="noopener noreferrer">GitHub Repo</a>
-    {% if debug_enabled %}
+
+    {% if debug_page_visible %}
+    <hr class="nav-separator">
     <a class="nav-link {% if current_page == 'debug' %}active{% endif %}" href="/debug">Debug</a>
     {% endif %}
 </nav>

@@ -12,6 +12,55 @@
 
     const cfg = window.__MCWEB_DEBUG_CONFIG || {};
     const csrfToken = cfg.csrfToken || "";
+    const actionsEnabled = !!cfg.actionsEnabled;
+    const debugMessageEl = document.getElementById("debug-message");
+    const dummyServerPropertiesPayload = {
+        ok: true,
+        path: "/opt/Minecraft/server.properties",
+        rows: [
+            { key: "level-name", value: "debug_world_dummy", original: "world", type: "string", options: [], editable: true, forced: false },
+            { key: "motd", value: "Dummy debug mode", original: "A Minecraft Server", type: "string", options: [], editable: true, forced: false },
+            { key: "max-players", value: "20", original: "20", type: "int", options: [], editable: true, forced: false },
+            { key: "difficulty", value: "normal", original: "normal", type: "enum", options: ["peaceful", "easy", "normal", "hard"], editable: true, forced: false },
+            { key: "online-mode", value: "true", original: "true", type: "bool", options: [], editable: true, forced: false },
+        ],
+    };
+    const dummyExplorerMap = {
+        "": [
+            { name: "server", rel_path: "server", kind: "dir", size: 0 },
+            { name: "logs", rel_path: "logs", kind: "dir", size: 0 },
+            { name: "backups", rel_path: "backups", kind: "dir", size: 0 },
+            { name: "README.md", rel_path: "README.md", kind: "file", size: 2048 },
+        ],
+        server: [
+            { name: "server.properties", rel_path: "server/server.properties", kind: "file", size: 4096 },
+            { name: "eula.txt", rel_path: "server/eula.txt", kind: "file", size: 128 },
+            { name: "world", rel_path: "server/world", kind: "dir", size: 0 },
+        ],
+        logs: [
+            { name: "latest.log", rel_path: "logs/latest.log", kind: "file", size: 14322 },
+            { name: "2026-02-26-1.log.gz", rel_path: "logs/2026-02-26-1.log.gz", kind: "file", size: 8021 },
+        ],
+        backups: [
+            { name: "world_auto_2026-02-26_13-21.zip", rel_path: "backups/world_auto_2026-02-26_13-21.zip", kind: "file", size: 72342111 },
+            { name: "world_manual_2026-02-25_22-03.zip", rel_path: "backups/world_manual_2026-02-25_22-03.zip", kind: "file", size: 70218831 },
+        ],
+        "server/world": [
+            { name: "level.dat", rel_path: "server/world/level.dat", kind: "file", size: 98304 },
+            { name: "region", rel_path: "server/world/region", kind: "dir", size: 0 },
+        ],
+    };
+
+    function showDebugMessage(message) {
+        if (!debugMessageEl) return;
+        if (!message) {
+            debugMessageEl.hidden = true;
+            debugMessageEl.textContent = "";
+            return;
+        }
+        debugMessageEl.hidden = false;
+        debugMessageEl.textContent = message;
+    }
 
     const toggle = document.getElementById("nav-toggle");
     const sidebar = document.getElementById("side-nav");
@@ -67,6 +116,11 @@
             if (backupMode.value === "scheduled" && !String(backupMinutes.value || "").trim()) {
                 event.preventDefault();
                 backupMinutes.focus();
+                return;
+            }
+            if (!actionsEnabled) {
+                event.preventDefault();
+                showDebugMessage("Dummy mode: backup click handled locally. No backend action was run.");
             }
         });
     }
@@ -502,6 +556,13 @@
         setPropsError("");
         if (viewerTitle) viewerTitle.textContent = "server.properties editor";
         openViewer();
+        if (!actionsEnabled) {
+            propsRowsCache = Array.isArray(dummyServerPropertiesPayload.rows) ? dummyServerPropertiesPayload.rows.slice() : [];
+            renderPropsRows(propsRowsCache);
+            if (viewerPath) viewerPath.textContent = dummyServerPropertiesPayload.path;
+            showDebugMessage("Dummy mode: showing sample server.properties data.");
+            return;
+        }
         let response;
         try {
             response = await fetch("/debug/server-properties", {
@@ -587,6 +648,21 @@
         if (!explorerList) return;
         const path = explorerPath ? (explorerPath.value || "").trim() : "";
         explorerList.innerHTML = `<div class="debug-explorer-empty">Loading...</div>`;
+        if (!actionsEnabled) {
+            const key = path.replace(/\\/g, "/");
+            const entries = Array.isArray(dummyExplorerMap[key]) ? dummyExplorerMap[key] : [];
+            const payload = {
+                ok: true,
+                root_key: EXPLORER_ROOT_KEY,
+                root_path: "/opt/Minecraft",
+                current_rel_path: key,
+                entries: entries,
+            };
+            if (explorerPath) explorerPath.value = payload.current_rel_path || "";
+            explorerEntriesCache = Array.isArray(payload.entries) ? payload.entries : [];
+            renderExplorerEntries(payload);
+            return;
+        }
         let response;
         try {
             const params = new URLSearchParams();
@@ -620,6 +696,11 @@
 
     async function saveServerProperties() {
         if (!propsForm) return;
+        if (!actionsEnabled) {
+            showDebugMessage("Dummy mode: Apply clicked. Changes are local preview only.");
+            setPropsError("");
+            return;
+        }
         const password = String(viewerPasswordInput ? viewerPasswordInput.value || "" : "").trim();
         if (!password) {
             setPropsError("Password is required to apply changes.");
@@ -682,6 +763,9 @@
     if (openExplorerBtn) {
         openExplorerBtn.addEventListener("click", () => {
             openExplorerDrawer();
+            if (!actionsEnabled) {
+                showDebugMessage("Dummy mode: explorer shows sample files only.");
+            }
         });
     }
     if (explorerClose) explorerClose.addEventListener("click", closeExplorerDrawer);
@@ -751,5 +835,20 @@
     watchVerticalScrollbarClass(explorerList);
     watchVerticalScrollbarClass(propsForm);
 
+    if (!actionsEnabled) {
+        document.querySelectorAll(".debug-ops form").forEach((form) => {
+            form.addEventListener("submit", (event) => {
+                event.preventDefault();
+                showDebugMessage("Dummy mode: action click acknowledged. No backend route was called.");
+            });
+        });
+        const envForm = document.getElementById("debug-env-form");
+        if (envForm) {
+            envForm.addEventListener("submit", (event) => {
+                event.preventDefault();
+                showDebugMessage("Dummy mode: env changes are not persisted and not sent to backend.");
+            });
+        }
+    }
     loadExplorerDirectory();
 })();

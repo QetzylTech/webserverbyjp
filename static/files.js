@@ -125,6 +125,7 @@
             }
         }
         watchVerticalScrollbarClass(fileViewerContent);
+        watchVerticalScrollbarClass(fileList);
 
         function closePasswordModal() {
             if (!passwordModal) return;

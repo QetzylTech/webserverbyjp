@@ -1,0 +1,176 @@
+body {
+  background: #eef2ff;
+}
+
+.maintenance-wrap {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+  gap: 12px;
+  padding: 12px;
+  height: 100dvh;
+}
+
+.maintenance-panel {
+  padding: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.maintenance-panel h1,
+.maintenance-panel h2 {
+  margin: 0 0 10px;
+}
+
+.maintenance-meta {
+  margin: 4px 0;
+}
+
+.maintenance-alert {
+  margin: 0 0 10px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.maintenance-form {
+  display: grid;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.maintenance-form label {
+  display: grid;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.maintenance-form input[type="number"],
+.maintenance-form input[type="password"] {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  height: 40px;
+  padding: 0 10px;
+}
+
+.maintenance-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.rule-toggle-btn {
+  min-width: 64px;
+  height: 40px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.maintenance-check {
+  grid-auto-flow: column;
+  justify-content: start;
+  align-items: center;
+  gap: 8px;
+}
+
+.maintenance-form .btn-backup {
+  padding: 0 14px;
+  font-weight: 700;
+}
+
+.maintenance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.maintenance-toggle {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+}
+
+.maintenance-toggle-btn {
+  padding: 0 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.maintenance-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.maintenance-viewer-head {
+  flex: 0 0 auto;
+}
+
+.maintenance-file {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+}
+
+.maintenance-file .name {
+  font-weight: 600;
+}
+
+.maintenance-file .meta {
+  color: #64748b;
+  font-size: 0.86rem;
+}
+
+.maintenance-file.deletable,
+.maintenance-file.deletable-live {
+  background: #fef2f2;
+  border-left: 4px solid #b91c1c;
+}
+
+.maintenance-file.deletable-live {
+  background: #ffebe9;
+  border-left-color: #cf222e;
+}
+
+.maintenance-controls {
+  overflow: auto;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 1100px) {
+  .maintenance-wrap {
+    grid-template-columns: minmax(0, 1fr);
+    height: 100dvh;
+  }
+}
+
+html.theme-dark body {
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+html.theme-dark .maintenance-panel {
+  background: #161b22;
+  color: #e6edf3;
+}
+
+html.theme-dark .maintenance-meta {
+  color: #9fb0c6;
+}
+
+html.theme-dark .maintenance-file .meta {
+  color: #9fb0c6;
+}
+
+html.theme-dark .maintenance-alert {
+  background: #3a2f12;
+  color: #f2cc60;
+}

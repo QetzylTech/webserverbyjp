@@ -46,19 +46,25 @@
         mcweb_log: "/log-text/mcweb_log",
     };
     let selectedLogSource = "minecraft";
-    let minecraftSourceLines = [];
     let logSourceBuffers = {
         minecraft: [],
         backup: [],
         mcweb: [],
         mcweb_log: [],
     };
-    let logSourceHtml = {
-        minecraft: "",
-        backup: "",
-        mcweb: "",
-        mcweb_log: "",
+    let pendingLogLines = {
+        minecraft: [],
+        backup: [],
+        mcweb: [],
+        mcweb_log: [],
     };
+    let pendingLogFlushTimers = {
+        minecraft: null,
+        backup: null,
+        mcweb: null,
+        mcweb_log: null,
+    };
+    const LOG_STREAM_BATCH_FLUSH_MS = 75;
     let logStreams = {
         minecraft: null,
         backup: null,
@@ -117,59 +123,71 @@
         return lines.length > maxLines ? lines.slice(-maxLines) : lines;
     }
 
-    function isRconNoiseLine(line) {
-        const lower = (line || "").toLowerCase();
-        if (lower.includes("thread rcon client")) return true;
-        if (lower.includes("minecraft/rconclient") && lower.includes("shutting down")) return true;
-        return false;
-    }
-
-    function shouldStoreRconNoise() {
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        return !hideRcon || !hideRcon.checked;
-    }
-
-    function updateLogSourceUi() {
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        if (hideRcon) hideRcon.disabled = selectedLogSource !== "minecraft";
-    }
-
-    function rebuildMinecraftVisibleBuffer() {
-        let lines = minecraftSourceLines.slice();
-        if (!shouldStoreRconNoise()) {
-            lines = lines.filter((line) => !isRconNoiseLine(line));
-        }
-        logSourceBuffers.minecraft = capTail(lines, 500);
-        logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
+    function sourceBufferLimit(source) {
+        return source === "minecraft" ? 500 : 200;
     }
 
     function setSourceLogText(source, rawText) {
-        const lines = (rawText || "").split("\n");
-        if (source === "minecraft") {
-            minecraftSourceLines = capTail(lines, 2000);
-            rebuildMinecraftVisibleBuffer();
-            return;
-        }
-        logSourceBuffers[source] = capTail(lines, 200);
-        logSourceHtml[source] = formatLogHtmlForSource(source);
+        const lines = capTail((rawText || "").split("\n"), sourceBufferLimit(source));
+        logSourceBuffers[source] = lines.map((line) => buildLogEntry(source, line));
     }
 
     function appendSourceLogLine(source, line) {
-        const text = line || "";
-        if (source === "minecraft") {
-            minecraftSourceLines.push(text);
-            minecraftSourceLines = capTail(minecraftSourceLines, 2000);
-            if (!shouldStoreRconNoise() && isRconNoiseLine(text)) {
-                return;
-            }
-            logSourceBuffers.minecraft.push(text);
-            logSourceBuffers.minecraft = capTail(logSourceBuffers.minecraft, 500);
-            logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
-            return;
+        if (!LOG_SOURCE_KEYS.includes(source)) return;
+        pendingLogLines[source].push(line || "");
+        if (pendingLogFlushTimers[source]) return;
+        pendingLogFlushTimers[source] = window.setTimeout(() => {
+            pendingLogFlushTimers[source] = null;
+            flushPendingLogLines(source);
+        }, LOG_STREAM_BATCH_FLUSH_MS);
+    }
+
+    function flushPendingLogLines(source) {
+        const pending = pendingLogLines[source];
+        if (!pending || pending.length === 0) return;
+        pendingLogLines[source] = [];
+
+        const nextEntries = pending.map((line) => buildLogEntry(source, line));
+        const targetBuffer = logSourceBuffers[source];
+        const previousLength = targetBuffer.length;
+        targetBuffer.push(...nextEntries);
+
+        const limit = sourceBufferLimit(source);
+        const overflow = Math.max(0, targetBuffer.length - limit);
+        if (overflow > 0) {
+            targetBuffer.splice(0, overflow);
         }
-        logSourceBuffers[source].push(text);
-        logSourceBuffers[source] = capTail(logSourceBuffers[source], 200);
-        logSourceHtml[source] = formatLogHtmlForSource(source);
+        if (selectedLogSource !== source) return;
+
+        appendRenderedEntriesToActiveLog(nextEntries, {
+            previousLength,
+            droppedCount: overflow,
+            currentLength: targetBuffer.length,
+        });
+    }
+
+    function appendRenderedEntriesToActiveLog(entries, meta) {
+        const target = document.getElementById("minecraft-log");
+        if (!target) return;
+        const wasNearBottom = isLogNearBottom(target);
+        if ((meta.previousLength || 0) === 0) {
+            target.innerHTML = "";
+        }
+        const htmlChunk = entries.map((entry) => entry.html).join("");
+        if (htmlChunk) {
+            target.insertAdjacentHTML("beforeend", htmlChunk);
+        }
+        const droppedCount = Number(meta.droppedCount || 0);
+        for (let i = 0; i < droppedCount; i += 1) {
+            if (!target.firstElementChild) break;
+            target.removeChild(target.firstElementChild);
+        }
+        if ((meta.currentLength || 0) === 0) {
+            target.innerHTML = formatNonMinecraftLogLine("(no logs)");
+        }
+        if (logAutoScrollEnabled && wasNearBottom) {
+            scrollLogToBottom();
+        }
     }
 
     function escapeHtml(text) {
@@ -249,22 +267,22 @@
         return formatBracketAwareLogLine(line, false);
     }
 
-    function formatLogHtmlForSource(source) {
-        const lines = logSourceBuffers[source] || [];
-        const formatter = source === "minecraft"
-            ? formatMinecraftLogLine
-            : formatNonMinecraftLogLine;
-        if (lines.length === 0) {
-            return formatNonMinecraftLogLine("(no logs)");
-        }
-        return lines.map(formatter).join("");
+    function buildLogEntry(source, line) {
+        const raw = line || "";
+        const formatter = source === "minecraft" ? formatMinecraftLogLine : formatNonMinecraftLogLine;
+        return { raw, html: formatter(raw) };
     }
 
     function renderActiveLog() {
         const target = document.getElementById("minecraft-log");
         if (!target) return;
         const wasNearBottom = isLogNearBottom(target);
-        target.innerHTML = logSourceHtml[selectedLogSource] || formatLogHtmlForSource(selectedLogSource);
+        const entries = logSourceBuffers[selectedLogSource] || [];
+        if (entries.length === 0) {
+            target.innerHTML = formatNonMinecraftLogLine("(no logs)");
+        } else {
+            target.innerHTML = entries.map((entry) => entry.html).join("");
+        }
         if (logAutoScrollEnabled && wasNearBottom) {
             scrollLogToBottom();
         }
@@ -305,9 +323,6 @@
         const stream = new EventSource(path);
         stream.onmessage = (event) => {
             appendSourceLogLine(source, event.data || "");
-            if (selectedLogSource === source) {
-                renderActiveLog();
-            }
         };
         stream.onerror = () => {
             // EventSource reconnects automatically.
@@ -361,7 +376,7 @@
             deviceNameMap = (nextMap && typeof nextMap === "object") ? nextMap : {};
             LOG_SOURCE_KEYS.forEach((source) => {
                 if ((logSourceBuffers[source] || []).length > 0) {
-                    logSourceHtml[source] = formatLogHtmlForSource(source);
+                    logSourceBuffers[source] = logSourceBuffers[source].map((entry) => buildLogEntry(source, entry.raw));
                 }
             });
             renderActiveLog();
@@ -743,6 +758,14 @@
 
     function teardownRealtimeConnections() {
         LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
+        LOG_SOURCE_KEYS.forEach((source) => {
+            const timerId = pendingLogFlushTimers[source];
+            if (timerId) {
+                clearTimeout(timerId);
+                pendingLogFlushTimers[source] = null;
+            }
+            pendingLogLines[source] = [];
+        });
         stopMetricsStream();
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
@@ -838,20 +861,10 @@
         if (idleCountdown) {
             idleCountdownSeconds = parseCountdown(idleCountdown.textContent.trim());
         }
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        if (hideRcon) {
-            hideRcon.addEventListener("change", () => {
-                rebuildMinecraftVisibleBuffer();
-                if (selectedLogSource === "minecraft") {
-                    renderActiveLog();
-                }
-            });
-        }
         const logSource = document.getElementById("log-source");
         if (logSource) {
             logSource.addEventListener("change", async () => {
                 selectedLogSource = getLogSource();
-                updateLogSourceUi();
                 activateLogStream(selectedLogSource);
                 if ((logSourceBuffers[selectedLogSource] || []).length === 0) {
                     await loadLogSourceFromServer(selectedLogSource);
@@ -868,7 +881,6 @@
             watchVerticalScrollbarClass(existingLog);
         }
         selectedLogSource = getLogSource();
-        updateLogSourceUi();
         await loadDeviceNameMap();
         setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
         if (existingLog) {

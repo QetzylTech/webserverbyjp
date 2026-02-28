@@ -1,8 +1,12 @@
 """Action/error logging helpers with request-aware client identification."""
 
 from datetime import datetime
+import os
 import traceback
 from flask import request, has_request_context
+
+LOG_ROTATE_MAX_BYTES = 5 * 1024 * 1024
+LOG_ROTATE_BACKUP_COUNT = 5
 
 
 def sanitize_log_fragment(text):
@@ -24,6 +28,27 @@ def get_client_ip():
         return x_real_ip
     direct = (request.remote_addr or "").strip()
     return direct or "mcweb"
+
+
+def _rotate_log_file(path, max_bytes=LOG_ROTATE_MAX_BYTES, backup_count=LOG_ROTATE_BACKUP_COUNT):
+    """Rotate log file when size reaches threshold."""
+    if max_bytes <= 0 or backup_count <= 0:
+        return
+    try:
+        if not path.exists():
+            return
+        if path.stat().st_size < max_bytes:
+            return
+        for idx in range(backup_count - 1, 0, -1):
+            src = path.with_name(f"{path.name}.{idx}")
+            dst = path.with_name(f"{path.name}.{idx + 1}")
+            if src.exists():
+                os.replace(src, dst)
+        first = path.with_name(f"{path.name}.1")
+        os.replace(path, first)
+    except OSError:
+        # Rotation failures must not break control endpoints.
+        pass
 
 
 def make_log_action(display_tz, log_dir, action_log_file):
@@ -48,6 +73,7 @@ def make_log_action(display_tz, log_dir, action_log_file):
             return
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
+            _rotate_log_file(action_log_file)
             with action_log_file.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
         except OSError:

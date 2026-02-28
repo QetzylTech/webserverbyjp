@@ -5,7 +5,267 @@ import json
 import subprocess
 import gzip
 import threading
+import shutil
+import time
+import re
+import os
+from pathlib import Path
 from collections import deque
+
+
+_RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
+
+
+def _safe_int(value, default_value, minimum=0, maximum=10_000):
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default_value
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
+
+def _backup_bucket(name):
+    lowered = (name or "").lower()
+    if "_pre_restore" in lowered:
+        return "pre_restore"
+    if "_auto" in lowered:
+        return "auto"
+    if "_session_end" in lowered:
+        return "session"
+    if "_manual" in lowered:
+        return "manual"
+    return "other"
+
+
+def _iter_backup_files(backup_dir):
+    if not backup_dir.exists() or not backup_dir.is_dir():
+        return []
+    items = []
+    for path in backup_dir.glob("*.zip"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        items.append({
+            "path": path,
+            "name": path.name,
+            "mtime": float(stat.st_mtime),
+            "size": int(stat.st_size),
+            "bucket": _backup_bucket(path.name),
+        })
+    return items
+
+
+def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, keep_session_days, keep_pre_restore_days, dry_run):
+    now = time.time()
+    files = _iter_backup_files(backup_dir)
+    by_bucket = {"manual": [], "other": [], "auto": [], "session": [], "pre_restore": []}
+    for item in files:
+        by_bucket[item["bucket"]].append(item)
+    for bucket in by_bucket:
+        by_bucket[bucket].sort(key=lambda row: row["mtime"], reverse=True)
+
+    to_delete = []
+
+    for idx, item in enumerate(by_bucket["manual"]):
+        if idx >= keep_manual:
+            to_delete.append(item)
+    for idx, item in enumerate(by_bucket["other"]):
+        if idx >= keep_other:
+            to_delete.append(item)
+
+    auto_cutoff = now - (keep_auto_days * 86400)
+    for item in by_bucket["auto"]:
+        if item["mtime"] < auto_cutoff:
+            to_delete.append(item)
+
+    session_cutoff = now - (keep_session_days * 86400)
+    for item in by_bucket["session"]:
+        if item["mtime"] < session_cutoff:
+            to_delete.append(item)
+
+    prerestore_cutoff = now - (keep_pre_restore_days * 86400)
+    for item in by_bucket["pre_restore"]:
+        if item["mtime"] < prerestore_cutoff:
+            to_delete.append(item)
+
+    # Stable unique set by absolute path.
+    unique = {}
+    for item in to_delete:
+        unique[str(item["path"])] = item
+    targets = sorted(unique.values(), key=lambda row: row["mtime"])
+
+    deleted = []
+    errors = []
+    for item in targets:
+        if dry_run:
+            deleted.append(item)
+            continue
+        try:
+            item["path"].unlink(missing_ok=True)
+            deleted.append(item)
+        except OSError as exc:
+            errors.append(f"{item['name']}: {exc}")
+
+    target_paths = {str(item["path"]) for item in targets}
+    preview_items = []
+    for item in sorted(files, key=lambda row: row["mtime"], reverse=True):
+        preview_items.append({
+            "name": item["name"],
+            "bucket": item["bucket"],
+            "mtime": item["mtime"],
+            "size": item["size"],
+            "deletable": str(item["path"]) in target_paths,
+        })
+
+    return {
+        "total": len(files),
+        "matched": len(targets),
+        "deleted": len(deleted),
+        "deleted_size": sum(item["size"] for item in deleted),
+        "errors": errors,
+        "dry_run": bool(dry_run),
+        "items": preview_items,
+    }
+
+
+def _iter_old_world_dirs(data_dir):
+    old_worlds_dir = data_dir / "old_worlds"
+    if not old_worlds_dir.exists() or not old_worlds_dir.is_dir():
+        return []
+    entries = []
+    for child in old_worlds_dir.iterdir():
+        if child.is_dir():
+            entries.append(child)
+    return entries
+
+
+def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_run):
+    now = time.time()
+    world_dir = Path(world_dir).resolve()
+    old_worlds_dir = data_dir / "old_worlds"
+    cutoff = now - (max_age_days * 86400)
+    stale_paths = []
+    for old_path in _iter_old_world_dirs(data_dir):
+        try:
+            resolved = old_path.resolve()
+        except OSError:
+            continue
+        if not resolved.exists() or not resolved.is_dir():
+            continue
+        if resolved == world_dir:
+            continue
+        if resolved.parent != old_worlds_dir.resolve():
+            continue
+        if not _RESTORE_STAMP_SUFFIX_RE.search(resolved.name):
+            continue
+        try:
+            stat = resolved.stat()
+            mtime = float(stat.st_mtime)
+            size_bytes = 0
+            for root, _, files in os.walk(resolved):
+                for file_name in files:
+                    try:
+                        size_bytes += int((Path(root) / file_name).stat().st_size)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+        stale_paths.append({"path": resolved, "name": resolved.name, "mtime": mtime, "size": size_bytes})
+
+    # Newest first, keep the newest keep_count regardless of age.
+    stale_paths.sort(key=lambda row: row["mtime"], reverse=True)
+    delete_targets = []
+    for idx, item in enumerate(stale_paths):
+        if idx < keep_count:
+            continue
+        if item["mtime"] <= cutoff:
+            delete_targets.append(item)
+
+    deleted = []
+    errors = []
+    for item in delete_targets:
+        if dry_run:
+            deleted.append(item)
+            continue
+        try:
+            shutil.rmtree(item["path"])
+            deleted.append(item)
+        except OSError as exc:
+            errors.append(f"{item['name']}: {exc}")
+
+    target_paths = {str(item["path"]) for item in delete_targets}
+    preview_items = []
+    for item in stale_paths:
+        preview_items.append({
+            "name": item["name"],
+            "mtime": item["mtime"],
+            "size": item["size"],
+            "deletable": str(item["path"]) in target_paths,
+        })
+
+    return {
+        "total_candidates": len(stale_paths),
+        "matched": len(delete_targets),
+        "deleted": len(deleted),
+        "errors": errors,
+        "dry_run": bool(dry_run),
+        "items": preview_items,
+    }
+
+
+def _is_maintenance_allowed(state):
+    if not state["DEV_ENABLED"]:
+        return True
+    client_ip = ""
+    try:
+        client_ip = (state["_get_client_ip"]() or "").strip()
+    except Exception:
+        xff = (request.headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            client_ip = xff.split(",")[0].strip()
+        if not client_ip:
+            client_ip = (request.headers.get("X-Real-IP") or "").strip()
+        if not client_ip:
+            client_ip = (request.remote_addr or "").strip()
+    try:
+        device_name = (state["get_device_name_map"]().get(client_ip, "") or "").strip().lower()
+    except Exception:
+        return False
+    return device_name == "valerie"
+
+
+def _dummy_debug_env_rows():
+    return [
+        {
+            "key": "SERVICE",
+            "value": "minecraft",
+            "original": "minecraft",
+            "overridden": False,
+        },
+        {
+            "key": "BACKUP_INTERVAL_HOURS",
+            "value": "3.0",
+            "original": "3.0",
+            "overridden": False,
+        },
+        {
+            "key": "RCON_PORT",
+            "value": "25575",
+            "original": "25575",
+            "overridden": False,
+        },
+        {
+            "key": "WORLD_DIR",
+            "value": "/opt/Minecraft/server",
+            "original": "/opt/Minecraft/server",
+            "overridden": False,
+        },
+    ]
 
 
 def register_routes(app, state):
@@ -110,18 +370,23 @@ def register_routes(app, state):
     @app.route("/debug")
     def debug_page():
         """Runtime helper debug_page."""
-        if not state["DEBUG_ENABLED"]:
+        if not state["DEBUG_PAGE_VISIBLE"]:
+            return abort(404)
+        if state["DEV_ENABLED"] and not _is_maintenance_allowed(state):
             return abort(404)
         debug_message = (request.args.get("msg", "") or "").strip()
-        props = state["get_debug_server_properties_rows"]()
+        debug_actions_enabled = bool(state["DEBUG_ENABLED"])
+        props = state["get_debug_server_properties_rows"]() if debug_actions_enabled else {}
         editor_path = props.get("path", "server.properties")
+        debug_rows = state["get_debug_env_rows"]() if debug_actions_enabled else _dummy_debug_env_rows()
         return render_template(
             "debug.html",
             current_page="debug",
-            debug_rows=state["get_debug_env_rows"](),
+            debug_rows=debug_rows,
             csrf_token=state["_ensure_csrf_token"](),
             debug_message=debug_message,
             debug_server_properties_path=editor_path,
+            debug_actions_enabled=debug_actions_enabled,
         )
 
     @app.route("/debug/server-properties")
@@ -288,6 +553,164 @@ def register_routes(app, state):
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
+
+    @app.route("/maintenance")
+    def maintenance_page():
+        """Runtime helper maintenance_page."""
+        if not _is_maintenance_allowed(state):
+            return abort(404)
+        msg = (request.args.get("msg", "") or "").strip()
+        mode = (request.args.get("mode", "backups") or "backups").strip().lower()
+        if mode not in {"backups", "stale"}:
+            mode = "backups"
+        keep_manual = 30
+        keep_other = 20
+        keep_auto_days = 7
+        keep_session_days = 14
+        keep_pre_restore_days = 14
+        keep_stale_count = 2
+        stale_max_age_days = 3
+
+        backup_items = _iter_backup_files(state["BACKUP_DIR"])
+        data_dir = Path(state["session_state"].session_file).parent
+        backup_preview = _cleanup_backups(
+            state["BACKUP_DIR"],
+            keep_manual=keep_manual,
+            keep_other=keep_other,
+            keep_auto_days=keep_auto_days,
+            keep_session_days=keep_session_days,
+            keep_pre_restore_days=keep_pre_restore_days,
+            dry_run=True,
+        )
+        stale_worlds = _cleanup_stale_worlds(
+            world_dir=state["WORLD_DIR"],
+            data_dir=data_dir,
+            keep_count=keep_stale_count,
+            max_age_days=stale_max_age_days,
+            dry_run=True,
+        )
+        return render_template(
+            "maintenance.html",
+            current_page="maintenance",
+            csrf_token=state["_ensure_csrf_token"](),
+            alert_message=msg,
+            maintenance_mode=mode,
+            backups_total=len(backup_items),
+            backups_size_bytes=sum(item["size"] for item in backup_items),
+            stale_worlds_total=stale_worlds["total_candidates"],
+            world_dir=str(state["WORLD_DIR"]),
+            backup_dir=str(state["BACKUP_DIR"]),
+            backup_preview_items=backup_preview["items"],
+            stale_preview_items=stale_worlds["items"],
+            keep_manual=keep_manual,
+            keep_other=keep_other,
+            keep_auto_days=keep_auto_days,
+            keep_session_days=keep_session_days,
+            keep_pre_restore_days=keep_pre_restore_days,
+            keep_stale_count=keep_stale_count,
+            stale_max_age_days=stale_max_age_days,
+        )
+
+    @app.route("/maintenance/cleanup-backups", methods=["POST"])
+    def maintenance_cleanup_backups():
+        """Runtime helper maintenance_cleanup_backups."""
+        if not _is_maintenance_allowed(state):
+            return abort(404)
+        view_mode = (request.form.get("mode", "backups") or "backups").strip().lower()
+        if view_mode not in {"backups", "stale"}:
+            view_mode = "backups"
+        sudo_password = request.form.get("sudo_password", "")
+        if not state["validate_sudo_password"](sudo_password):
+            state["log_mcweb_action"]("maintenance-cleanup-backups", rejection_message="Password incorrect.")
+            return redirect(f"/maintenance?mode={view_mode}&msg=Password+incorrect")
+        state["record_successful_password_ip"]()
+
+        keep_manual = _safe_int(request.form.get("keep_manual_count", "30"), 30, minimum=0, maximum=10_000)
+        keep_other = _safe_int(request.form.get("keep_other_count", "20"), 20, minimum=0, maximum=10_000)
+        keep_auto_days = _safe_int(request.form.get("keep_auto_days", "7"), 7, minimum=0, maximum=3650)
+        keep_session_days = _safe_int(request.form.get("keep_session_days", "14"), 14, minimum=0, maximum=3650)
+        keep_pre_restore_days = _safe_int(request.form.get("keep_pre_restore_days", "14"), 14, minimum=0, maximum=3650)
+        keep_manual_enabled = (request.form.get("rule_keep_manual_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        keep_other_enabled = (request.form.get("rule_keep_other_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        keep_auto_enabled = (request.form.get("rule_keep_auto_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        keep_session_enabled = (request.form.get("rule_keep_session_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        keep_pre_restore_enabled = (request.form.get("rule_keep_pre_restore_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        dry_run = (request.form.get("dry_run", "") or "").strip().lower() in {"1", "true", "on", "yes"}
+        if not keep_manual_enabled:
+            keep_manual = 10_000_000
+        if not keep_other_enabled:
+            keep_other = 10_000_000
+        if not keep_auto_enabled:
+            keep_auto_days = 365_000
+        if not keep_session_enabled:
+            keep_session_days = 365_000
+        if not keep_pre_restore_enabled:
+            keep_pre_restore_days = 365_000
+
+        result = _cleanup_backups(
+            state["BACKUP_DIR"],
+            keep_manual=keep_manual,
+            keep_other=keep_other,
+            keep_auto_days=keep_auto_days,
+            keep_session_days=keep_session_days,
+            keep_pre_restore_days=keep_pre_restore_days,
+            dry_run=dry_run,
+        )
+        run_mode = "preview" if dry_run else "apply"
+        detail = (
+            f"mode={run_mode}; deleted={result['deleted']}/{result['matched']}; "
+            f"freed={result['deleted_size']} bytes; errors={len(result['errors'])}"
+        )
+        state["log_mcweb_action"]("maintenance-cleanup-backups", command=detail)
+        if result["errors"]:
+            state["log_mcweb_action"](
+                "maintenance-cleanup-backups",
+                rejection_message="; ".join(result["errors"])[:700],
+            )
+        return redirect(f"/maintenance?mode={view_mode}&msg=Backup+cleanup+{run_mode}+complete:+{result['deleted']}+items")
+
+    @app.route("/maintenance/cleanup-stale-worlds", methods=["POST"])
+    def maintenance_cleanup_stale_worlds():
+        """Runtime helper maintenance_cleanup_stale_worlds."""
+        if not _is_maintenance_allowed(state):
+            return abort(404)
+        view_mode = (request.form.get("mode", "stale") or "stale").strip().lower()
+        if view_mode not in {"backups", "stale"}:
+            view_mode = "stale"
+        sudo_password = request.form.get("sudo_password", "")
+        if not state["validate_sudo_password"](sudo_password):
+            state["log_mcweb_action"]("maintenance-cleanup-stale-worlds", rejection_message="Password incorrect.")
+            return redirect(f"/maintenance?mode={view_mode}&msg=Password+incorrect")
+        state["record_successful_password_ip"]()
+
+        keep_count = _safe_int(request.form.get("keep_stale_count", "2"), 2, minimum=0, maximum=1000)
+        max_age_days = _safe_int(request.form.get("stale_max_age_days", "3"), 3, minimum=0, maximum=3650)
+        keep_stale_enabled = (request.form.get("rule_keep_stale_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        stale_age_enabled = (request.form.get("rule_stale_age_enabled", "true") or "").strip().lower() not in {"0", "false", "off", "no"}
+        dry_run = (request.form.get("dry_run", "") or "").strip().lower() in {"1", "true", "on", "yes"}
+        if not keep_stale_enabled:
+            keep_count = 0
+        if not stale_age_enabled:
+            max_age_days = 365_000
+        result = _cleanup_stale_worlds(
+            world_dir=state["WORLD_DIR"],
+            data_dir=Path(state["session_state"].session_file).parent,
+            keep_count=keep_count,
+            max_age_days=max_age_days,
+            dry_run=dry_run,
+        )
+        run_mode = "preview" if dry_run else "apply"
+        detail = (
+            f"mode={run_mode}; deleted={result['deleted']}/{result['matched']}; "
+            f"candidates={result['total_candidates']}; errors={len(result['errors'])}"
+        )
+        state["log_mcweb_action"]("maintenance-cleanup-stale-worlds", command=detail)
+        if result["errors"]:
+            state["log_mcweb_action"](
+                "maintenance-cleanup-stale-worlds",
+                rejection_message="; ".join(result["errors"])[:700],
+            )
+        return redirect(f"/maintenance?mode={view_mode}&msg=Stale+world+cleanup+{run_mode}+complete:+{result['deleted']}+items")
 
     @app.route("/crash-logs")
     def crash_logs_page():

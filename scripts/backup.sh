@@ -5,6 +5,8 @@ APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WEB_CONF="$APP_DIR/mcweb.env"
 LOG_DIR="$APP_DIR/logs"
 LOG_FILE="$LOG_DIR/backup.log"
+BACKUP_LOG_MAX_BYTES="${BACKUP_LOG_MAX_BYTES:-5242880}"
+BACKUP_LOG_BACKUPS="${BACKUP_LOG_BACKUPS:-5}"
 
 BACKUP_DIR="/home/marites/backups"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -51,6 +53,33 @@ sanitize_filename_component() {
     cleaned="world"
   fi
   echo "$cleaned"
+}
+
+rotate_log_file() {
+  local path="$1"
+  local max_bytes="$2"
+  local backup_count="$3"
+  local size=0
+  local i=0
+  if [[ ! -f "$path" ]]; then
+    return
+  fi
+  if [[ ! "$max_bytes" =~ ^[0-9]+$ ]] || [[ "$max_bytes" -le 0 ]]; then
+    return
+  fi
+  if [[ ! "$backup_count" =~ ^[0-9]+$ ]] || [[ "$backup_count" -le 0 ]]; then
+    return
+  fi
+  size="$(stat -c%s "$path" 2>/dev/null || echo 0)"
+  if [[ "$size" -lt "$max_bytes" ]]; then
+    return
+  fi
+  for ((i=backup_count-1; i>=1; i--)); do
+    if [[ -f "${path}.${i}" ]]; then
+      mv -f "${path}.${i}" "${path}.$((i+1))"
+    fi
+  done
+  mv -f "$path" "${path}.1"
 }
 
 load_web_conf() {
@@ -175,6 +204,7 @@ read_server_properties_config() {
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$(dirname "$BACKUP_STATE_FILE")"
+rotate_log_file "$LOG_FILE" "$BACKUP_LOG_MAX_BYTES" "$BACKUP_LOG_BACKUPS"
 exec >> "$LOG_FILE" 2>&1
 echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup run started"
 

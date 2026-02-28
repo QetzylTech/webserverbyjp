@@ -39,7 +39,7 @@ def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
 
 def load_backup_log_cache_from_disk(ctx):
     """Reload backup log cache from disk into bounded in-memory storage."""
-    lines = ctx._read_recent_file_lines(ctx.BACKUP_LOG_FILE, 200)
+    lines = ctx._read_recent_file_lines(ctx.BACKUP_LOG_FILE, ctx.BACKUP_LOG_TEXT_LIMIT)
     mtime_ns = ctx._safe_file_mtime_ns(ctx.BACKUP_LOG_FILE)
     with ctx.backup_log_cache_lock:
         ctx.backup_log_cache_lines.clear()
@@ -76,13 +76,13 @@ def load_minecraft_log_cache_from_journal(ctx):
     """Prime minecraft log cache from recent journalctl output."""
     service_status = ctx.get_status()
     if service_status in ctx.OFF_STATES:
-        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500)
+        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
         return
 
     output = ""
     try:
         result = subprocess.run(
-            ["journalctl", "-u", ctx.SERVICE, "-n", "1000", "--no-pager"],
+            ["journalctl", "-u", ctx.SERVICE, "-n", str(ctx.MINECRAFT_JOURNAL_TAIL_LINES), "--no-pager"],
             capture_output=True,
             text=True,
             timeout=ctx.JOURNAL_LOAD_TIMEOUT_SECONDS,
@@ -91,15 +91,18 @@ def load_minecraft_log_cache_from_journal(ctx):
     except subprocess.TimeoutExpired:
         ctx.log_mcweb_log(
             "log-load-timeout",
-            command=f"journalctl -u {ctx.SERVICE} -n 1000",
+            command=f"journalctl -u {ctx.SERVICE} -n {ctx.MINECRAFT_JOURNAL_TAIL_LINES}",
             rejection_message=f"Timed out after {ctx.JOURNAL_LOAD_TIMEOUT_SECONDS:.1f}s.",
         )
     except Exception as exc:
         ctx.log_mcweb_exception("load_minecraft_log_cache_from_journal", exc)
     lines = output.splitlines() if output else []
     if not lines:
-        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500)
+        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
         return
+    lines = [line for line in lines if not _is_rcon_noise_line(line)]
+    if len(lines) > ctx.MINECRAFT_LOG_TEXT_LIMIT:
+        lines = lines[-ctx.MINECRAFT_LOG_TEXT_LIMIT:]
     with ctx.minecraft_log_cache_lock:
         ctx.minecraft_log_cache_lines.clear()
         ctx.minecraft_log_cache_lines.extend(lines)
@@ -128,7 +131,7 @@ def get_cached_minecraft_log_text(ctx):
 
 def load_mcweb_log_cache_from_disk(ctx):
     """Reload mcweb action log cache from disk."""
-    lines = ctx._read_recent_file_lines(ctx.MCWEB_ACTION_LOG_FILE, 200)
+    lines = ctx._read_recent_file_lines(ctx.MCWEB_ACTION_LOG_FILE, ctx.MCWEB_ACTION_LOG_TEXT_LIMIT)
     mtime_ns = ctx._safe_file_mtime_ns(ctx.MCWEB_ACTION_LOG_FILE)
     with ctx.mcweb_log_cache_lock:
         ctx.mcweb_log_cache_lines.clear()

@@ -26,18 +26,11 @@
 body {
   background-color: #eef2ff;
   color: var(--text);
-  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
   word-wrap: break-word;
   padding-top: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
-main button,
-.sticky-header button,
-.toc-sidebar button {
-  height: 40px;
-}
-
 .layout {
   height: auto;
   min-height: 100dvh;
@@ -289,7 +282,6 @@ article {
   border-radius: var(--radius);
   padding: 0.2em 0.4em;
   margin: 0;
-  font-family: monospace;
   font-size: 0.875em;
   color: #0f172a;
 }

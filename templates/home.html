@@ -88,10 +88,6 @@
                 </select>
                 <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <label class="panel-filter">
-                        <input id="hide-rcon-noise" type="checkbox" checked>
-                        Hide RCON noise
-                    </label>
                     <input type="hidden" name="sudo_password">
                     <input id="rcon-command" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
                     <button id="rcon-submit" type="submit" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %}>Submit</button>
@@ -146,6 +142,7 @@
         heartbeatIntervalMs: {{ home_page_heartbeat_interval_ms | tojson }},
     };
 </script>
+<script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='home.js', v=static_version('home.js')) }}"></script>
 </body>
 </html>

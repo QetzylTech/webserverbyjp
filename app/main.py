@@ -7,7 +7,7 @@ This app provides:
 - Automatic idle shutdown and session-based backup scheduling
 """
 
-from flask import Flask
+from flask import Flask, has_request_context, request
 from pathlib import Path
 import threading
 import re
@@ -105,6 +105,8 @@ APP_PROFILE = _cfg_str("MCWEB_PROFILE", "core").strip().lower()
 DEBUG_PROFILE_ENABLED = APP_PROFILE == "debug"
 RAW_DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
 DEBUG_ENABLED = RAW_DEBUG_ENABLED and DEBUG_PROFILE_ENABLED
+DEV_ENABLED = _cfg_str("DEV", "false").strip().lower() in {"1", "true", "yes", "on"}
+DEBUG_PAGE_VISIBLE = DEBUG_ENABLED or DEV_ENABLED
 RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
 RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
 SERVER_PROPERTIES_CANDIDATES = [
@@ -303,12 +305,18 @@ METRICS_COLLECT_INTERVAL_SECONDS = _cfg_int("METRICS_COLLECT_INTERVAL_SECONDS", 
 METRICS_COLLECT_INTERVAL_OFF_SECONDS = _cfg_int("METRICS_COLLECT_INTERVAL_OFF_SECONDS", max(METRICS_COLLECT_INTERVAL_SECONDS, 5), minimum=1)
 METRICS_STREAM_HEARTBEAT_SECONDS = _cfg_int("METRICS_STREAM_HEARTBEAT_SECONDS", 5, minimum=1)
 LOG_STREAM_HEARTBEAT_SECONDS = _cfg_int("LOG_STREAM_HEARTBEAT_SECONDS", 5, minimum=1)
+LOG_STREAM_EVENT_BUFFER_SIZE = _cfg_int("LOG_STREAM_EVENT_BUFFER_SIZE", 800, minimum=50)
+MINECRAFT_LOG_TEXT_LIMIT = _cfg_int("MINECRAFT_LOG_TEXT_LIMIT", 1000, minimum=10)
+BACKUP_LOG_TEXT_LIMIT = _cfg_int("BACKUP_LOG_TEXT_LIMIT", 200, minimum=10)
+MCWEB_LOG_TEXT_LIMIT = _cfg_int("MCWEB_LOG_TEXT_LIMIT", 200, minimum=10)
+MCWEB_ACTION_LOG_TEXT_LIMIT = _cfg_int("MCWEB_ACTION_LOG_TEXT_LIMIT", 200, minimum=10)
+MINECRAFT_JOURNAL_TAIL_LINES = _cfg_int("MINECRAFT_JOURNAL_TAIL_LINES", 1000, minimum=10)
+MINECRAFT_LOG_VISIBLE_LINES = _cfg_int("MINECRAFT_LOG_VISIBLE_LINES", 500, minimum=10)
 HOME_PAGE_ACTIVE_TTL_SECONDS = _cfg_int("HOME_PAGE_ACTIVE_TTL_SECONDS", 30, minimum=1)
 HOME_PAGE_HEARTBEAT_INTERVAL_MS = _cfg_int("HOME_PAGE_HEARTBEAT_INTERVAL_MS", 10000, minimum=1000)
 FILE_PAGE_CACHE_REFRESH_SECONDS = _cfg_int("FILE_PAGE_CACHE_REFRESH_SECONDS", 15, minimum=1)
 FILE_PAGE_ACTIVE_TTL_SECONDS = _cfg_int("FILE_PAGE_ACTIVE_TTL_SECONDS", 30, minimum=1)
 FILE_PAGE_HEARTBEAT_INTERVAL_MS = _cfg_int("FILE_PAGE_HEARTBEAT_INTERVAL_MS", 10000, minimum=1000)
-LOG_STREAM_EVENT_BUFFER_SIZE = 800
 CRASH_STOP_GRACE_SECONDS = _cfg_int("CRASH_STOP_GRACE_SECONDS", 15, minimum=1)
 BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS = _cfg_int("BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS", 15, minimum=1)
 BACKUP_WATCH_INTERVAL_OFF_SECONDS = _cfg_int("BACKUP_WATCH_INTERVAL_OFF_SECONDS", max(BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS, 45), minimum=1)
@@ -343,14 +351,14 @@ slow_metrics_cache = {}
 slow_metrics_cache_status = ""
 slow_metrics_cache_at = 0.0
 backup_log_cache_lock = threading.Lock()
-backup_log_cache_lines = deque(maxlen=200)
+backup_log_cache_lines = deque(maxlen=BACKUP_LOG_TEXT_LIMIT)
 backup_log_cache_loaded = False
 backup_log_cache_mtime_ns = None
 minecraft_log_cache_lock = threading.Lock()
-minecraft_log_cache_lines = deque(maxlen=1000)
+minecraft_log_cache_lines = deque(maxlen=MINECRAFT_LOG_TEXT_LIMIT)
 minecraft_log_cache_loaded = False
 mcweb_log_cache_lock = threading.Lock()
-mcweb_log_cache_lines = deque(maxlen=200)
+mcweb_log_cache_lines = deque(maxlen=MCWEB_ACTION_LOG_TEXT_LIMIT)
 mcweb_log_cache_loaded = False
 mcweb_log_cache_mtime_ns = None
 file_page_last_seen = 0.0
@@ -429,9 +437,39 @@ _static_asset_version_fn = world_bindings["_static_asset_version"]
 def inject_asset_helpers():
     # Expose per-file static version helper to templates.
     """Runtime helper inject_asset_helpers."""
+    maintenance_enabled = True
+    if DEV_ENABLED:
+        maintenance_enabled = False
+        if has_request_context():
+            xff = (request.headers.get("X-Forwarded-For") or "").strip()
+            client_ip = ""
+            if xff:
+                client_ip = xff.split(",")[0].strip()
+            if not client_ip:
+                client_ip = (request.headers.get("X-Real-IP") or "").strip()
+            if not client_ip:
+                client_ip = (request.remote_addr or "").strip()
+            try:
+                device_map = _device_name_map_lookup(
+                    csv_path=DEVICE_MAP_CSV_PATH,
+                    fallback_path=DEVICE_FALLMAP_PATH,
+                    cache_lock=device_name_map_lock,
+                    cache=device_name_map_cache,
+                    cache_mtime_ns=device_name_map_mtime_ns_ref,
+                    log_exception=log_mcweb_exception,
+                )
+                device_name = (device_map.get(client_ip, "") or "").strip().lower()
+                maintenance_enabled = device_name == "valerie"
+            except Exception:
+                maintenance_enabled = False
+    debug_page_visible = DEBUG_PAGE_VISIBLE
+    if DEV_ENABLED:
+        debug_page_visible = maintenance_enabled
     return {
         "static_version": _static_asset_version_fn,
         "debug_enabled": DEBUG_ENABLED,
+        "debug_page_visible": debug_page_visible,
+        "maintenance_enabled": maintenance_enabled,
     }
 
 
