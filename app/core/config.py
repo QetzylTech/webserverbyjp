@@ -1,5 +1,4 @@
 """Runtime configuration helpers for mcweb."""
-
 import os
 import secrets
 

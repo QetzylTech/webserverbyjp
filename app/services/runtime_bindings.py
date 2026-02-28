@@ -1,5 +1,4 @@
 """Build delegate runtime callables for main.py state wiring."""
-
 import re
 import time
 
@@ -13,7 +12,7 @@ def build_runtime_bindings(
     minecraft_runtime_service,
     session_watchers_service,
 ):
-    """Return mapping of delegate callables bound to namespace state."""
+        # Return mapping of delegate callables bound to namespace state.
     ns = namespace
 
     def _state():

@@ -4,31 +4,24 @@ This app provides:
 - Service controls (start/stop/manual backup)
 - Live server and Minecraft stats
 - Systemd log viewer
-- Automatic idle shutdown and session-based backup scheduling
-"""
-
-from flask import Flask, has_request_context, request
+- Automatic idle shutdown and session-based backup scheduling"""
+from flask import Flask
 from pathlib import Path
 import threading
 import re
+import json
 from collections import deque
 from zoneinfo import ZoneInfo
 from app.core.config import apply_default_flask_config, resolve_secret_key
 from app.core.device_map import get_device_name_map as _device_name_map_lookup
-from app.core.logging_setup import build_loggers
-from app.core.web_config import WebConfig
 from app.core.filesystem_utils import (
     list_download_files as _list_download_files,
     read_recent_file_lines as _read_recent_file_lines,
     safe_file_mtime_ns as _safe_file_mtime_ns,
     safe_filename_in_dir as _safe_filename_in_dir,
 )
-from app.services.system_metrics import (
-    get_cpu_usage_per_core,
-    get_ram_usage,
-    get_cpu_frequency,
-    get_storage_usage,
-)
+from app.core.logging_setup import build_loggers
+from app.core.web_config import WebConfig
 from app.services import control_plane as control_plane_service
 from app.services import bootstrap as bootstrap_service
 from app.services import app_lifecycle as app_lifecycle_service
@@ -43,6 +36,12 @@ from app.services import session_watchers as session_watchers_service
 from app.services import state_builder as state_builder_service
 from app.services import status_cache as status_cache_service
 from app.services import system_bindings as system_bindings_service
+from app.services.system_metrics import (
+    get_cpu_frequency,
+    get_cpu_usage_per_core,
+    get_ram_usage,
+    get_storage_usage,
+)
 from app.services import world_bindings as world_bindings_service
 from app.routes.dashboard_routes import register_routes
 from app.state import BackupState, SessionState
@@ -107,6 +106,12 @@ RAW_DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", 
 DEBUG_ENABLED = RAW_DEBUG_ENABLED and DEBUG_PROFILE_ENABLED
 DEV_ENABLED = _cfg_str("DEV", "false").strip().lower() in {"1", "true", "yes", "on"}
 DEBUG_PAGE_VISIBLE = DEBUG_ENABLED or DEV_ENABLED
+MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_str("MAINTENANCE_SCOPE_BACKUP_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAINTENANCE_SCOPE_STALE_WORLD_DIR = _cfg_str("MAINTENANCE_SCOPE_STALE_WORLD_DIR", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_str("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N = _cfg_int("MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N", 1, minimum=0)
+MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP = _cfg_str("MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD = _cfg_str("MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD", "true").strip().lower() in {"1", "true", "yes", "on"}
 RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
 RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
 SERVER_PROPERTIES_CANDIDATES = [
@@ -435,41 +440,26 @@ _static_asset_version_fn = world_bindings["_static_asset_version"]
 
 @app.context_processor
 def inject_asset_helpers():
-    # Expose per-file static version helper to templates.
-    """Runtime helper inject_asset_helpers."""
+    """Expose per-file static version helper to templates.
+Runtime helper inject_asset_helpers."""
     maintenance_enabled = True
-    if DEV_ENABLED:
-        maintenance_enabled = False
-        if has_request_context():
-            xff = (request.headers.get("X-Forwarded-For") or "").strip()
-            client_ip = ""
-            if xff:
-                client_ip = xff.split(",")[0].strip()
-            if not client_ip:
-                client_ip = (request.headers.get("X-Real-IP") or "").strip()
-            if not client_ip:
-                client_ip = (request.remote_addr or "").strip()
-            try:
-                device_map = _device_name_map_lookup(
-                    csv_path=DEVICE_MAP_CSV_PATH,
-                    fallback_path=DEVICE_FALLMAP_PATH,
-                    cache_lock=device_name_map_lock,
-                    cache=device_name_map_cache,
-                    cache_mtime_ns=device_name_map_mtime_ns_ref,
-                    log_exception=log_mcweb_exception,
-                )
-                device_name = (device_map.get(client_ip, "") or "").strip().lower()
-                maintenance_enabled = device_name == "valerie"
-            except Exception:
-                maintenance_enabled = False
     debug_page_visible = DEBUG_PAGE_VISIBLE
     if DEV_ENABLED:
         debug_page_visible = maintenance_enabled
+    cleanup_has_missed = False
+    try:
+        non_normal_path = DATA_DIR / "cleanup_non_normal.txt"
+        if non_normal_path.exists():
+            payload = json.loads(non_normal_path.read_text(encoding="utf-8"))
+            cleanup_has_missed = bool(payload.get("missed_runs"))
+    except Exception:
+        cleanup_has_missed = False
     return {
         "static_version": _static_asset_version_fn,
         "debug_enabled": DEBUG_ENABLED,
         "debug_page_visible": debug_page_visible,
         "maintenance_enabled": maintenance_enabled,
+        "cleanup_has_missed": cleanup_has_missed,
     }
 
 

@@ -1,5 +1,4 @@
 """Logging setup helpers."""
-
 from app.core.action_logging import make_log_action, make_log_exception
 
 

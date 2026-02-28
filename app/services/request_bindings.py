@@ -1,5 +1,4 @@
 """Build request/response/security delegate callables for main.py."""
-
 import secrets
 from flask import request, session
 from app.core.response_helpers import (
@@ -29,7 +28,7 @@ def build_request_bindings(
     display_tz,
     get_device_name_map,
 ):
-    """Return request-scoped callables with explicit runtime dependencies."""
+        # Return request-scoped callables with explicit runtime dependencies.
 
     def _session_write_failed_response():
         return session_write_failed_response(request, status_debug_note())

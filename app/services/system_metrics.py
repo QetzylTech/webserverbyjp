@@ -1,5 +1,4 @@
 """System metric probes backed by Linux procfs/sysfs."""
-
 import os
 import time
 from pathlib import Path
@@ -22,7 +21,7 @@ def _parse_cpu_times(line):
 
 def get_cpu_usage_per_core():
     """Return per-core CPU utilization percentages as strings."""
-    # Sample twice to compute deltas instead of using a single absolute snapshot.
+    """Sample twice to compute deltas instead of using a single absolute snapshot."""
     first = _read_proc_stat()
     time.sleep(0.15)
     second = _read_proc_stat()

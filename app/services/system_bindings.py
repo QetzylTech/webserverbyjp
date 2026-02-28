@@ -1,6 +1,4 @@
 """Build status/cache/device-map helper callables for main.py."""
-
-
 def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_service, device_name_map_lookup):
     """Return system helpers bound to runtime namespace."""
     ns = namespace

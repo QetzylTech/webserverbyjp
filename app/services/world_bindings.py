@@ -1,5 +1,4 @@
 """Build world-path and static-asset helper callables for main.py."""
-
 from pathlib import Path
 
 

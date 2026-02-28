@@ -1,5 +1,4 @@
 """Typed application runtime state container."""
-
 from dataclasses import dataclass
 from collections.abc import Iterator, MutableMapping
 from typing import Any
@@ -74,6 +73,12 @@ class AppState(MutableMapping[str, Any]):
     METRICS_COLLECT_INTERVAL_SECONDS: Any
     METRICS_STREAM_HEARTBEAT_SECONDS: Any
     MINECRAFT_LOGS_DIR: Any
+    MAINTENANCE_SCOPE_BACKUP_ZIP: Any
+    MAINTENANCE_SCOPE_STALE_WORLD_DIR: Any
+    MAINTENANCE_SCOPE_OLD_WORLD_ZIP: Any
+    MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N: Any
+    MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP: Any
+    MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD: Any
     OFF_STATES: Any
     RCON_HOST: Any
     RCON_STARTUP_FALLBACK_AFTER_SECONDS: Any

@@ -1,6 +1,4 @@
 """Session store/service wrappers."""
-
-
 def ensure_session_file(control_plane_service, ctx):
     """Delegate session file presence/creation to control-plane service."""
     return control_plane_service.ensure_session_file(ctx)

@@ -1,5 +1,4 @@
 """Service control-plane operations extracted from mcweb."""
-
 from datetime import datetime
 from pathlib import Path
 import subprocess

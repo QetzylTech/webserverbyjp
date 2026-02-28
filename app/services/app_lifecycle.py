@@ -1,5 +1,4 @@
 """Flask lifecycle hook and startup runner composition helpers."""
-
 from flask import has_request_context, request
 from app.core.response_helpers import internal_error_response
 
@@ -15,7 +14,7 @@ def install_flask_hooks(
     log_mcweb_action,
     log_mcweb_exception,
 ):
-    """Install request/error hooks using explicit runtime callbacks."""
+        # Install request/error hooks using explicit runtime callbacks.
 
     @app.before_request
     def _initialize_session_tracking_before_request():
@@ -63,7 +62,7 @@ def build_run_server(
     start_backup_session_watcher,
     start_storage_safety_watcher,
 ):
-    """Return the app startup runner from explicit boot-step dependencies."""
+        # Return the app startup runner from explicit boot-step dependencies.
 
     def run_server():
         def _load_backup_log_cache_boot_step():

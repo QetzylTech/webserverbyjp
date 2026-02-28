@@ -15,38 +15,42 @@
         <main class="content">
             <div class="wrap">
                 <section class="panel pane-primary" aria-labelledby="file-panel-title">
-                <h1 id="file-panel-title">{{ panel_title }}</h1>
-                {% if current_page == "backups" %}
-                <div class="backup-controls">
+                <div class="title">
+                    <div class="title-row">
+                        <h1 id="file-panel-title">{{ panel_title }}</h1>
+                    {% if current_page == "backups" %}
+                    <div class="backup-controls">
+                        <div class="filter-row">
+                            <span class="filter-label">Filter</span>
+                            <label class="filter-check"><input class="backup-filter" type="checkbox" value="manual" checked>Manual</label>
+                            <label class="filter-check"><input class="backup-filter" type="checkbox" value="auto" checked>Auto</label>
+                            <label class="filter-check"><input class="backup-filter" type="checkbox" value="session" checked>Session</label>
+                            <label class="filter-check"><input class="backup-filter" type="checkbox" value="prerestore" checked>Prerestore</label>
+                            <label class="filter-check"><input class="backup-filter" type="checkbox" value="others" checked>Others</label>
+                        </div>
+                        <div class="sort-row">
+                            <label for="backup-sort" class="sort-label">Sort by</label>
+                            <select id="backup-sort" class="sort-select">
+                                <option value="newest">Latest to oldest</option>
+                                <option value="oldest">Oldest to latest</option>
+                                <option value="size">Size</option>
+                            </select>
+                        </div>
+                    </div>
+                    {% else %}
                     <div class="sort-row">
-                        <label for="backup-sort" class="sort-label">Sort by</label>
-                        <select id="backup-sort" class="sort-select">
-                            <option value="newest">Latest to oldest</option>
-                            <option value="oldest">Oldest to latest</option>
+                        <label for="file-sort" class="sort-label">Sort by</label>
+                        <select id="file-sort" class="sort-select">
+                            <option value="newest">Newest to oldest</option>
+                            <option value="oldest">Oldest to newest</option>
                             <option value="size">Size</option>
+                            <option value="alpha">Alphabetical</option>
+                            <option value="reverse_alpha">Reverse alphabetical</option>
                         </select>
                     </div>
-                    <div class="filter-row">
-                        <span class="filter-label">Filter</span>
-                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="manual" checked>Manual</label>
-                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="auto" checked>Auto</label>
-                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="session" checked>Session</label>
-                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="prerestore" checked>Prerestore</label>
-                        <label class="filter-check"><input class="backup-filter" type="checkbox" value="others" checked>Others</label>
+                    {% endif %}
                     </div>
                 </div>
-                {% else %}
-                <div class="sort-row">
-                    <label for="file-sort" class="sort-label">Sort by</label>
-                    <select id="file-sort" class="sort-select">
-                        <option value="newest">Newest to oldest</option>
-                        <option value="oldest">Oldest to newest</option>
-                        <option value="size">Size</option>
-                        <option value="alpha">Alphabetical</option>
-                        <option value="reverse_alpha">Reverse alphabetical</option>
-                    </select>
-                </div>
-                {% endif %}
                 <div id="download-error" class="download-error"></div>
                 {% if items %}
                 <ul class="list">
@@ -101,7 +105,7 @@
                         </div>
                     </div>
                     <div id="backup-restore-controls" class="backup-restore-controls pane-editor" hidden>
-                        <input id="backup-restore-password" class="backup-restore-password" type="password" autocomplete="current-password" placeholder="Sudo password">
+                        <input id="backup-restore-password" class="backup-restore-password ui-text-input" type="password" autocomplete="current-password" placeholder="Sudo password">
                         <div class="backup-restore-actions">
                             <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
                             <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
@@ -117,7 +121,7 @@
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="download-password-title">
             <h3 id="download-password-title" class="modal-title">Enter Password</h3>
             <p class="modal-text">Enter sudo password to download this backup.</p>
-            <input id="download-password-input" class="modal-input" type="password" autocomplete="current-password" placeholder="Password">
+            <input id="download-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Password">
             <div class="modal-actions">
                 <button id="download-password-cancel" class="modal-btn-cancel" type="button">Cancel</button>
                 <button id="download-password-submit" class="modal-btn-submit" type="button">Continue</button>

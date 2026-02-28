@@ -1,5 +1,4 @@
 """Session lifecycle and background watcher services."""
-
 import threading
 import time
 

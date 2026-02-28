@@ -1,5 +1,4 @@
 """Device name mapping helpers."""
-
 import csv
 
 

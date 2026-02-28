@@ -1,5 +1,4 @@
 """Service status cache helpers."""
-
 import subprocess
 import time
 
@@ -16,7 +15,7 @@ def get_status(
     log_action,
     log_exception,
 ):
-    """Return cached or freshly queried systemd service status."""
+        # Return cached or freshly queried systemd service status.
     now = time.time()
     with cache_lock:
         cached = cache_value_ref[0]

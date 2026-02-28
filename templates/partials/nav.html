@@ -9,7 +9,7 @@
     <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
     <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
     {% if maintenance_enabled %}
-    <a class="nav-link {% if current_page == 'maintenance' %}active{% endif %}" href="/maintenance">Maintenance</a>
+    <a class="nav-link {% if current_page == 'maintenance' %}active{% endif %}{% if cleanup_has_missed and current_page != 'maintenance' %} nav-attention{% endif %}" href="/maintenance">Maintenance</a>
     {% endif %}
     <hr class="nav-separator">
     <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>

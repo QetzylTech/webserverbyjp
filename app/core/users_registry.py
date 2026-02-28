@@ -1,5 +1,4 @@
 """users.txt registry helpers."""
-
 from datetime import datetime
 
 
@@ -21,7 +20,7 @@ def record_successful_password_ip(
     device_name_lookup,
     client_ip=None,
 ):
-    """Track unique validated client IP with latest timestamp and device name."""
+        # Track unique validated client IP with latest timestamp and device name.
     ip = (client_ip or get_client_ip(request)).strip() or "unknown"
     timestamp = datetime.now(tz=display_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
     device_map = device_name_lookup() or {}

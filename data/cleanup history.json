@@ -1,0 +1,16 @@
+{
+  "runs": [
+    {
+      "at": "2026-02-28T00:36:01+08:00",
+      "capped_count": 0,
+      "deleted_count": 0,
+      "details": "",
+      "dry_run": true,
+      "errors_count": 0,
+      "mode": "rule",
+      "requested_count": 0,
+      "result": "dry_run",
+      "trigger": "manual_rule:all"
+    }
+  ]
+}

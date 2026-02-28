@@ -1,5 +1,4 @@
 """Shared Flask response helpers for ajax/non-ajax flows."""
-
 from flask import jsonify, redirect
 
 

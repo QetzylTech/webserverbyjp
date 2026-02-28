@@ -55,29 +55,8 @@
         background: var(--surface);
         border: 0;
         border-radius: 14px;
-        padding: 18px 12px 12px;
+        padding: 12px 12px 12px;
         box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-    }
-
-    .title h1 {
-        margin: 0;
-        font-size: 1.4rem;
-        letter-spacing: 0.2px;
-    }
-
-    .title {
-        width: 100%;
-        min-width: 0;
-    }
-
-    .title-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 8px;
-        width: 100%;
     }
 
     .stats-groups {
@@ -95,10 +74,6 @@
         padding: 8px 10px;
         min-width: 0;
         margin: 0;
-    }
-
-    .server-stats {
-        min-width: 0;
     }
 
     .group-title {
@@ -139,6 +114,15 @@
         overflow-wrap: anywhere;
         word-break: break-word;
         max-width: 100%;
+    }
+
+    .stats-groups .status-row span,
+    .stats-groups .status-row strong {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        overflow-wrap: normal;
+        word-break: normal;
     }
 
     .actions {
@@ -411,7 +395,7 @@
     }
 
     html.theme-dark .panel-header {
-        background: #11161d;
+        background: #161b22;
     }
 
     html.theme-dark .panel-controls input[type="text"] {
@@ -474,12 +458,12 @@
         color: #e6edf3;
     }
 
-    @media (max-width: 1400px) and (min-width: 901px) {
+    @media (max-width: 1300px) and (min-width: 901px) {
         .stats-groups {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
-        .stats-groups > .server-stats {
+        .stats-groups > .stats-group:first-child {
             grid-column: 1 / -1;
         }
     }
@@ -489,12 +473,6 @@
             grid-template-columns: minmax(0, 1fr);
             overflow: visible;
         }
-
-        .title-row h1 {
-            width: 100%;
-            text-align: center;
-        }
-
     }
 
     @media (max-width: 900px) {
@@ -515,19 +493,18 @@
         }
 
         .container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
             height: auto;
             min-height: 100dvh;
             overflow: visible;
         }
 
-        .title-row {
+
+        .header .title-row {
             flex-direction: column;
             align-items: flex-start;
-        }
-
-        .title-row h1 {
-            width: 100%;
-            text-align: center;
         }
 
         .actions {
@@ -554,8 +531,13 @@
             grid-template-columns: 1fr;
         }
 
-        .server-stats {
-            min-width: 0;
+        .stats-groups .status-row span,
+        .stats-groups .status-row strong {
+            white-space: normal;
+            overflow: visible;
+            text-overflow: clip;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .logs {

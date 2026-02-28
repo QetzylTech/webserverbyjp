@@ -89,7 +89,7 @@
                 <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="sudo_password">
-                    <input id="rcon-command" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
+                    <input id="rcon-command" class="ui-text-input" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
                     <button id="rcon-submit" type="submit" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %}>Submit</button>
                 </form>
             </div>
@@ -104,7 +104,7 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
         <h3 id="sudo-modal-title" class="modal-title">Password Required</h3>
         <p class="modal-text">Enter sudo password to continue.</p>
-        <input id="sudo-modal-input" class="modal-input" type="password" placeholder="Sudo password">
+        <input id="sudo-modal-input" class="modal-input ui-text-input" type="password" placeholder="Sudo password">
         <div class="modal-actions">
             <button id="sudo-modal-cancel" class="btn-secondary" type="button">Cancel</button>
             <button id="sudo-modal-submit" type="button">Continue</button>
@@ -140,7 +140,7 @@
         alertMessageCode: {{ alert_message_code | tojson }},
         csrfToken: {{ csrf_token | tojson }},
         heartbeatIntervalMs: {{ home_page_heartbeat_interval_ms | tojson }},
-    };
+};
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='home.js', v=static_version('home.js')) }}"></script>

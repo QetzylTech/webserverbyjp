@@ -1,9 +1,6 @@
 """Build DebugTools and expose its callable bindings for main.py."""
-
-
 def build_disabled_debug_bindings(*, log_mcweb_log):
     """Return lightweight no-op debug bindings for non-debug profiles."""
-
     def _noop_prepare_debug_server_properties_bootup():
         return None
 
@@ -98,7 +95,7 @@ def build_debug_bindings(
     reset_backup_schedule_state,
     run_backup_script,
 ):
-    """Instantiate DebugTools from explicit dependencies and export method aliases."""
+        # Instantiate DebugTools from explicit dependencies and export method aliases.
     debug_tools = debug_tools_service.DebugTools(
         debug_enabled=debug_enabled,
         debug_world_name=debug_world_name,

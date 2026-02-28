@@ -1,6 +1,4 @@
 """CSRF/session security helpers."""
-
-
 def ensure_csrf_token(session, token_factory):
     """Return existing CSRF token from session or create one."""
     token = session.get("csrf_token")

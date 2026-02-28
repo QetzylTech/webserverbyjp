@@ -1,4 +1,4 @@
-    (function () {
+(function () {
         const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
         function applyThemePreference() {
             document.documentElement.classList.toggle("theme-dark", darkModeQuery.matches);

@@ -91,7 +91,6 @@
     body[data-page] .panel.pane-primary {
         padding: 12px;
     }
-    .panel h1,
     .panel h2 {
         margin: 0 0 6px;
         font-size: 1.4rem;
@@ -106,7 +105,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        margin: 0 0 12px;
+        margin: 0;
     }
     .backup-controls {
         display: flex;
@@ -114,7 +113,11 @@
         align-items: center;
         flex-wrap: wrap;
         gap: 8px;
-        margin: 0 0 12px;
+        margin: 0 0 0 auto;
+        justify-content: flex-end;
+    }
+    .title-row > .sort-row {
+        margin-left: auto;
     }
     .backup-controls .sort-row {
         margin: 0;
@@ -285,6 +288,10 @@
         gap: 10px;
         overflow: hidden;
     }
+    body[data-page="crash_logs"] .file-viewer.pane-editor,
+    body[data-page="minecraft_logs"] .file-viewer.pane-editor {
+        padding-right: 0;
+    }
     .wrap.viewer-open .file-viewer {
         display: flex;
     }
@@ -384,6 +391,14 @@
     }
     .file-viewer-content.has-vscroll {
         padding-right: 0;
+    }
+    body[data-page="crash_logs"] .file-viewer-content:not(.has-vscroll),
+    body[data-page="minecraft_logs"] .file-viewer-content:not(.has-vscroll) {
+        margin-right: 12px;
+    }
+    body[data-page="crash_logs"] .file-viewer-content.has-vscroll,
+    body[data-page="minecraft_logs"] .file-viewer-content.has-vscroll {
+        margin-right: 0;
     }
     .file-viewer-content::-webkit-scrollbar {
         width: 28px;
@@ -560,7 +575,6 @@
             display: flex;
         }
 
-        .panel h1,
         .panel h2 {
             text-align: center;
         }

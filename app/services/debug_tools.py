@@ -1,5 +1,4 @@
 """Debug-mode tools and server.properties editing helpers."""
-
 import json
 import os
 import shutil
@@ -12,7 +11,6 @@ from pathlib import Path
 
 class DebugTools:
     """Encapsulates debug tooling so main.py stays lean."""
-
     def __init__(
         self,
         *,
@@ -54,7 +52,7 @@ class DebugTools:
         reset_backup_schedule_state,
         run_backup_script,
     ):
-        """Dunder method __init__."""
+                # Dunder method __init__.
         self.DEBUG_ENABLED = debug_enabled
         self.DEBUG_WORLD_NAME = debug_world_name
         self.DEBUG_MOTD = debug_motd

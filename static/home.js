@@ -78,6 +78,7 @@
     const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
 
     let metricsEventSource = null;
+    let metricsPollTimer = null;
     let countdownTimer = null;
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
@@ -703,6 +704,18 @@
         metricsEventSource = null;
     }
 
+    function startMetricsPolling() {
+        if (metricsPollTimer) return;
+        refreshMetrics();
+        metricsPollTimer = window.setInterval(refreshMetrics, 5000);
+    }
+
+    function stopMetricsPolling() {
+        if (!metricsPollTimer) return;
+        clearInterval(metricsPollTimer);
+        metricsPollTimer = null;
+    }
+
     function clearRefreshTimers() {
         // Prevent duplicate interval loops when switching modes.
         if (countdownTimer) {
@@ -767,6 +780,7 @@
             pendingLogLines[source] = [];
         });
         stopMetricsStream();
+        stopMetricsPolling();
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
             homeHeartbeatTimer = null;
@@ -890,6 +904,7 @@
         activateLogStream(selectedLogSource);
         loadLogSourceFromServer(selectedLogSource);
         startMetricsStream();
+        startMetricsPolling();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
     });

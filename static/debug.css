@@ -127,10 +127,6 @@
         margin-bottom: 10px;
     }
     .debug-header-main {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
         flex: 0 1 auto;
     }
     .debug-header-editor-actions {
@@ -138,9 +134,6 @@
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
-    }
-    .debug-header-title {
-        margin: 0;
     }
     .debug-header-note {
         margin: 0;

@@ -1,5 +1,4 @@
 """Explicit AppState builder."""
-
 from app.state import AppState
 
 

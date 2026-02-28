@@ -1,6 +1,4 @@
 """Application bootstrap/run helpers."""
-
-
 def run_server(app, cfg_get_str, cfg_get_int, log_mcweb_log, log_mcweb_exception, boot_steps):
     """Run startup steps, then start Flask server."""
     host = cfg_get_str("WEB_HOST", "0.0.0.0")

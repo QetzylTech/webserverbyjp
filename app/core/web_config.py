@@ -1,11 +1,9 @@
 """Minimal KEY=VALUE config loader with typed accessors."""
-
 from pathlib import Path
 
 
 class WebConfig:
     """Read a dotenv-like config file and expose typed getters."""
-
     def __init__(self, config_path, base_dir):
         """Dunder method __init__."""
         self.config_path = Path(config_path)

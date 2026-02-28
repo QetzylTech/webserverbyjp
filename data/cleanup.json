@@ -1,0 +1,183 @@
+{
+  "meta": {
+    "cooldown_until_unix": 0,
+    "last_changed_at": "2026-02-27T15:55:26+08:00",
+    "last_changed_by": "192.168.1.202",
+    "last_run_at": "",
+    "last_run_deleted": 0,
+    "last_run_errors": 0,
+    "last_run_result": "",
+    "last_run_trigger": "",
+    "last_space_trigger_armed": true,
+    "rule_version": 2,
+    "schedule_version": 1
+  },
+  "rules": {
+    "age": {
+      "days": 7,
+      "enabled": true
+    },
+    "caps": {
+      "max_delete_files_absolute": 5,
+      "max_delete_min_if_non_empty": 1,
+      "max_delete_percent_eligible": 10
+    },
+    "categories": {
+      "backup_zip": true,
+      "old_world_zip": true,
+      "stale_world_dir": true
+    },
+    "count": {
+      "enabled": true,
+      "manual_backups_to_keep": 30,
+      "max_per_category": 30,
+      "prerestore_backups_to_keep": 30,
+      "session_backups_to_keep": 30
+    },
+    "enabled": true,
+    "guards": {
+      "never_delete_last_backup_overall": true,
+      "never_delete_newest_n_per_category": 1,
+      "protect_active_world": true
+    },
+    "space": {
+      "cooldown_seconds": 600,
+      "enabled": true,
+      "free_space_below_gb": 0,
+      "hysteresis_percent": 5,
+      "target_free_percent": 20,
+      "used_trigger_percent": 80
+    },
+    "time_based": {
+      "every_n_days": 1,
+      "monthly_date": 1,
+      "repeat_mode": "does_not_repeat",
+      "time_of_backup": "03:00",
+      "weekly_day": "Sunday"
+    }
+  },
+  "schedules": [],
+  "schema_version": 1,
+  "scopes": {
+    "backups": {
+      "meta": {
+        "cooldown_until_unix": 0,
+        "last_changed_at": "2026-02-27T15:55:26+08:00",
+        "last_changed_by": "192.168.1.202",
+        "last_run_at": "",
+        "last_run_deleted": 0,
+        "last_run_errors": 0,
+        "last_run_result": "",
+        "last_run_trigger": "",
+        "last_space_trigger_armed": true,
+        "rule_version": 2,
+        "schedule_version": 1
+      },
+      "rules": {
+        "age": {
+          "days": 7,
+          "enabled": true
+        },
+        "caps": {
+          "max_delete_files_absolute": 5,
+          "max_delete_min_if_non_empty": 1,
+          "max_delete_percent_eligible": 10
+        },
+        "categories": {
+          "backup_zip": true,
+          "old_world_zip": false,
+          "stale_world_dir": false
+        },
+        "count": {
+          "enabled": true,
+          "manual_backups_to_keep": 30,
+          "max_per_category": 30,
+          "prerestore_backups_to_keep": 30,
+          "session_backups_to_keep": 30
+        },
+        "enabled": true,
+        "guards": {
+          "never_delete_last_backup_overall": true,
+          "never_delete_newest_n_per_category": 1,
+          "protect_active_world": true
+        },
+        "space": {
+          "cooldown_seconds": 600,
+          "enabled": true,
+          "free_space_below_gb": 0,
+          "hysteresis_percent": 5,
+          "target_free_percent": 20,
+          "used_trigger_percent": 80
+        },
+        "time_based": {
+          "every_n_days": 1,
+          "monthly_date": 1,
+          "repeat_mode": "does_not_repeat",
+          "time_of_backup": "03:00",
+          "weekly_day": "Sunday"
+        }
+      },
+      "schedules": []
+    },
+    "stale_worlds": {
+      "meta": {
+        "cooldown_until_unix": 0,
+        "last_changed_at": "2026-02-27T15:55:26+08:00",
+        "last_changed_by": "192.168.1.202",
+        "last_run_at": "",
+        "last_run_deleted": 0,
+        "last_run_errors": 0,
+        "last_run_result": "",
+        "last_run_trigger": "",
+        "last_space_trigger_armed": true,
+        "rule_version": 2,
+        "schedule_version": 1
+      },
+      "rules": {
+        "age": {
+          "days": 7,
+          "enabled": true
+        },
+        "caps": {
+          "max_delete_files_absolute": 5,
+          "max_delete_min_if_non_empty": 1,
+          "max_delete_percent_eligible": 10
+        },
+        "categories": {
+          "backup_zip": false,
+          "old_world_zip": true,
+          "stale_world_dir": true
+        },
+        "count": {
+          "enabled": true,
+          "manual_backups_to_keep": 30,
+          "max_per_category": 30,
+          "prerestore_backups_to_keep": 30,
+          "session_backups_to_keep": 30
+        },
+        "enabled": true,
+        "guards": {
+          "never_delete_last_backup_overall": true,
+          "never_delete_newest_n_per_category": 1,
+          "protect_active_world": true
+        },
+        "space": {
+          "cooldown_seconds": 600,
+          "enabled": true,
+          "free_space_below_gb": 0,
+          "hysteresis_percent": 5,
+          "target_free_percent": 20,
+          "used_trigger_percent": 80
+        },
+        "time_based": {
+          "every_n_days": 1,
+          "monthly_date": 1,
+          "repeat_mode": "does_not_repeat",
+          "time_of_backup": "03:00",
+          "weekly_day": "Sunday"
+        }
+      },
+      "schedules": []
+    }
+  }
+}

@@ -1,5 +1,4 @@
 """Action/error logging helpers with request-aware client identification."""
-
 from datetime import datetime
 import os
 import traceback
@@ -53,7 +52,6 @@ def _rotate_log_file(path, max_bytes=LOG_ROTATE_MAX_BYTES, backup_count=LOG_ROTA
 
 def make_log_action(display_tz, log_dir, action_log_file):
     """Build and return the structured action logger closure."""
-
     def log_action(action, command=None, rejection_message=None):
         """Append one action event line; failures are intentionally swallowed."""
         timestamp = datetime.now(tz=display_tz).strftime("%b %d %H:%M:%S")
@@ -85,7 +83,6 @@ def make_log_action(display_tz, log_dir, action_log_file):
 
 def make_log_exception(log_action):
     """Build and return an exception logger that emits through log_action."""
-
     def log_exception(context, exc):
         """Log a compact exception summary with a truncated traceback."""
         exc_name = type(exc).__name__ if exc is not None else "Exception"

@@ -1,2 +1,2 @@
-"""Core configuration and utility helpers."""
+# Core configuration and utility helpers.
 
