@@ -1,25 +1,81 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="$SCRIPT_DIR/logs"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WEB_CONF="$APP_DIR/web.conf"
+LOG_DIR="$APP_DIR/logs"
 LOG_FILE="$LOG_DIR/backup.log"
 
 WORLD_DIR="/opt/Minecraft/The Server"
 # WORLD_DIR="/opt/Minecraft/config"
 BACKUP_DIR="/home/marites/backups"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
-STATE_FILE="$SCRIPT_DIR/state.txt"
+STATE_FILE="$APP_DIR/data/state.txt"
 RCON_HOST="127.0.0.1"
 
 SERVER_PROPERTIES_CANDIDATES=(
   "/opt/Minecraft/server.properties"
   "/opt/Minecraft/server/server.properties"
-  "$SCRIPT_DIR/server.properties"
-  "$SCRIPT_DIR/../server.properties"
+  "$APP_DIR/server.properties"
+  "$APP_DIR/../server.properties"
 )
 
 RCON_PASS=""
 RCON_PORT="25575"
+
+normalize_path() {
+  local p="$1"
+  if [[ -z "$p" ]]; then
+    echo ""
+    return
+  fi
+  if [[ "$p" == /* ]]; then
+    echo "$p"
+  else
+    echo "$APP_DIR/$p"
+  fi
+}
+
+load_web_conf() {
+  if [[ ! -f "$WEB_CONF" ]]; then
+    return
+  fi
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    local line trimmed key value
+    line="${raw_line%$'\r'}"
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    if [[ -z "$trimmed" || "$trimmed" == \#* ]]; then
+      continue
+    fi
+    if [[ "$trimmed" != *=* ]]; then
+      continue
+    fi
+    key="${trimmed%%=*}"
+    value="${trimmed#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 ]]; then
+      if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+        value="${value:1:${#value}-2}"
+      elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+    case "$key" in
+      WORLD_DIR) WORLD_DIR="$value" ;;
+      BACKUP_DIR) BACKUP_DIR="$value" ;;
+      STATE_FILE) STATE_FILE="$value" ;;
+      RCON_HOST) RCON_HOST="$value" ;;
+      RCON_PORT) RCON_PORT="$value" ;;
+    esac
+  done < "$WEB_CONF"
+}
+
+load_web_conf
+WORLD_DIR="$(normalize_path "$WORLD_DIR")"
+BACKUP_DIR="$(normalize_path "$BACKUP_DIR")"
+STATE_FILE="$(normalize_path "$STATE_FILE")"
 
 read_rcon_config() {
   local props=""
@@ -53,6 +109,7 @@ read_rcon_config() {
 }
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$(dirname "$STATE_FILE")"
 exec >> "$LOG_FILE" 2>&1
 echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup run started"
 

@@ -23,9 +23,78 @@ from collections import deque
 from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
+APP_DIR = Path(__file__).resolve().parent
+WEB_CONF_PATH = APP_DIR / "web.conf"
+
+def _load_web_conf(path):
+    # Parse simple KEY=VALUE pairs from web.conf.
+    values = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+WEB_CONF = _load_web_conf(WEB_CONF_PATH)
+
+def _cfg_str(name, default):
+    value = WEB_CONF.get(name)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
+
+def _cfg_int(name, default, minimum=None):
+    raw = WEB_CONF.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and parsed < minimum:
+        return minimum
+    return parsed
+
+def _cfg_float(name, default, minimum=None):
+    raw = WEB_CONF.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and parsed < minimum:
+        return minimum
+    return parsed
+
+def _cfg_path(name, default):
+    raw = WEB_CONF.get(name)
+    if raw is None:
+        return default
+    candidate = Path(str(raw).strip())
+    if not str(candidate):
+        return default
+    if candidate.is_absolute():
+        return candidate
+    return APP_DIR / candidate
+
 app.config["SECRET_KEY"] = (
     os.environ.get("MCWEB_SECRET_KEY")
     or os.environ.get("FLASK_SECRET_KEY")
+    or _cfg_str("MCWEB_SECRET_KEY", "")
     or secrets.token_hex(32)
 )
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -34,29 +103,33 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 86400
 
 # Core service and application settings.
 FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
-SERVICE = "minecraft"
-# BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
-BACKUP_SCRIPT = Path(__file__).resolve().parent / "backup.sh"
-BACKUP_DIR = Path("/home/marites/backups")
+SERVICE = _cfg_str("SERVICE", "minecraft")
+# BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/scripts/backup.sh"
+BACKUP_SCRIPT = _cfg_path("BACKUP_SCRIPT", APP_DIR / "scripts" / "backup.sh")
+BACKUP_DIR = _cfg_path("BACKUP_DIR", Path("/home/marites/backups"))
 # CRASH_REPORTS_DIR = Path("/opt/Minecraft/crash-reports")
-CRASH_REPORTS_DIR = Path(__file__).resolve().parent.parent / "crash-reports"
+CRASH_REPORTS_DIR = _cfg_path("CRASH_REPORTS_DIR", APP_DIR.parent / "crash-reports")
 # MINECRAFT_LOGS_DIR = Path("/opt/Minecraft/logs")
-MINECRAFT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
-BACKUP_LOG_FILE = Path(__file__).resolve().parent / "logs/backup.log"
-MCWEB_LOG_DIR = Path(__file__).resolve().parent / "logs"
+MINECRAFT_LOGS_DIR = _cfg_path("MINECRAFT_LOGS_DIR", APP_DIR.parent / "logs")
+MCWEB_LOG_DIR = _cfg_path("MCWEB_LOG_DIR", APP_DIR / "logs")
+BACKUP_LOG_FILE = MCWEB_LOG_DIR / "backup.log"
 MCWEB_ACTION_LOG_FILE = MCWEB_LOG_DIR / "mcweb-actions.log"
-# BACKUP_STATE_FILE = Path("/opt/Minecraft/webserverbyjp/state.txt")
-BACKUP_STATE_FILE = Path(__file__).resolve().parent / "state.txt"
-SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
+DATA_DIR = _cfg_path("DATA_DIR", APP_DIR / "data")
+DOCS_DIR = _cfg_path("DOCS_DIR", APP_DIR / "doc")
+BACKUP_STATE_FILE = DATA_DIR / "state.txt"
+SESSION_FILE = DATA_DIR / "session.txt"
 # "PST" here refers to Philippines Standard Time (UTC+8), not Pacific Time.
-DISPLAY_TZ = ZoneInfo("Asia/Manila")
-RCON_HOST = "127.0.0.1"
-RCON_PORT = 25575
+try:
+    DISPLAY_TZ = ZoneInfo(_cfg_str("DISPLAY_TZ", "Asia/Manila"))
+except Exception:
+    DISPLAY_TZ = ZoneInfo("Asia/Manila")
+RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
+RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
 SERVER_PROPERTIES_CANDIDATES = [
     Path("/opt/Minecraft/server.properties"),
     Path("/opt/Minecraft/server/server.properties"),
-    Path(__file__).resolve().parent / "server.properties",
-    Path(__file__).resolve().parent.parent / "server.properties",
+    APP_DIR / "server.properties",
+    APP_DIR.parent / "server.properties",
 ]
 
 def _static_asset_version(filename):
@@ -73,10 +146,10 @@ def inject_asset_helpers():
     return {"static_version": _static_asset_version}
 
 # Backup and automation timing controls.
-BACKUP_INTERVAL_HOURS = 3
+BACKUP_INTERVAL_HOURS = _cfg_float("BACKUP_INTERVAL_HOURS", 3.0, minimum=1/60.0)
 BACKUP_INTERVAL_SECONDS = max(60, int(BACKUP_INTERVAL_HOURS * 3600))
-IDLE_ZERO_PLAYERS_SECONDS = 180
-IDLE_CHECK_INTERVAL_SECONDS = 5
+IDLE_ZERO_PLAYERS_SECONDS = _cfg_int("IDLE_ZERO_PLAYERS_SECONDS", 180, minimum=10)
+IDLE_CHECK_INTERVAL_SECONDS = _cfg_int("IDLE_CHECK_INTERVAL_SECONDS", 5, minimum=1)
 
 # Shared watcher state (protected by the locks below).
 idle_zero_players_since = None
@@ -94,9 +167,9 @@ OFF_STATES = {"inactive", "failed"}
 LOG_SOURCE_KEYS = ("minecraft", "backup", "mcweb")
 
 # Cache Minecraft runtime probes so rapid UI polling does not overwhelm RCON.
-MC_QUERY_INTERVAL_SECONDS = 3
-RCON_STARTUP_FALLBACK_AFTER_SECONDS = 120
-RCON_STARTUP_FALLBACK_INTERVAL_SECONDS = 5
+MC_QUERY_INTERVAL_SECONDS = _cfg_int("MC_QUERY_INTERVAL_SECONDS", 3, minimum=1)
+RCON_STARTUP_FALLBACK_AFTER_SECONDS = _cfg_int("RCON_STARTUP_FALLBACK_AFTER_SECONDS", 120, minimum=1)
+RCON_STARTUP_FALLBACK_INTERVAL_SECONDS = _cfg_int("RCON_STARTUP_FALLBACK_INTERVAL_SECONDS", 5, minimum=1)
 mc_query_lock = threading.Lock()
 mc_last_query_at = 0.0
 mc_cached_players_online = "unknown"
@@ -114,16 +187,16 @@ rcon_cached_enabled = False
 rcon_last_config_read_at = 0.0
 
 # Shared dashboard metrics collector/broadcast state.
-METRICS_COLLECT_INTERVAL_SECONDS = 1
-METRICS_STREAM_HEARTBEAT_SECONDS = 5
-LOG_STREAM_HEARTBEAT_SECONDS = 5
-HOME_PAGE_ACTIVE_TTL_SECONDS = 30
-HOME_PAGE_HEARTBEAT_INTERVAL_MS = 10000
-FILE_PAGE_CACHE_REFRESH_SECONDS = 15
-FILE_PAGE_ACTIVE_TTL_SECONDS = 30
-FILE_PAGE_HEARTBEAT_INTERVAL_MS = 10000
+METRICS_COLLECT_INTERVAL_SECONDS = _cfg_int("METRICS_COLLECT_INTERVAL_SECONDS", 1, minimum=1)
+METRICS_STREAM_HEARTBEAT_SECONDS = _cfg_int("METRICS_STREAM_HEARTBEAT_SECONDS", 5, minimum=1)
+LOG_STREAM_HEARTBEAT_SECONDS = _cfg_int("LOG_STREAM_HEARTBEAT_SECONDS", 5, minimum=1)
+HOME_PAGE_ACTIVE_TTL_SECONDS = _cfg_int("HOME_PAGE_ACTIVE_TTL_SECONDS", 30, minimum=1)
+HOME_PAGE_HEARTBEAT_INTERVAL_MS = _cfg_int("HOME_PAGE_HEARTBEAT_INTERVAL_MS", 10000, minimum=1000)
+FILE_PAGE_CACHE_REFRESH_SECONDS = _cfg_int("FILE_PAGE_CACHE_REFRESH_SECONDS", 15, minimum=1)
+FILE_PAGE_ACTIVE_TTL_SECONDS = _cfg_int("FILE_PAGE_ACTIVE_TTL_SECONDS", 30, minimum=1)
+FILE_PAGE_HEARTBEAT_INTERVAL_MS = _cfg_int("FILE_PAGE_HEARTBEAT_INTERVAL_MS", 10000, minimum=1000)
 LOG_STREAM_EVENT_BUFFER_SIZE = 800
-CRASH_STOP_GRACE_SECONDS = 15
+CRASH_STOP_GRACE_SECONDS = _cfg_int("CRASH_STOP_GRACE_SECONDS", 15, minimum=1)
 CRASH_STOP_MARKERS = (
     "Preparing crash report with UUID",
     "This crash report has been saved to:",
@@ -580,6 +653,7 @@ def validate_sudo_password(sudo_password):
 def ensure_session_file():
     # Ensure the session timestamp file exists.
     try:
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
         SESSION_FILE.touch(exist_ok=True)
         return True
     except OSError:
@@ -628,7 +702,7 @@ def clear_session_start_time():
     return True
 
 def get_session_start_time(service_status=None):
-    # Return session start time from session.txt when service is not off.
+    # Return session start time from the session state file when service is not off.
     if service_status is None:
         service_status = get_status()
 
@@ -637,7 +711,7 @@ def get_session_start_time(service_status=None):
     return read_session_start_time()
 
 def get_session_duration_text():
-    # Return elapsed session duration based strictly on session.txt UNIX time.
+    # Return elapsed session duration based strictly on persisted session UNIX time.
     start_time = read_session_start_time()
     if start_time is None:
         return "--"
@@ -1478,6 +1552,7 @@ def get_backup_status():
 def is_backup_running():
     # Return True when backup state file indicates an active backup run.
     try:
+        BACKUP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         raw = BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
     except OSError:
         return False
@@ -1730,7 +1805,7 @@ def start_backup_session_watcher():
     watcher.start()
 
 def initialize_session_tracking():
-    # Initialize session.txt on process boot with session-preserving rules.
+    # Initialize session state file on process boot with session-preserving rules.
     global backup_periodic_runs
     ensure_session_file()
     service_status = get_status()
@@ -1944,7 +2019,12 @@ def favicon():
 @app.route("/readme")
 def readme_page():
     # Serve local documentation.html page.
-    return send_from_directory(str(Path(__file__).resolve().parent), "documentation.html")
+    return send_from_directory(str(DOCS_DIR), "documentation.html")
+
+@app.route("/doc/README.md")
+def readme_markdown():
+    # Serve local README markdown consumed by documentation page.
+    return send_from_directory(str(DOCS_DIR), "README.md")
 
 @app.route("/backups")
 def backups_page():
@@ -2011,10 +2091,13 @@ def file_page_heartbeat():
 def download_backup(filename):
     sudo_password = request.form.get("sudo_password", "")
     if not validate_sudo_password(sudo_password):
+        log_mcweb_action("download-backup", command=filename, rejection_message="Password incorrect.")
         return _password_rejected_response()
     safe_name = _safe_filename_in_dir(BACKUP_DIR, filename)
     if safe_name is None:
+        log_mcweb_action("download-backup", command=filename, rejection_message="File not found or invalid path.")
         return abort(404)
+    log_mcweb_action("download-backup", command=safe_name)
     return send_from_directory(str(BACKUP_DIR), safe_name, as_attachment=True)
 
 @app.route("/download/crash-logs/<path:filename>")
@@ -2236,7 +2319,10 @@ if __name__ == "__main__":
         _collect_and_publish_metrics()
         start_idle_player_watcher()
         start_backup_session_watcher()
-        app.run(host="0.0.0.0", port=8080)
+        app.run(
+            host=_cfg_str("WEB_HOST", "0.0.0.0"),
+            port=_cfg_int("WEB_PORT", 8080, minimum=1),
+        )
     except Exception as exc:
         log_mcweb_exception("mcweb_main", exc)
         raise

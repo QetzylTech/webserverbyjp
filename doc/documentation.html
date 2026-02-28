@@ -1310,6 +1310,114 @@ del {
       return normalized || 'plaintext';
     };
 
+    const SANITIZE_ALLOWED_TAGS = new Set([
+      'a', 'article', 'blockquote', 'br', 'code', 'del', 'div', 'em',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'li', 'ol',
+      'p', 'pre', 'section', 'span', 'strong', 'table', 'tbody', 'td',
+      'th', 'thead', 'tr', 'ul'
+    ]);
+    const SANITIZE_DROP_WITH_CONTENT = new Set([
+      'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta',
+      'base', 'form', 'input', 'button', 'textarea', 'select', 'option'
+    ]);
+    const SANITIZE_GLOBAL_ATTRS = new Set(['class', 'id', 'aria-label', 'role']);
+    const SANITIZE_ATTRS_BY_TAG = {
+      a: new Set(['href', 'title', 'target', 'rel']),
+      img: new Set(['src', 'alt', 'title', 'width', 'height', 'loading', 'decoding']),
+      th: new Set(['colspan', 'rowspan']),
+      td: new Set(['colspan', 'rowspan']),
+      code: new Set(['class']),
+      pre: new Set(['class']),
+      div: new Set(['class', 'id']),
+      span: new Set(['class', 'id'])
+    };
+
+    const isSafeUrl = (value, { allowAnchor = false } = {}) => {
+      const raw = String(value || '').trim();
+      if (!raw) return false;
+      if (allowAnchor && raw.startsWith('#')) return true;
+      const normalized = raw.replace(/[\u0000-\u001F\u007F\s]+/g, '').toLowerCase();
+      if (!normalized) return false;
+      if (
+        normalized.startsWith('javascript:') ||
+        normalized.startsWith('vbscript:') ||
+        normalized.startsWith('data:')
+      ) {
+        return false;
+      }
+      if (
+        normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('mailto:')
+      ) {
+        return true;
+      }
+      return !normalized.includes(':');
+    };
+
+    const sanitizeRenderedHtml = (html) => {
+      const template = document.createElement('template');
+      template.innerHTML = String(html || '');
+
+      const walk = (node) => {
+        if (!node) return;
+
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node;
+          const tag = el.tagName.toLowerCase();
+
+          if (!SANITIZE_ALLOWED_TAGS.has(tag)) {
+            if (SANITIZE_DROP_WITH_CONTENT.has(tag)) {
+              el.remove();
+              return;
+            }
+            const parent = el.parentNode;
+            if (parent) {
+              while (el.firstChild) {
+                parent.insertBefore(el.firstChild, el);
+              }
+              parent.removeChild(el);
+            } else {
+              el.remove();
+            }
+            return;
+          }
+
+          const allowedAttrs = SANITIZE_ATTRS_BY_TAG[tag] || new Set();
+          Array.from(el.attributes).forEach((attr) => {
+            const name = attr.name.toLowerCase();
+            const value = attr.value || '';
+
+            if (name.startsWith('on')) {
+              el.removeAttribute(attr.name);
+              return;
+            }
+            if (!SANITIZE_GLOBAL_ATTRS.has(name) && !allowedAttrs.has(name)) {
+              el.removeAttribute(attr.name);
+              return;
+            }
+            if (name === 'href' && !isSafeUrl(value, { allowAnchor: true })) {
+              el.removeAttribute(attr.name);
+              return;
+            }
+            if (name === 'src' && !isSafeUrl(value)) {
+              el.removeAttribute(attr.name);
+              return;
+            }
+          });
+
+          if (tag === 'a' && el.getAttribute('target') === '_blank') {
+            el.setAttribute('rel', 'noopener noreferrer');
+          }
+        }
+
+        Array.from(node.childNodes).forEach(walk);
+      };
+
+      Array.from(template.content.childNodes).forEach(walk);
+      return template.innerHTML;
+    };
+
     const highlightCode = (lang, code) => {
       const normalized = normalizeLang(lang);
       if (window.hljs) {
@@ -1352,7 +1460,7 @@ del {
     }
 
     // Fetch and render README
-    const readmeURL = 'https://raw.githubusercontent.com/QetzylTech/Marites/refs/heads/main/README.md';
+    const readmeURL = '/doc/README.md';
     const contentElement = document.getElementById('content');
     const backToTopButton = document.getElementById('backToTop');
     const stickyHeader = document.getElementById('stickyHeader');
@@ -1420,7 +1528,7 @@ del {
       slugCounts.clear();
       const resolved = resolveReferenceImages(mdText);
       const normalized = normalizeMarkdown(resolved);
-      const html = marked.parse(forceInlineImages(normalized));
+      const html = sanitizeRenderedHtml(marked.parse(forceInlineImages(normalized)));
       contentElement.innerHTML = html;
 
       const h1Title = contentElement.querySelector('h1');
@@ -1764,7 +1872,7 @@ del {
         })
         .then(processMarkdown)
         .catch(err => {
-          contentElement.innerHTML = `<div class="error"><strong>Error loading README:</strong> ${err.message}</div>`;
+          contentElement.textContent = `Error loading README: ${err.message}`;
           console.error('Failed to load README:', err);
         });
     };
