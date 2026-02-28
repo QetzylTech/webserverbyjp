@@ -1,0 +1,14 @@
+<button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-controls="side-nav" aria-expanded="false">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+</button>
+<div id="nav-backdrop" class="nav-backdrop" aria-hidden="true"></div>
+<nav id="side-nav" class="sidebar" aria-labelledby="sidebar-title">
+    <h2 id="sidebar-title" class="sidebar-title">Navigation</h2>
+    <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+    <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+    <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
+    <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Reports</a>
+    <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Readme</a>
+</nav>

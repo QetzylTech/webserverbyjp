@@ -2,15 +2,16 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-WEB_CONF="$APP_DIR/web.conf"
+WEB_CONF="$APP_DIR/mcweb.env"
 LOG_DIR="$APP_DIR/logs"
 LOG_FILE="$LOG_DIR/backup.log"
 
-WORLD_DIR="/opt/Minecraft/The Server"
-# WORLD_DIR="/opt/Minecraft/config"
+WORLD_DIR=""
 BACKUP_DIR="/home/marites/backups"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
-STATE_FILE="$APP_DIR/data/state.txt"
+BACKUP_TRIGGER="${1:-manual}"
+BACKUP_SUFFIX=""
+BACKUP_STATE_FILE="$APP_DIR/data/state.txt"
 RCON_HOST="127.0.0.1"
 
 SERVER_PROPERTIES_CANDIDATES=(
@@ -65,7 +66,7 @@ load_web_conf() {
     case "$key" in
       WORLD_DIR) WORLD_DIR="$value" ;;
       BACKUP_DIR) BACKUP_DIR="$value" ;;
-      STATE_FILE) STATE_FILE="$value" ;;
+      BACKUP_STATE_FILE) BACKUP_STATE_FILE="$value" ;;
       RCON_HOST) RCON_HOST="$value" ;;
       RCON_PORT) RCON_PORT="$value" ;;
     esac
@@ -75,7 +76,22 @@ load_web_conf() {
 load_web_conf
 WORLD_DIR="$(normalize_path "$WORLD_DIR")"
 BACKUP_DIR="$(normalize_path "$BACKUP_DIR")"
-STATE_FILE="$(normalize_path "$STATE_FILE")"
+BACKUP_STATE_FILE="$(normalize_path "$BACKUP_STATE_FILE")"
+
+if [[ -z "$WORLD_DIR" ]]; then
+  echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup aborted: WORLD_DIR is not set in mcweb.env"
+  exit 1
+fi
+
+case "$BACKUP_TRIGGER" in
+  auto) BACKUP_SUFFIX="_auto" ;;
+  manual) BACKUP_SUFFIX="_manual" ;;
+  session_end) BACKUP_SUFFIX="_session_end" ;;
+  *)
+    echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup aborted: invalid backup trigger '$BACKUP_TRIGGER'"
+    exit 1
+    ;;
+esac
 
 read_rcon_config() {
   local props=""
@@ -109,7 +125,7 @@ read_rcon_config() {
 }
 
 mkdir -p "$LOG_DIR"
-mkdir -p "$(dirname "$STATE_FILE")"
+mkdir -p "$(dirname "$BACKUP_STATE_FILE")"
 exec >> "$LOG_FILE" 2>&1
 echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup run started"
 
@@ -119,8 +135,8 @@ if ! read_rcon_config; then
 fi
 
 # Mark backup as running and always clear state on script exit.
-echo "true" > "$STATE_FILE"
-trap 'echo "false" > "$STATE_FILE"; echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup run finished"' EXIT
+echo "true" > "$BACKUP_STATE_FILE"
+trap 'echo "false" > "$BACKUP_STATE_FILE"; echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup run finished"' EXIT
 
 mkdir -p "$BACKUP_DIR"
 
@@ -135,9 +151,11 @@ mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "save-off"
 sleep 5
 
 # Create zip backup
-if zip -r "$BACKUP_DIR/world_$DATE.zip" "$WORLD_DIR"; then
+BACKUP_ZIP="$BACKUP_DIR/world_${DATE}${BACKUP_SUFFIX}.zip"
+
+if zip -r "$BACKUP_ZIP" "$WORLD_DIR"; then
     # Backup succeeded
-    mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup completed successfully! Saved to $BACKUP_DIR/world_$DATE.zip"
+    mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup completed successfully! Saved to $BACKUP_ZIP"
 else
     # Backup failed
     mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup failed! Check server logs."

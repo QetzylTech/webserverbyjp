@@ -5,24 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Minecraft Control</title>
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='home.css', v=static_version('home.css')) }}">
 </head>
 <body>
-<button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
-    <span class="nav-toggle-bar"></span>
-    <span class="nav-toggle-bar"></span>
-    <span class="nav-toggle-bar"></span>
-</button>
-<div id="nav-backdrop" class="nav-backdrop"></div>
 <div class="layout">
-    <aside id="side-nav" class="sidebar">
-        <div class="sidebar-title">Navigation</div>
-        <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
-        <a class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
-        <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
-        <a class="nav-link {% if current_page == 'crash_logs' %}active{% endif %}" href="/crash-logs">Crash Reports</a>
-        <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Readme</a>
-    </aside>
+    {% include "partials/nav.html" %}
     <main class="content">
 <div class="container">
     <!-- Header area: title, action buttons, and all stat cards. -->
@@ -31,7 +19,7 @@
             <div class="title-row">
                 <h1>Marites Server Control Panel</h1>
                 <div class="actions">
-                    <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
+                    <span class="server-time">Server time: <strong id="server-time">{{ server_time }}</strong></span>
                     <div class="action-buttons">
                         <form class="ajax-form" method="post" action="/start">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -54,30 +42,30 @@
                 <div class="stats-group server-stats">
                     <p class="group-title">Server Stats</p>
                     <div class="status-row">
-                        <span>RAM: <b id="ram-usage" class="{{ ram_usage_class }}">{{ ram_usage }}</b></span>
-                        <span>CPU: <b id="cpu-per-core">{% for core in cpu_per_core_items %}<span class="{{ core.class }}">CPU{{ core.index }} {{ core.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}</b></span>
-                        <span>CPU freq: <b id="cpu-frequency" class="{{ cpu_frequency_class }}">{{ cpu_frequency }}</b></span>
-                        <span>Storage: <b id="storage-usage" class="{{ storage_usage_class }}">{{ storage_usage }}</b></span>
+                        <span>RAM: <strong id="ram-usage" class="{{ ram_usage_class }}">{{ ram_usage }}</strong></span>
+                        <span>CPU: <strong id="cpu-per-core">{% for core in cpu_per_core_items %}<span class="{{ core.class }}">CPU{{ core.index }} {{ core.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}</strong></span>
+                        <span>CPU freq: <strong id="cpu-frequency" class="{{ cpu_frequency_class }}">{{ cpu_frequency }}</strong></span>
+                        <span>Storage: <strong id="storage-usage" class="{{ storage_usage_class }}">{{ storage_usage }}</strong></span>
                     </div>
                 </div>
                 <!-- Minecraft runtime/health metrics. -->
                 <div class="stats-group">
                     <p class="group-title">Minecraft Stats</p>
                     <div class="status-row">
-                        <span>Server Status: <b id="service-status" class="{{ service_status_class }}">{{ service_status }}</b><span id="service-status-duration-prefix">{% if service_status == "Running" and session_duration != "--" %} for {% endif %}</span><b id="session-duration" {% if service_status != "Running" or session_duration == "--" %}style="display:none;"{% endif %}>{{ session_duration }}</b></span>
-                        <span>Players online: <b id="players-online">{{ players_online }}</b></span>
-                        <span>Tick time: <b id="tick-rate">{{ tick_rate }}</b></span>
-                        <span>Auto-stop in: <b id="idle-countdown">{{ idle_countdown }}</b></span>
+                        <span>Server Status: <strong id="service-status" class="{{ service_status_class }}">{{ service_status }}</strong><span id="service-status-duration-prefix">{% if service_status == "Running" and session_duration != "--" %} for {% endif %}</span><strong id="session-duration" {% if service_status != "Running" or session_duration == "--" %}style="display:none;"{% endif %}>{{ session_duration }}</strong></span>
+                        <span>Players online: <strong id="players-online">{{ players_online }}</strong></span>
+                        <span>Tick time: <strong id="tick-rate">{{ tick_rate }}</strong></span>
+                        <span>Auto-stop in: <strong id="idle-countdown">{{ idle_countdown }}</strong></span>
                     </div>
                 </div>
                 <!-- Backup scheduler/activity metrics. -->
                 <div class="stats-group">
                     <p class="group-title">Backup Stats</p>
                     <div class="status-row">
-                        <span>Backup status: <b id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</b></span>
-                        <span>Last backup: <b id="last-backup-time">{{ last_backup_time }}</b></span>
-                        <span>Next backup: <b id="next-backup-time">{{ next_backup_time }}</b></span>
-                        <span>Backups folder: <b id="backups-status">{{ backups_status }}</b></span>
+                        <span>Backup status: <strong id="backup-status" class="{{ backup_status_class }}">{{ backup_status }}</strong></span>
+                        <span>Last backup: <strong id="last-backup-time">{{ last_backup_time }}</strong></span>
+                        <span>Next backup: <strong id="next-backup-time">{{ next_backup_time }}</strong></span>
+                        <span>Backups folder: <strong id="backups-status">{{ backups_status }}</strong></span>
                     </div>
                 </div>
             </div>
@@ -88,7 +76,9 @@
     <!-- Main content: selectable log viewer. -->
     <section class="logs">
         <article class="panel">
+            <h2 class="sr-only">Live Console and Command Panel</h2>
             <div class="panel-header">
+                <label class="sr-only" for="log-source">Log source</label>
                 <select id="log-source">
                     <option value="minecraft">Live Server Console</option>
                     <option value="backup">Live Backup Activity</option>

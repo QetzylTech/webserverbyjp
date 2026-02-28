@@ -1,0 +1,55 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>README Documentation</title>
+  <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+  <link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-light="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-dark="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" crossorigin="anonymous">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/powershell.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dos.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='documentation.css', v=static_version('documentation.css')) }}">
+</head>
+<body>
+  <div class="layout">
+    {% include "partials/nav.html" %}
+  <header id="stickyHeader" class="sticky-header">
+    <div class="sticky-inner">
+      <button id="stickyMenu" class="sticky-menu" type="button" aria-label="Toggle table of contents" aria-controls="tocSidebar" aria-expanded="false">
+        <span class="sticky-menu-lines" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+        <span id="stickyMenuLabel" class="sticky-menu-label" hidden>Table of Contents</span>
+      </button>
+      <span id="stickyHeaderTitle" class="sticky-title"></span>
+    </div>
+  </header>
+  <aside id="tocSidebar" class="toc-sidebar" aria-label="Table of contents sidebar">
+    <div class="toc-sidebar-header">
+      <span>Contents</span>
+    </div>
+    <div id="tocSidebarBody" class="toc-body"></div>
+  </aside>
+  <main class="content">
+    <article id="content">
+    </article>
+  </main>
+  </div>
+
+  <a id="backToTop" class="back-to-top" href="#top" aria-label="Back to top">Back to top</a>
+  <script defer src="{{ url_for('static', filename='documentation_core.js', v=static_version('documentation_core.js')) }}"></script>
+  <script defer src="{{ url_for('static', filename='documentation_bootstrap.js', v=static_version('documentation_bootstrap.js')) }}"></script>
+</body>
+</html>
+

@@ -23,85 +23,6 @@
         grid-template-columns: 220px minmax(0, 1fr);
         overflow: hidden;
     }
-    .sidebar {
-        border: 0;
-        border-radius: 14px;
-        background: var(--surface);
-        color: var(--text);
-        padding: 14px 10px;
-        margin: 12px 0 12px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        box-shadow: none;
-    }
-    .sidebar-title {
-        margin: 4px 8px 10px;
-        font-size: 0.9rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #64748b;
-    }
-    .nav-link {
-        display: block;
-        color: var(--text);
-        text-decoration: none;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 0;
-        font-weight: 600;
-        background: #eef2ff;
-    }
-    .nav-link:hover {
-        color: var(--text);
-        background: #94a3b8;
-    }
-    .nav-link.active {
-        color: #ffffff;
-        background: #1d4ed8;
-    }
-    .nav-toggle {
-        display: none;
-        position: fixed;
-        top: 12px;
-        left: 12px;
-        width: 40px;
-        height: 40px;
-        border: 1px solid rgba(15, 23, 42, 0.16);
-        border-radius: 10px;
-        background: #ffffff;
-        color: #0f172a;
-        font-size: 1.2rem;
-        font-weight: 700;
-        line-height: 1;
-        z-index: 1300;
-        cursor: pointer;
-        box-shadow: none;
-        transition: transform 0.2s ease;
-    }
-    .nav-backdrop {
-        display: none;
-    }
-    .nav-toggle-bar {
-        display: block;
-        width: 18px;
-        height: 2px;
-        border-radius: 2px;
-        background: #0f172a;
-        transition: transform 0.2s ease, opacity 0.2s ease;
-    }
-    .nav-toggle-bar + .nav-toggle-bar {
-        margin-top: 4px;
-    }
-    .nav-toggle.nav-open .nav-toggle-bar:nth-child(1) {
-        transform: translateY(6px) rotate(45deg);
-    }
-    .nav-toggle.nav-open .nav-toggle-bar:nth-child(2) {
-        opacity: 0;
-    }
-    .nav-toggle.nav-open .nav-toggle-bar:nth-child(3) {
-        transform: translateY(-6px) rotate(-45deg);
-    }
     .content {
         min-width: 0;
         overflow: auto;
@@ -123,6 +44,7 @@
         padding: 14px;
         min-height: calc(100dvh - 92px);
     }
+    .panel h1,
     .panel h2 {
         margin: 0 0 6px;
         font-size: 1.4rem;
@@ -274,44 +196,17 @@
         color: #e6edf3;
     }
 
-    html.theme-dark .sidebar,
     html.theme-dark .panel,
     html.theme-dark .modal-card {
         background: #161b22;
         color: #e6edf3;
     }
 
-    html.theme-dark .sidebar-title,
     html.theme-dark .meta,
     html.theme-dark .empty,
     html.theme-dark .panel .hint,
     html.theme-dark .modal-text {
         color: #9fb0c6;
-    }
-
-    html.theme-dark .nav-link {
-        background: #253247;
-        color: #dbe7ff;
-    }
-
-    html.theme-dark .nav-link:hover {
-        background: #3b4e6a;
-        color: #f8fbff;
-    }
-
-    html.theme-dark .nav-link.active {
-        background: #1d4ed8;
-        color: #ffffff;
-    }
-
-    html.theme-dark .nav-toggle {
-        background: #161b22;
-        color: #e6edf3;
-        border-color: #334155;
-    }
-
-    html.theme-dark .nav-toggle-bar {
-        background: #e6edf3;
     }
 
     html.theme-dark .file-link,
@@ -349,46 +244,9 @@
             overflow: visible;
         }
 
+        .panel h1,
         .panel h2 {
             text-align: center;
-        }
-        .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            bottom: 0;
-            width: 245px;
-            z-index: 1250;
-            transform: translateX(-105%);
-            transition: transform 0.2s ease;
-            box-shadow: none;
-        }
-        .sidebar.open {
-            transform: translateX(0);
-        }
-        .nav-toggle {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-        }
-        .nav-backdrop {
-            display: block;
-            position: fixed;
-            inset: 0;
-            background: rgba(2, 6, 23, 0.35);
-            z-index: 1240;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-        }
-        .nav-backdrop.open {
-            opacity: 1;
-            pointer-events: auto;
-        }
-        .nav-backdrop.open + .layout .nav-toggle,
-        .nav-toggle.nav-open {
-            transform: translateX(245px);
         }
     }
     @media (max-width: 900px) {
