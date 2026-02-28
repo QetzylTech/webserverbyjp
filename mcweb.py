@@ -15,6 +15,7 @@ import time
 import threading
 import re
 import shutil
+import json
 from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
@@ -49,6 +50,7 @@ idle_zero_players_since = None
 idle_lock = threading.Lock()
 backup_periodic_runs = 0
 backup_lock = threading.Lock()
+backup_run_lock = threading.Lock()
 backup_last_error = ""
 backup_last_successful_at = None
 session_tracking_initialized = False
@@ -69,6 +71,15 @@ rcon_cached_password = None
 rcon_cached_port = RCON_PORT
 rcon_cached_enabled = False
 rcon_last_config_read_at = 0.0
+
+# Shared dashboard metrics collector/broadcast state.
+METRICS_COLLECT_INTERVAL_SECONDS = 1
+METRICS_STREAM_HEARTBEAT_SECONDS = 20
+metrics_collector_started = False
+metrics_collector_start_lock = threading.Lock()
+metrics_cache_cond = threading.Condition()
+metrics_cache_seq = 0
+metrics_cache_payload = {}
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -244,11 +255,14 @@ HTML = """
         transform: none;
     }
 
+    .btn-start { background: #15803d; }
+    .btn-start:hover { background: #166534; }
+
     .btn-stop { background: #b91c1c; }
     .btn-stop:hover { background: #991b1b; }
 
-    .btn-backup { background: #0f766e; }
-    .btn-backup:hover { background: #0d5f59; }
+    .btn-backup { background: #1d4ed8; }
+    .btn-backup:hover { background: #1e40af; }
 
     .logs {
         display: block;
@@ -481,14 +495,14 @@ HTML = """
                     <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
                     <div class="action-buttons">
                         <form class="ajax-form" method="post" action="/start">
-                            <button id="start-btn" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
+                            <button id="start-btn" class="btn-start" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
                         </form>
                         <form class="ajax-form sudo-form" method="post" action="/stop">
                             <input type="hidden" name="sudo_password">
                             <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
                         </form>
                         <form class="ajax-form" method="post" action="/backup">
-                            <button class="btn-backup" type="submit">Backup</button>
+                            <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status == "Running" %}disabled{% endif %}>Backup</button>
                         </form>
                     </div>
                 </div>
@@ -560,7 +574,7 @@ HTML = """
         </div>
     </div>
 </div>
-<!-- Generic message modal (validation errors, action rejection, etc.). -->
+<!-- Password rejection modal (only for incorrect password on protected actions). -->
 <div id="message-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
         <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
@@ -571,9 +585,20 @@ HTML = """
         </div>
     </div>
 </div>
+<!-- General error modal (ajax/network/runtime failures). -->
+<div id="error-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
+        <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
+        <p id="error-modal-text" class="modal-text"></p>
+        <div class="modal-actions">
+            <button id="error-modal-ok" type="button">OK</button>
+        </div>
+    </div>
+</div>
 <script>
     // `alert_message` is set server-side when an action fails validation.
     const alertMessage = {{ alert_message | tojson }};
+    const alertMessageCode = {{ alert_message_code | tojson }};
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
@@ -582,14 +607,9 @@ HTML = """
     let logEventSource = null;
 
     // Refresh cadence configuration (milliseconds).
-    // Active mode = full dashboard updates.
-    const ACTIVE_METRICS_INTERVAL_MS = 1000;
     const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
-    // Off mode = only server stats update.
-    const OFF_SERVER_STATS_INTERVAL_MS = 15000;
 
-    // Timer handles retained so intervals can be stopped/restarted cleanly.
-    let metricsTimer = null;
+    let metricsEventSource = null;
     let countdownTimer = null;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
@@ -684,18 +704,6 @@ HTML = """
         }
     }
 
-    async function refreshMinecraftLog() {
-        try {
-            const response = await fetch("/minecraft-log", { cache: "no-store" });
-            if (!response.ok) return;
-            const text = await response.text();
-            setRawMinecraftLogText(text);
-            renderMinecraftLog();
-        } catch (err) {
-            // Keep current log content on network/read errors.
-        }
-    }
-
     function startMinecraftLogStream() {
         if (logEventSource) return;
         logEventSource = new EventSource("/minecraft-log-stream");
@@ -751,6 +759,17 @@ HTML = """
         modal.classList.add("open");
     }
 
+    function showErrorModal(message) {
+        // Never stack error modal on top of the password modal.
+        closeSudoModal();
+        const modal = document.getElementById("error-modal");
+        const text = document.getElementById("error-modal-text");
+        if (!modal || !text) return;
+        text.textContent = message || "";
+        modal.setAttribute("aria-hidden", "false");
+        modal.classList.add("open");
+    }
+
     function renderCpuPerCore(items) {
         if (!Array.isArray(items) || items.length === 0) {
             return "unknown";
@@ -761,6 +780,82 @@ HTML = """
             const val = core.value;
             return `<span class="${cls}">CPU${idx} ${val}%</span>`;
         }).join(" | ");
+    }
+
+    function applyMetricsData(data) {
+        if (!data) return;
+        const ram = document.getElementById("ram-usage");
+        const cpu = document.getElementById("cpu-per-core");
+        const freq = document.getElementById("cpu-frequency");
+        const storage = document.getElementById("storage-usage");
+        const players = document.getElementById("players-online");
+        const tickRate = document.getElementById("tick-rate");
+        const idleCountdown = document.getElementById("idle-countdown");
+        const sessionDuration = document.getElementById("session-duration");
+        const serviceDurationPrefix = document.getElementById("service-status-duration-prefix");
+        const backupStatus = document.getElementById("backup-status");
+        const lastBackup = document.getElementById("last-backup-time");
+        const nextBackup = document.getElementById("next-backup-time");
+        const backupsStatus = document.getElementById("backups-status");
+        const service = document.getElementById("service-status");
+        const serverTime = document.getElementById("server-time");
+        const startBtn = document.getElementById("start-btn");
+        const stopBtn = document.getElementById("stop-btn");
+        const backupBtn = document.getElementById("backup-btn");
+        const rconInput = document.getElementById("rcon-command");
+        const rconSubmit = document.getElementById("rcon-submit");
+        if (ram && data.ram_usage) ram.textContent = data.ram_usage;
+        if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
+        if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
+        if (storage && data.storage_usage) storage.textContent = data.storage_usage;
+        if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
+        if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
+        if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
+        if (players && data.players_online) players.textContent = data.players_online;
+        if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
+        if (data.idle_countdown !== undefined) {
+            idleCountdownSeconds = parseCountdown(data.idle_countdown);
+            if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
+        }
+        if (sessionDuration && data.session_duration !== undefined) {
+            sessionDuration.textContent = data.session_duration;
+        }
+        if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
+        if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
+        if (backupBtn && data.backup_status) backupBtn.disabled = data.backup_status === "Running";
+        if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
+        if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
+        if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
+        if (service && data.service_status) service.textContent = data.service_status;
+        if (service && data.service_status_class) service.className = data.service_status_class;
+        if (serverTime && data.server_time) serverTime.textContent = data.server_time;
+        if (serviceDurationPrefix && service && sessionDuration) {
+            if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
+                sessionDuration.style.display = "";
+                serviceDurationPrefix.textContent = " for ";
+            } else {
+                sessionDuration.style.display = "none";
+                serviceDurationPrefix.textContent = "";
+            }
+        }
+        const rconEnabled = data.rcon_enabled === true;
+        if (data.service_running_status === "active") {
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = false;
+            if (rconInput) rconInput.disabled = !rconEnabled;
+            if (rconSubmit) rconSubmit.disabled = !rconEnabled;
+            if (rconInput) {
+                rconInput.placeholder = rconEnabled
+                    ? "Enter Minecraft server command"
+                    : "RCON unavailable (missing rcon.password)";
+            }
+        } else {
+            if (startBtn) startBtn.disabled = false;
+            if (stopBtn) stopBtn.disabled = true;
+            if (rconInput) rconInput.disabled = true;
+            if (rconSubmit) rconSubmit.disabled = true;
+        }
+        applyRefreshMode(data.service_status);
     }
 
     async function submitFormAjax(form, options = {}) {
@@ -799,7 +894,15 @@ HTML = """
             if (!response.ok || payload.ok === false) {
                 if (!suppressErrors) {
                     const message = (payload && payload.message) ? payload.message : "Action rejected.";
-                    showMessageModal(message);
+                    const isPasswordRejected =
+                        payload &&
+                        payload.error === "password_incorrect" &&
+                        (action === "/stop" || action === "/rcon");
+                    if (isPasswordRejected) {
+                        showMessageModal(message);
+                    } else {
+                        showErrorModal(message);
+                    }
                 }
                 return;
             }
@@ -807,7 +910,7 @@ HTML = """
             await refreshMetrics();
         } catch (err) {
             if (!suppressErrors) {
-                showMessageModal("Action failed. Please try again.");
+                showErrorModal("Action failed. Please try again.");
             }
         }
     }
@@ -817,103 +920,26 @@ HTML = """
             const response = await fetch("/metrics", { cache: "no-store" });
             if (!response.ok) return;
             const data = await response.json();
-            const ram = document.getElementById("ram-usage");
-            const cpu = document.getElementById("cpu-per-core");
-            const freq = document.getElementById("cpu-frequency");
-            const storage = document.getElementById("storage-usage");
-            const players = document.getElementById("players-online");
-            const tickRate = document.getElementById("tick-rate");
-            const idleCountdown = document.getElementById("idle-countdown");
-            const sessionDuration = document.getElementById("session-duration");
-            const serviceDurationPrefix = document.getElementById("service-status-duration-prefix");
-            const backupStatus = document.getElementById("backup-status");
-            const lastBackup = document.getElementById("last-backup-time");
-            const nextBackup = document.getElementById("next-backup-time");
-            const backupsStatus = document.getElementById("backups-status");
-            const service = document.getElementById("service-status");
-            const serverTime = document.getElementById("server-time");
-            const startBtn = document.getElementById("start-btn");
-            const stopBtn = document.getElementById("stop-btn");
-            const rconInput = document.getElementById("rcon-command");
-            const rconSubmit = document.getElementById("rcon-submit");
-            if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-            if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
-            if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
-            if (storage && data.storage_usage) storage.textContent = data.storage_usage;
-            if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-            if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
-            if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
-            if (players && data.players_online) players.textContent = data.players_online;
-            if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
-            if (data.idle_countdown !== undefined) {
-                idleCountdownSeconds = parseCountdown(data.idle_countdown);
-                if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
-            }
-            if (sessionDuration && data.session_duration !== undefined) {
-                sessionDuration.textContent = data.session_duration;
-            }
-            if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
-            if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
-            if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
-            if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
-            if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
-            if (service && data.service_status) service.textContent = data.service_status;
-            if (service && data.service_status_class) service.className = data.service_status_class;
-            if (serverTime && data.server_time) serverTime.textContent = data.server_time;
-            if (serviceDurationPrefix && service && sessionDuration) {
-                if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
-                    sessionDuration.style.display = "";
-                    serviceDurationPrefix.textContent = " for ";
-                } else {
-                    sessionDuration.style.display = "none";
-                    serviceDurationPrefix.textContent = "";
-                }
-            }
-            const rconEnabled = data.rcon_enabled === true;
-            if (data.service_running_status === "active") {
-                if (startBtn) startBtn.disabled = true;
-                if (stopBtn) stopBtn.disabled = false;
-                if (rconInput) rconInput.disabled = !rconEnabled;
-                if (rconSubmit) rconSubmit.disabled = !rconEnabled;
-                if (rconInput) {
-                    rconInput.placeholder = rconEnabled
-                        ? "Enter Minecraft server command"
-                        : "RCON unavailable (missing rcon.password)";
-                }
-            } else {
-                if (startBtn) startBtn.disabled = false;
-                if (stopBtn) stopBtn.disabled = true;
-                if (rconInput) rconInput.disabled = true;
-                if (rconSubmit) rconSubmit.disabled = true;
-            }
-            applyRefreshMode(data.service_status);
+            applyMetricsData(data);
         } catch (err) {
             // Keep current metrics on network/read errors.
         }
     }
 
-    async function refreshServerStatsOnly() {
-        try {
-            const response = await fetch("/metrics", { cache: "no-store" });
-            if (!response.ok) return;
-            const data = await response.json();
-            const ram = document.getElementById("ram-usage");
-            const cpu = document.getElementById("cpu-per-core");
-            const freq = document.getElementById("cpu-frequency");
-            const storage = document.getElementById("storage-usage");
-            const serverTime = document.getElementById("server-time");
-            if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-            if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
-            if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
-            if (storage && data.storage_usage) storage.textContent = data.storage_usage;
-            if (serverTime && data.server_time) serverTime.textContent = data.server_time;
-            if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-            if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
-            if (storage && data.storage_usage_class) storage.className = data.storage_usage_class;
-            applyRefreshMode(data.service_status);
-        } catch (err) {
-            // Keep current server stats on network/read errors.
-        }
+    function startMetricsStream() {
+        if (metricsEventSource) return;
+        metricsEventSource = new EventSource("/metrics-stream");
+        metricsEventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data || "{}");
+                applyMetricsData(data);
+            } catch (err) {
+                // Ignore malformed stream payload.
+            }
+        };
+        metricsEventSource.onerror = () => {
+            // EventSource reconnects automatically.
+        };
     }
 
     function clearRefreshTimers() {
@@ -921,10 +947,6 @@ HTML = """
         if (countdownTimer) {
             clearInterval(countdownTimer);
             countdownTimer = null;
-        }
-        if (metricsTimer) {
-            clearInterval(metricsTimer);
-            metricsTimer = null;
         }
     }
 
@@ -938,15 +960,12 @@ HTML = """
         clearRefreshTimers();
 
         if (refreshMode === "off") {
-            // In Off mode, refresh only Server Stats at reduced cadence.
             stopMinecraftLogStream();
-            metricsTimer = setInterval(refreshServerStatsOnly, OFF_SERVER_STATS_INTERVAL_MS);
             return;
         }
 
-        // In Active mode, restore full live updates.
+        // In Active mode, restore countdown and live logs.
         countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
-        metricsTimer = setInterval(refreshMetrics, ACTIVE_METRICS_INTERVAL_MS);
         startMinecraftLogStream();
     }
 
@@ -999,9 +1018,20 @@ HTML = """
                 if (modal) modal.classList.remove("open");
             });
         }
+        const errorOk = document.getElementById("error-modal-ok");
+        if (errorOk) {
+            errorOk.addEventListener("click", () => {
+                const modal = document.getElementById("error-modal");
+                if (modal) modal.classList.remove("open");
+            });
+        }
 
         if (alertMessage) {
-            showMessageModal(alertMessage);
+            if (alertMessageCode === "password_incorrect") {
+                showMessageModal(alertMessage);
+            } else {
+                showErrorModal(alertMessage);
+            }
             const url = new URL(window.location.href);
             url.searchParams.delete("msg");
             window.history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
@@ -1022,6 +1052,7 @@ HTML = """
         if (existingLog) {
             renderMinecraftLog();
         }
+        startMetricsStream();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
     });
@@ -1656,49 +1687,61 @@ def run_backup_script():
     global backup_last_error
     global backup_last_successful_at
 
-    with backup_lock:
-        backup_last_error = ""
+    # Prevent duplicate launches from concurrent triggers in this process.
+    if not backup_run_lock.acquire(blocking=False):
+        return True
+    try:
+        # Honor backup.sh state lock so overlapping runs are skipped.
+        if is_backup_running():
+            with backup_lock:
+                backup_last_error = ""
+            return True
 
-    success = False
-    before_snapshot = get_backup_zip_snapshot()
-    # Try direct execution first; some setups succeed even if script emits
-    # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
-    direct_result = subprocess.run(
-        [BACKUP_SCRIPT],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    after_direct_snapshot = get_backup_zip_snapshot()
-    direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
-
-    if direct_result.returncode == 0 or direct_created_zip:
-        success = True
         with backup_lock:
-            backup_last_successful_at = time.time()
-    else:
-        # Fallback to sudo-backed execution when direct run truly failed.
-        sudo_result = run_sudo([BACKUP_SCRIPT])
-        after_sudo_snapshot = get_backup_zip_snapshot()
-        sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
-        success = sudo_result.returncode == 0 or sudo_created_zip
-        if success:
+            backup_last_error = ""
+
+        success = False
+        before_snapshot = get_backup_zip_snapshot()
+        # Try direct execution first; some setups succeed even if script emits
+        # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
+        direct_result = subprocess.run(
+            [BACKUP_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        after_direct_snapshot = get_backup_zip_snapshot()
+        direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
+
+        if direct_result.returncode == 0 or direct_created_zip:
+            success = True
             with backup_lock:
                 backup_last_successful_at = time.time()
+        else:
+            # Fallback to sudo-backed execution when direct run truly failed.
+            sudo_result = run_sudo([BACKUP_SCRIPT])
+            after_sudo_snapshot = get_backup_zip_snapshot()
+            sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
+            success = sudo_result.returncode == 0 or sudo_created_zip
+            if success:
+                with backup_lock:
+                    backup_last_successful_at = time.time()
 
-        if not success:
-            err = (
-                (sudo_result.stderr or "")
-                + "\n"
-                + (sudo_result.stdout or "")
-                + "\n"
-                + (direct_result.stderr or "")
-                + "\n"
-                + (direct_result.stdout or "")
-            ).strip()
-            with backup_lock:
-                backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
-    return success
+            if not success:
+                err = (
+                    (sudo_result.stderr or "")
+                    + "\n"
+                    + (sudo_result.stdout or "")
+                    + "\n"
+                    + (direct_result.stderr or "")
+                    + "\n"
+                    + (direct_result.stdout or "")
+                ).strip()
+                with backup_lock:
+                    backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
+        return success
+    finally:
+        backup_run_lock.release()
 
 def format_backup_time(timestamp):
     # Format UNIX timestamp for the dashboard or return '--'.
@@ -1789,6 +1832,14 @@ def get_backup_status():
         return "Running", "stat-green"
     return "Idle", "stat-yellow"
 
+def is_backup_running():
+    # Return True when backup state file indicates an active backup run.
+    try:
+        raw = BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return False
+    return raw == "true"
+
 def reset_backup_periodic_runs():
     # Reset periodic backup run counter.
     global backup_periodic_runs
@@ -1832,6 +1883,54 @@ def collect_dashboard_metrics():
         "server_time": get_server_time_text(),
         "rcon_enabled": is_rcon_enabled(),
     }
+
+def _publish_metrics_snapshot(snapshot):
+    # Publish one metrics snapshot to the shared cache and notify stream listeners.
+    global metrics_cache_payload
+    global metrics_cache_seq
+    with metrics_cache_cond:
+        metrics_cache_payload = snapshot
+        metrics_cache_seq += 1
+        metrics_cache_cond.notify_all()
+
+def _collect_and_publish_metrics():
+    # Collect dashboard metrics once and publish; return success flag.
+    try:
+        snapshot = collect_dashboard_metrics()
+    except Exception:
+        return False
+    _publish_metrics_snapshot(snapshot)
+    return True
+
+def metrics_collector_loop():
+    # Background loop: collect shared dashboard metrics for all clients.
+    while True:
+        _collect_and_publish_metrics()
+        time.sleep(METRICS_COLLECT_INTERVAL_SECONDS)
+
+def ensure_metrics_collector_started():
+    # Start metrics collector exactly once per process.
+    global metrics_collector_started
+    if metrics_collector_started:
+        return
+    with metrics_collector_start_lock:
+        if metrics_collector_started:
+            return
+        _collect_and_publish_metrics()
+        watcher = threading.Thread(target=metrics_collector_loop, daemon=True)
+        watcher.start()
+        metrics_collector_started = True
+
+def get_cached_dashboard_metrics():
+    # Return latest shared metrics snapshot (collect once if empty).
+    with metrics_cache_cond:
+        if metrics_cache_payload:
+            return dict(metrics_cache_payload)
+    if _collect_and_publish_metrics():
+        with metrics_cache_cond:
+            if metrics_cache_payload:
+                return dict(metrics_cache_payload)
+    return collect_dashboard_metrics()
 
 def format_countdown(seconds):
     # Render remaining seconds as MM:SS.
@@ -1997,8 +2096,9 @@ def ensure_session_tracking_initialized():
 
 @app.before_request
 def _initialize_session_tracking_before_request():
-    # Ensure session tracking is initialized even under WSGI launch.
+    # Ensure background state is initialized even under WSGI launch.
     ensure_session_tracking_initialized()
+    ensure_metrics_collector_started()
 
 # Eagerly initialize at import/startup so session.txt is reconciled immediately,
 # even before the first HTTP request is received.
@@ -2059,7 +2159,7 @@ def index():
     elif message_code == "backup_failed":
         alert_message = "Backup failed."
 
-    data = collect_dashboard_metrics()
+    data = get_cached_dashboard_metrics()
     return render_template_string(
         HTML,
         service_status=data["service_status"],
@@ -2085,12 +2185,8 @@ def index():
         minecraft_logs_raw=get_minecraft_logs_raw(),
         rcon_enabled=data["rcon_enabled"],
         alert_message=alert_message,
+        alert_message_code=message_code,
     )
-
-@app.route("/minecraft-log")
-def minecraft_log():
-    # Return plain-text Minecraft service log snippet.
-    return get_minecraft_logs_raw(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 @app.route("/minecraft-log-stream")
 def minecraft_log_stream():
@@ -2135,9 +2231,46 @@ def minecraft_log_stream():
 
 @app.route("/metrics")
 def metrics():
-    # Return dynamic dashboard metrics as JSON.
-    # This endpoint is polled by the UI, so keep the payload compact and explicit.
-    return jsonify(collect_dashboard_metrics())
+    # Return latest shared dashboard metrics snapshot.
+    ensure_metrics_collector_started()
+    return jsonify(get_cached_dashboard_metrics())
+
+@app.route("/metrics-stream")
+def metrics_stream():
+    # Stream shared dashboard metric snapshots via SSE.
+    ensure_metrics_collector_started()
+
+    def generate():
+        last_seq = -1
+        while True:
+            with metrics_cache_cond:
+                metrics_cache_cond.wait_for(
+                    lambda: metrics_cache_seq != last_seq,
+                    timeout=METRICS_STREAM_HEARTBEAT_SECONDS,
+                )
+                seq = metrics_cache_seq
+                snapshot = dict(metrics_cache_payload) if metrics_cache_payload else None
+
+            if snapshot is None:
+                snapshot = get_cached_dashboard_metrics()
+                with metrics_cache_cond:
+                    seq = metrics_cache_seq
+
+            if seq != last_seq and snapshot is not None:
+                payload = json.dumps(snapshot, separators=(",", ":"))
+                yield f"data: {payload}\n\n"
+                last_seq = seq
+            else:
+                yield ": keepalive\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.route("/start", methods=["POST"])
 def start():
@@ -2214,6 +2347,7 @@ def rcon():
 if __name__ == "__main__":
     # Start background automation loops before serving HTTP requests.
     ensure_session_tracking_initialized()
+    ensure_metrics_collector_started()
     start_idle_player_watcher()
     start_backup_session_watcher()
     app.run(host="0.0.0.0", port=8080)
