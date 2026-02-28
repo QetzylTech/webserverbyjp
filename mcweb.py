@@ -21,9 +21,11 @@ app = Flask(__name__)
 
 # Core service and application settings.
 SERVICE = "minecraft"
-BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
+# BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
+BACKUP_SCRIPT = Path(__file__).resolve().parent / "backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
-BACKUP_STATE_FILE = Path("/opt/Minecraft/webserverbyjp/state.txt")
+# BACKUP_STATE_FILE = Path("/opt/Minecraft/webserverbyjp/state.txt")
+BACKUP_STATE_FILE = Path(__file__).resolve().parent / "state.txt"
 SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
 # "PST" here refers to Philippines Standard Time (UTC+8), not Pacific Time.
 DISPLAY_TZ = ZoneInfo("Asia/Manila")
@@ -33,10 +35,11 @@ SERVER_PROPERTIES_CANDIDATES = [
     Path("/opt/Minecraft/server.properties"),
     Path("/opt/Minecraft/server/server.properties"),
     Path(__file__).resolve().parent / "server.properties",
+    Path(__file__).resolve().parent.parent / "server.properties",
 ]
 
 # Backup and automation timing controls.
-BACKUP_INTERVAL_HOURS = 6
+BACKUP_INTERVAL_HOURS = 3
 BACKUP_INTERVAL_SECONDS = max(60, int(BACKUP_INTERVAL_HOURS * 3600))
 IDLE_ZERO_PLAYERS_SECONDS = 180
 IDLE_CHECK_INTERVAL_SECONDS = 15
@@ -601,14 +604,33 @@ HTML = """
         return rawMinecraftLogLines.join("\\n");
     }
 
+    function isRconNoiseLine(line) {
+        const lower = (line || "").toLowerCase();
+        if (lower.includes("thread rcon client")) return true;
+        if (lower.includes("minecraft/rconclient") && lower.includes("shutting down")) return true;
+        return false;
+    }
+
+    function shouldStoreRconNoise() {
+        const hideRcon = document.getElementById("hide-rcon-noise");
+        return !hideRcon || !hideRcon.checked;
+    }
+
     function setRawMinecraftLogText(rawText) {
-        rawMinecraftLogLines = (rawText || "").split("\\n");
+        let lines = (rawText || "").split("\\n");
+        if (!shouldStoreRconNoise()) {
+            lines = lines.filter((line) => !isRconNoiseLine(line));
+        }
+        rawMinecraftLogLines = lines;
         if (rawMinecraftLogLines.length > 500) {
             rawMinecraftLogLines = rawMinecraftLogLines.slice(-500);
         }
     }
 
     function appendRawMinecraftLogLine(line) {
+        if (!shouldStoreRconNoise() && isRconNoiseLine(line)) {
+            return;
+        }
         rawMinecraftLogLines.push(line || "");
         if (rawMinecraftLogLines.length > 500) {
             rawMinecraftLogLines.shift();
@@ -622,12 +644,7 @@ HTML = """
         }
 
         const lines = (rawText || "").split("\\n");
-        const kept = lines.filter((line) => {
-            const lower = line.toLowerCase();
-            if (lower.includes("thread rcon client")) return false;
-            if (lower.includes("minecraft/rconclient") && lower.includes("shutting down")) return false;
-            return true;
-        });
+        const kept = lines.filter((line) => !isRconNoiseLine(line));
         const out = kept.join("\\n").trim();
         return out || "(no logs)";
     }
