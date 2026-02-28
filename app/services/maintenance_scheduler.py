@@ -25,6 +25,7 @@ from app.services.maintenance_runtime import _cleanup_run_with_lock
 
 _cleanup_scheduler_start_lock = threading.Lock()
 _cleanup_scheduler_started = False
+_cleanup_runtime_last_tick = {"backups": 0, "stale_worlds": 0}
 
 def _cleanup_scheduler_loop(state):
     """Handle cleanup scheduler loop."""
@@ -40,9 +41,10 @@ def _cleanup_scheduler_loop(state):
                 cfg = _cleanup_get_scope_view(full_cfg, scope)
                 schedules = cfg.get("schedules", [])
                 meta = cfg.setdefault("meta", {})
-                last_tick = _safe_int(meta.get("last_scheduler_tick", 0), 0, minimum=0, maximum=2_147_483_647)
+                last_tick = _safe_int(_cleanup_runtime_last_tick.get(scope, 0), 0, minimum=0, maximum=2_147_483_647)
                 if last_tick > 0 and (now_ts - last_tick) > 75:
                     _cleanup_mark_missed_run(state, "scheduler_gap", schedule_id=f"{scope}:scheduler", scope=scope)
+                _cleanup_runtime_last_tick[scope] = now_ts
                 meta["last_scheduler_tick"] = now_ts
 
                 for schedule in schedules:

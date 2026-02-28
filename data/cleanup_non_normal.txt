@@ -1,5 +1,5 @@
 {
-  "last_ack_at": "",
-  "last_ack_by": "",
+  "last_ack_at": "2026-02-28T18:27:21+08:00",
+  "last_ack_by": "192.168.1.202",
   "missed_runs": []
 }

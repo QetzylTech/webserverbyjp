@@ -44,7 +44,7 @@ from app.services.system_metrics import (
 )
 from app.services import world_bindings as world_bindings_service
 from app.routes.dashboard_routes import register_routes
-from app.state import BackupState, SessionState
+from app.state import BackupState, SessionState, REQUIRED_STATE_KEY_SET
 
 APP_DIR = Path(__file__).resolve().parent.parent
 app = Flask(
@@ -417,8 +417,33 @@ FILES_TEMPLATE_NAME = "files.html"
 # ----------------------------
 # System and privilege helpers
 # ----------------------------
-_runtime_namespace = dict(globals())
-RUNTIME_CONTEXT = _runtime_namespace
+_RUNTIME_CONTEXT_EXTRA_KEYS = frozenset({
+    "APP_DIR",
+    "DEVICE_FALLMAP_PATH",
+    "STATE",
+})
+_RUNTIME_IMPORTED_SYMBOLS = {
+    "_list_download_files": _list_download_files,
+    "_read_recent_file_lines": _read_recent_file_lines,
+    "_safe_file_mtime_ns": _safe_file_mtime_ns,
+    "_safe_filename_in_dir": _safe_filename_in_dir,
+    "get_cpu_frequency": get_cpu_frequency,
+    "get_cpu_usage_per_core": get_cpu_usage_per_core,
+    "get_ram_usage": get_ram_usage,
+    "get_storage_usage": get_storage_usage,
+}
+
+
+def _build_runtime_context(namespace):
+    """Build explicit runtime context from known state keys only."""
+    allowed = REQUIRED_STATE_KEY_SET | _RUNTIME_CONTEXT_EXTRA_KEYS
+    context = {key: namespace[key] for key in allowed if key in namespace}
+    context.update(_RUNTIME_IMPORTED_SYMBOLS)
+    context.setdefault("STATE", None)
+    return context
+
+
+RUNTIME_CONTEXT = _build_runtime_context(locals())
 world_bindings = world_bindings_service.build_world_bindings(RUNTIME_CONTEXT)
 _binding_stage_exports = set()
 _binding_stage_values = {}

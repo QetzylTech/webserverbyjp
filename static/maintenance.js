@@ -22,6 +22,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const maintenanceFileListPane = document.querySelector(".maintenance-file-list");
     const rulesSaveBtn = document.getElementById("rules-save-btn");
     const rulesEditToggleBtn = document.getElementById("rules-edit-toggle-btn");
+    const historyViewToggle = document.getElementById("history-view-toggle");
+    const historyShowSuccessBtn = document.getElementById("history-show-success");
+    const historyShowMissedBtn = document.getElementById("history-show-missed");
     const viewRules = document.getElementById("maintenance-view-rules");
     const viewManual = document.getElementById("maintenance-view-manual");
     const viewHistory = document.getElementById("maintenance-view-history");
@@ -46,6 +49,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const dryRunFiles = document.getElementById("maintenance-dry-run-files");
     const dryRunIssues = document.getElementById("maintenance-dry-run-issues");
     const dryRunOk = document.getElementById("maintenance-dry-run-ok");
+    const dryRunConfirmRunBtn = document.getElementById("maintenance-dry-run-confirm-run");
+    const dryRunDestructiveConfirmWrap = document.getElementById("maintenance-dry-run-destructive-confirm-wrap");
+    const dryRunDestructiveConfirmInput = document.getElementById("maintenance-dry-run-destructive-confirm");
+    const ackSuggestModal = document.getElementById("maintenance-ack-suggest-modal");
+    const ackSuggestRunBtn = document.getElementById("maintenance-ack-suggest-run");
+    const ackSuggestCancelBtn = document.getElementById("maintenance-ack-suggest-cancel");
+    const ackSuggestDryRunInput = document.getElementById("maintenance-ack-suggest-dry-run");
+    const ackSuggestDestructiveConfirmWrap = document.getElementById("maintenance-ack-suggest-destructive-confirm-wrap");
+    const ackSuggestDestructiveConfirmInput = document.getElementById("maintenance-ack-suggest-destructive-confirm");
     const acknowledgeButtonHome = runAcknowledgeBtn?.parentElement || null;
 
     const UI_ONLY_MODE = false;
@@ -56,7 +68,11 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     let currentActionView = "rules";
     let currentScope = parseDataAttr("scope", "backups");
+    let historyViewMode = "successful";
     let pendingProtectedAction = null;
+    let pendingRunRulesDryRunOverride = null;
+    let pendingManualDeleteDryRunOverride = null;
+    let pendingDryRunActionKey = "";
     let rulesEditMode = false;
     let rulesDraft = null;
     const RULE_FIELD_UPDATERS = {
@@ -124,6 +140,46 @@ document.addEventListener("DOMContentLoaded", () => {
     function closeDryRunModal() {
         if (!dryRunModal) return;
         dryRunModal.setAttribute("aria-hidden", "true");
+        pendingDryRunActionKey = "";
+    }
+
+    function syncDryRunConfirmState() {
+        const canConfirmRun = pendingDryRunActionKey === "run-rules" || pendingDryRunActionKey === "manual-delete";
+        if (dryRunDestructiveConfirmWrap) {
+            dryRunDestructiveConfirmWrap.hidden = !canConfirmRun;
+        }
+        if (dryRunDestructiveConfirmInput && !canConfirmRun) {
+            dryRunDestructiveConfirmInput.checked = false;
+        }
+        if (dryRunConfirmRunBtn) {
+            dryRunConfirmRunBtn.hidden = !canConfirmRun;
+            dryRunConfirmRunBtn.disabled = !canConfirmRun || !dryRunDestructiveConfirmInput?.checked;
+        }
+    }
+
+    function closeAckSuggestModal() {
+        if (!ackSuggestModal) return;
+        ackSuggestModal.setAttribute("aria-hidden", "true");
+    }
+
+    function openAckSuggestModal() {
+        if (!ackSuggestModal) return;
+        pendingRunRulesDryRunOverride = null;
+        if (ackSuggestDryRunInput) ackSuggestDryRunInput.checked = true;
+        if (ackSuggestDestructiveConfirmInput) ackSuggestDestructiveConfirmInput.checked = false;
+        syncAckSuggestModeState();
+        ackSuggestModal.setAttribute("aria-hidden", "false");
+    }
+
+    function syncAckSuggestModeState() {
+        const isDryRun = !!ackSuggestDryRunInput?.checked;
+        const hasDestructiveConfirm = !!ackSuggestDestructiveConfirmInput?.checked;
+        if (ackSuggestDestructiveConfirmWrap) ackSuggestDestructiveConfirmWrap.hidden = isDryRun;
+        if (ackSuggestRunBtn) {
+            ackSuggestRunBtn.disabled = !isDryRun && !hasDestructiveConfirm;
+            ackSuggestRunBtn.classList.toggle("btn-start", isDryRun);
+            ackSuggestRunBtn.classList.toggle("btn-stop", !isDryRun);
+        }
     }
 
     function appendModalListItem(listEl, text) {
@@ -135,6 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function showDryRunModal(previewPayload, actionKey) {
         if (!dryRunModal || !dryRunSummary || !dryRunFiles || !dryRunIssues) return;
+        pendingDryRunActionKey = String(actionKey || "").trim();
+        if (dryRunDestructiveConfirmInput) dryRunDestructiveConfirmInput.checked = false;
+        syncDryRunConfirmState();
         const previewData = (previewPayload && typeof previewPayload === "object") ? previewPayload : {};
         const items = Array.isArray(previewData.items) ? previewData.items : [];
         const selectedRows = items.filter((item) => !!item?.selected_for_delete);
@@ -248,7 +307,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!actor || actor === "-") return "-";
         const map = (deviceMap && typeof deviceMap === "object") ? deviceMap : {};
         const deviceName = String(map[actor] || "").trim();
-        if (deviceName) return `${deviceName} (${actor})`;
+        if (deviceName) return deviceName;
         return actor;
     }
 
@@ -261,16 +320,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function getMissedRuns() {
+        return getMissedRunsForScope(currentScope);
+    }
+
+    function getMissedRunsForScope(scopeName) {
+        const targetScope = String(scopeName || "").trim().toLowerCase() || "backups";
         const runs = Array.isArray(nonNormal?.missed_runs) ? nonNormal.missed_runs : [];
         return runs.filter((entry) => {
             if (!entry || typeof entry !== "object") return true;
             const explicitScope = String(entry.scope || "").trim().toLowerCase();
             if (explicitScope === "backups" || explicitScope === "stale_worlds") {
-                return explicitScope === currentScope;
+                return explicitScope === targetScope;
             }
             const scheduleId = String(entry.schedule_id || "").trim().toLowerCase();
-            if (scheduleId.startsWith("backups:")) return currentScope === "backups";
-            if (scheduleId.startsWith("stale_worlds:")) return currentScope === "stale_worlds";
+            if (scheduleId.startsWith("backups:")) return targetScope === "backups";
+            if (scheduleId.startsWith("stale_worlds:")) return targetScope === "stale_worlds";
             return true;
         });
     }
@@ -404,7 +468,7 @@ document.addEventListener("DOMContentLoaded", () => {
         rulesEditMode = true;
         renderRuleCards();
         renderFileList();
-        syncRulesHeaderButtons();
+        syncPaneHeadActions();
     }
 
     function cancelRulesEdit() {
@@ -412,7 +476,7 @@ document.addEventListener("DOMContentLoaded", () => {
         rulesDraft = null;
         renderRuleCards();
         renderFileList();
-        syncRulesHeaderButtons();
+        syncPaneHeadActions();
     }
 
     async function saveRulesEdit(sudoPassword = "") {
@@ -690,6 +754,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function renderHistory() {
+        if (currentActionView !== "history") {
+            if (historyViewToggle) historyViewToggle.hidden = true;
+        }
         const meta = config?.meta || {};
         const missedRuns = getMissedRuns();
         const lastRun = document.getElementById("history-last-run");
@@ -728,64 +795,89 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
             historyCardList.appendChild(lastCard);
 
-            const runs = getHistoryRuns().slice().reverse().slice(0, 20);
-            if (runs.length > 0) {
-                runs.forEach((entry, idx) => {
-                    const item = document.createElement("article");
-                    item.className = "maintenance-card";
-                    const at = String(entry?.at || "-");
-                    const trigger = String(entry?.trigger || "-");
-                    const result = String(entry?.result || "-");
-                    const deleted = Number(entry?.deleted_count || 0);
-                    const dryRun = !!entry?.dry_run;
-                    item.innerHTML = `
-                        <h3 class="maintenance-card-title">Run #${idx + 1}</h3>
-                        <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${trigger} | ${result}</p>
-                        <p class="maintenance-card-meta">${dryRun ? "Dry run" : "Apply"} | Deleted: ${deleted}</p>
-                    `;
-                    historyCardList.appendChild(item);
-                });
-            }
-
-            if (missedRuns.length === 0) {
-                const empty = document.createElement("article");
-                empty.className = "maintenance-card";
-                empty.innerHTML = `<h3 class="maintenance-card-title">Missed Runs</h3><p class="maintenance-card-meta">No missed runs.</p>`;
-                historyCardList.appendChild(empty);
+            if (historyViewMode === "successful") {
+                const runs = getHistoryRuns().slice().reverse().slice(0, 20);
+                if (runs.length === 0) {
+                    const empty = document.createElement("article");
+                    empty.className = "maintenance-card";
+                    empty.innerHTML = `<h3 class="maintenance-card-title">Successful Runs</h3><p class="maintenance-card-meta">No successful runs found.</p>`;
+                    historyCardList.appendChild(empty);
+                } else {
+                    runs.forEach((entry, idx) => {
+                        const item = document.createElement("article");
+                        item.className = "maintenance-card";
+                        const at = String(entry?.at || "-");
+                        const trigger = String(entry?.trigger || "-");
+                        const result = String(entry?.result || "-");
+                        const deleted = Number(entry?.deleted_count || 0);
+                        const dryRun = !!entry?.dry_run;
+                        item.innerHTML = `
+                            <h3 class="maintenance-card-title">Run #${idx + 1}</h3>
+                            <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${trigger} | ${result}</p>
+                            <p class="maintenance-card-meta">${dryRun ? "Dry run" : "Apply"} | Deleted: ${deleted}</p>
+                        `;
+                        historyCardList.appendChild(item);
+                    });
+                }
                 if (ackBtn && acknowledgeButtonHome && ackBtn.parentElement !== acknowledgeButtonHome) {
                     acknowledgeButtonHome.appendChild(ackBtn);
                 }
             } else {
-                missedRuns.forEach((entry, idx) => {
-                    const at = typeof entry === "string" ? entry : (entry?.at || entry?.run_at || "-");
-                    const reason = typeof entry === "string" ? "missed" : (entry?.reason || entry?.trigger || "missed");
-                    const item = document.createElement("article");
-                    item.className = "maintenance-card";
-                    item.innerHTML = `
-                        <h3 class="maintenance-card-title">Missed Run #${idx + 1}</h3>
-                        <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${reason}</p>
-                    `;
-                    if (idx === 0 && ackBtn) {
-                        item.appendChild(ackBtn);
+                if (missedRuns.length === 0) {
+                    const empty = document.createElement("article");
+                    empty.className = "maintenance-card";
+                    empty.innerHTML = `<h3 class="maintenance-card-title">Missed Runs</h3><p class="maintenance-card-meta">No missed runs.</p>`;
+                    historyCardList.appendChild(empty);
+                    if (ackBtn && acknowledgeButtonHome && ackBtn.parentElement !== acknowledgeButtonHome) {
+                        acknowledgeButtonHome.appendChild(ackBtn);
                     }
-                    historyCardList.appendChild(item);
-                });
+                } else {
+                    missedRuns.forEach((entry, idx) => {
+                        const at = typeof entry === "string" ? entry : (entry?.at || entry?.run_at || "-");
+                        const reason = typeof entry === "string" ? "missed" : (entry?.reason || entry?.trigger || "missed");
+                        const item = document.createElement("article");
+                        item.className = "maintenance-card";
+                        item.innerHTML = `
+                            <h3 class="maintenance-card-title">Missed Run #${idx + 1}</h3>
+                            <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${reason}</p>
+                        `;
+                        if (idx === 0 && ackBtn) {
+                            item.appendChild(ackBtn);
+                        }
+                        historyCardList.appendChild(item);
+                    });
+                }
             }
         }
     }
 
-    function syncRulesHeaderButtons() {
-        if (!rulesEditToggleBtn || !rulesSaveBtn) return;
+    function syncPaneHeadActions() {
         const isRulesView = currentActionView === "rules";
-        rulesEditToggleBtn.hidden = !isRulesView;
-        rulesSaveBtn.hidden = !isRulesView || !rulesEditMode;
-        rulesEditToggleBtn.textContent = rulesEditMode ? "Cancel" : "Edit";
-        rulesEditToggleBtn.classList.toggle("btn-stop", rulesEditMode);
-        rulesEditToggleBtn.classList.toggle("btn-backup", !rulesEditMode);
+        const isHistoryView = currentActionView === "history";
+        if (rulesEditToggleBtn) {
+            rulesEditToggleBtn.hidden = !isRulesView;
+            rulesEditToggleBtn.textContent = rulesEditMode ? "Cancel" : "Edit";
+            rulesEditToggleBtn.classList.toggle("btn-stop", rulesEditMode);
+            rulesEditToggleBtn.classList.toggle("btn-backup", !rulesEditMode);
+        }
+        if (rulesSaveBtn) {
+            rulesSaveBtn.hidden = !isRulesView || !rulesEditMode;
+        }
+        if (historyViewToggle) {
+            historyViewToggle.hidden = !isHistoryView;
+        }
+        setPressedState(historyShowSuccessBtn, historyViewMode === "successful");
+        setPressedState(historyShowMissedBtn, historyViewMode === "missed");
     }
 
     function setActionView(viewName) {
         currentActionView = viewName;
+        if (viewName === "history") {
+            const missedCount = getMissedRuns().length;
+            if (missedCount > 0) {
+                historyViewMode = "missed";
+            }
+        }
         const viewMap = {
             rules: viewRules,
             manual: viewManual,
@@ -819,11 +911,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (viewName === "rules") {
             renderRuleCards();
-            syncRulesHeaderButtons();
+            syncPaneHeadActions();
         } else {
-            if (rulesEditToggleBtn) rulesEditToggleBtn.hidden = true;
-            if (rulesSaveBtn) rulesSaveBtn.hidden = true;
+            syncPaneHeadActions();
             if (viewName === "manual") syncManualCleanupModeState();
+            if (viewName === "history") renderHistory();
         }
         if (actionToolbar && actionDescription) {
             actionToolbar.hidden = !actionDescription.textContent.trim();
@@ -921,10 +1013,15 @@ document.addEventListener("DOMContentLoaded", () => {
             return { skipRefresh: true };
         }
         if (pendingProtectedAction === "run-rules") {
+            const dryRunFromModal = pendingRunRulesDryRunOverride;
+            const dryRunValue = typeof dryRunFromModal === "boolean"
+                ? dryRunFromModal
+                : !!ruleRunDryRunInput?.checked;
+            pendingRunRulesDryRunOverride = null;
             return await apiPost("/maintenance/api/run-rules", {
                 scope: currentScope,
                 sudo_password: sudoPassword,
-                dry_run: !!ruleRunDryRunInput?.checked,
+                dry_run: dryRunValue,
                 rule_key: "",
             });
         }
@@ -934,11 +1031,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 showError("No files selected.", "Select at least one eligible file from the left pane.");
                 return null;
             }
+            const dryRunFromModal = pendingManualDeleteDryRunOverride;
+            const dryRunValue = typeof dryRunFromModal === "boolean"
+                ? dryRunFromModal
+                : !!manualDryRunInput?.checked;
+            pendingManualDeleteDryRunOverride = null;
             return await apiPost("/maintenance/api/manual-delete", {
                 scope: currentScope,
                 sudo_password: sudoPassword,
                 selected_paths: selected,
-                dry_run: !!manualDryRunInput?.checked,
+                dry_run: dryRunValue,
             });
         }
         return null;
@@ -1028,16 +1130,71 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    async function runRulesDryRunWithoutPassword() {
+        const payload = await apiPost("/maintenance/api/run-rules", {
+            scope: currentScope,
+            dry_run: true,
+            rule_key: "",
+        });
+        const preservePreview = !!payload?.preview && Array.isArray(payload.preview.items);
+        if (preservePreview) {
+            preview = payload.preview;
+        }
+        await refreshState({ preservePreview });
+        if (payload?.dry_run && payload?.preview) {
+            showDryRunModal(payload.preview, "run-rules");
+        }
+    }
+
+    async function runManualDeleteDryRunWithoutPassword() {
+        const selected = Array.from(document.querySelectorAll(".maintenance-select:checked")).map((node) => node.value);
+        if (selected.length === 0) {
+            showError("No files selected.", "Select at least one eligible file from the left pane.");
+            return;
+        }
+        const payload = await apiPost("/maintenance/api/manual-delete", {
+            scope: currentScope,
+            selected_paths: selected,
+            dry_run: true,
+        });
+        const preservePreview = !!payload?.preview && Array.isArray(payload.preview.items);
+        if (preservePreview) {
+            preview = payload.preview;
+        }
+        await refreshState({ preservePreview });
+        if (payload?.dry_run && payload?.preview) {
+            showDryRunModal(payload.preview, "manual-delete");
+        }
+    }
+
     document.getElementById("maintenance-error-ok")?.addEventListener("click", closeError);
     errorModal?.addEventListener("click", (event) => {
         if (event.target === errorModal) closeError();
     });
 
-    runRuleDeleteBtn?.addEventListener("click", () => {
+    runRuleDeleteBtn?.addEventListener("click", async () => {
+        const dryRunSelected = !!ruleRunDryRunInput?.checked;
+        if (dryRunSelected) {
+            try {
+                await runRulesDryRunWithoutPassword();
+            } catch (err) {
+                showError(err?.message || "Cleanup action failed.", err?.details || err?.error_code);
+            }
+            return;
+        }
         openPasswordModal("run-rules", "Enter sudo password to run rule-based cleanup.");
     });
 
-    runManualDeleteBtn?.addEventListener("click", () => {
+    runManualDeleteBtn?.addEventListener("click", async () => {
+        const dryRunSelected = !!manualDryRunInput?.checked;
+        if (dryRunSelected) {
+            try {
+                await runManualDeleteDryRunWithoutPassword();
+            } catch (err) {
+                showError(err?.message || "Cleanup action failed.", err?.details || err?.error_code);
+            }
+            return;
+        }
         openPasswordModal("manual-delete", "Enter sudo password to confirm manual cleanup.");
     });
 
@@ -1086,11 +1243,50 @@ document.addEventListener("DOMContentLoaded", () => {
     dryRunModal?.addEventListener("click", (event) => {
         if (event.target === dryRunModal) closeDryRunModal();
     });
+    dryRunDestructiveConfirmInput?.addEventListener("change", syncDryRunConfirmState);
+    dryRunConfirmRunBtn?.addEventListener("click", () => {
+        if (pendingDryRunActionKey !== "run-rules" && pendingDryRunActionKey !== "manual-delete") return;
+        if (!dryRunDestructiveConfirmInput?.checked) return;
+        const actionKey = pendingDryRunActionKey;
+        closeDryRunModal();
+        if (actionKey === "run-rules") {
+            pendingRunRulesDryRunOverride = false;
+            openPasswordModal("run-rules", "Enter sudo password to run rule-based cleanup.");
+            return;
+        }
+        pendingManualDeleteDryRunOverride = false;
+        openPasswordModal("manual-delete", "Enter sudo password to confirm manual cleanup.");
+    });
+
+    ackSuggestCancelBtn?.addEventListener("click", closeAckSuggestModal);
+    ackSuggestModal?.addEventListener("click", (event) => {
+        if (event.target === ackSuggestModal) closeAckSuggestModal();
+    });
+    ackSuggestDryRunInput?.addEventListener("change", syncAckSuggestModeState);
+    ackSuggestDestructiveConfirmInput?.addEventListener("change", syncAckSuggestModeState);
+    ackSuggestRunBtn?.addEventListener("click", async () => {
+        const dryRunChoice = !!ackSuggestDryRunInput?.checked;
+        closeAckSuggestModal();
+        if (dryRunChoice) {
+            try {
+                await runRulesDryRunWithoutPassword();
+            } catch (err) {
+                showError(err?.message || "Cleanup action failed.", err?.details || err?.error_code);
+            }
+            return;
+        }
+        pendingRunRulesDryRunOverride = false;
+        openPasswordModal("run-rules", "Enter sudo password to run rule-based cleanup.");
+    });
 
     runAcknowledgeBtn?.addEventListener("click", async () => {
         try {
+            const hadMissedRuns = getMissedRuns().length > 0;
             await apiPost("/maintenance/api/ack-non-normal", { scope: currentScope });
             await refreshState();
+            if (hadMissedRuns) {
+                openAckSuggestModal();
+            }
         } catch (err) {
             showError(err?.message || "Failed to acknowledge warning.", err?.details || err?.error_code);
         }
@@ -1138,6 +1334,18 @@ document.addEventListener("DOMContentLoaded", () => {
         clearUnsavedActions();
         setActionView("manual");
     });
+    historyShowSuccessBtn?.addEventListener("click", () => {
+        if (historyViewMode === "successful") return;
+        historyViewMode = "successful";
+        syncPaneHeadActions();
+        renderHistory();
+    });
+    historyShowMissedBtn?.addEventListener("click", () => {
+        if (historyViewMode === "missed") return;
+        historyViewMode = "missed";
+        syncPaneHeadActions();
+        renderHistory();
+    });
     scopeBackupsBtn?.addEventListener("click", async () => {
         if (currentScope === "backups") return;
         clearUnsavedActions();
@@ -1179,8 +1387,18 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         openPasswordModal("save-rules", "Enter sudo password to save cleanup rules.");
     });
+    const missedBackups = getMissedRunsForScope("backups").length;
+    const missedStaleWorlds = getMissedRunsForScope("stale_worlds").length;
+    if (missedBackups === 0 && missedStaleWorlds > 0) {
+        currentScope = "stale_worlds";
+    } else if (missedStaleWorlds === 0 && missedBackups > 0) {
+        currentScope = "backups";
+    }
     const missedRuns = getMissedRuns();
-    setActionView(missedRuns.length > 0 ? "history" : "rules");
+    const hasMissedRuns = missedRuns.length > 0;
+    historyViewMode = hasMissedRuns ? "missed" : "successful";
+    setActionView(hasMissedRuns ? "history" : "rules");
+    syncPaneHeadActions();
     syncMaintenanceOverflowState();
     window.addEventListener("resize", syncMaintenanceOverflowState);
     if (window.ResizeObserver) {

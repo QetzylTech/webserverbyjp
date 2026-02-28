@@ -2,18 +2,28 @@
 def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_service, device_name_map_lookup):
     """Return system helpers bound to runtime namespace."""
     ns = namespace
+    def _value(key):
+        if key in ns:
+            return ns[key]
+        state = ns.get("STATE")
+        if state is not None:
+            try:
+                return state[key]
+            except Exception:
+                pass
+        raise KeyError(key)
 
     def get_status():
         return status_cache_service.get_status(
-            cache_lock=ns["service_status_cache_lock"],
-            cache_value_ref=ns["service_status_cache_value_ref"],
-            cache_at_ref=ns["service_status_cache_at_ref"],
-            service=ns["SERVICE"],
-            active_ttl_seconds=ns["SERVICE_STATUS_CACHE_ACTIVE_SECONDS"],
-            off_ttl_seconds=ns["SERVICE_STATUS_CACHE_OFF_SECONDS"],
-            timeout_seconds=ns["SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS"],
-            log_action=ns["log_mcweb_log"],
-            log_exception=ns["log_mcweb_exception"],
+            cache_lock=_value("service_status_cache_lock"),
+            cache_value_ref=_value("service_status_cache_value_ref"),
+            cache_at_ref=_value("service_status_cache_at_ref"),
+            service=_value("SERVICE"),
+            active_ttl_seconds=_value("SERVICE_STATUS_CACHE_ACTIVE_SECONDS"),
+            off_ttl_seconds=_value("SERVICE_STATUS_CACHE_OFF_SECONDS"),
+            timeout_seconds=_value("SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS"),
+            log_action=_value("log_mcweb_log"),
+            log_exception=_value("log_mcweb_exception"),
         )
 
     def invalidate_status_cache():
@@ -52,12 +62,12 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_
 
     def get_device_name_map():
         return device_name_map_lookup(
-            csv_path=ns["DEVICE_MAP_CSV_PATH"],
-            fallback_path=ns["DEVICE_FALLMAP_PATH"],
-            cache_lock=ns["device_name_map_lock"],
-            cache=ns["device_name_map_cache"],
-            cache_mtime_ns=ns["device_name_map_mtime_ns_ref"],
-            log_exception=ns["log_mcweb_exception"],
+            csv_path=_value("DEVICE_MAP_CSV_PATH"),
+            fallback_path=_value("DEVICE_FALLMAP_PATH"),
+            cache_lock=_value("device_name_map_lock"),
+            cache=_value("device_name_map_cache"),
+            cache_mtime_ns=_value("device_name_map_mtime_ns_ref"),
+            log_exception=_value("log_mcweb_exception"),
         )
 
     return {

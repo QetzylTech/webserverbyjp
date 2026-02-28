@@ -193,15 +193,19 @@ Steps:
     ```shell
     sudo systemctl restart smbd nmbd
     ```
-8. Run these commands to install ZeroTier and join a network
+8. Run this command to install Tailscale.
     ```shell
-    sudo curl -s https://install.zerotier.com | sudo bash
-    sudo zerotier-cli join <network_id>
+    curl -fsSL https://tailscale.com/install.sh | sh
     ```
-9. Install JDK using these commands
+9. Join the tailscale network using the command:
+    ```shell
+    sudo tailscale up
+    ```
+10.  The previous command should give a url. Open it and authorize to join the network.
+11. Install JDK using these commands
     ```shell
     sudo apt update
-    sudo apt install default-jdk
+    sudo apt install openjdk-17-jdk
     ```
 10. On Windows Explorer, where you created the modpack, type `\\ServerName` in the address bar to access the server.
 11. Type in the username and password.

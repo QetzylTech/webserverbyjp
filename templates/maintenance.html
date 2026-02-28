@@ -80,6 +80,10 @@
                         <h2 id="maintenance-action-title">Cleanup Rules</h2>
                     </div>
                     <div class="maintenance-pane-head-actions">
+                        <div id="history-view-toggle" class="maintenance-scope-toggle" role="group" aria-label="History view" hidden>
+                            <button id="history-show-success" class="nav-link maintenance-header-btn" type="button">Successful</button>
+                            <button id="history-show-missed" class="nav-link maintenance-header-btn" type="button">Missed</button>
+                        </div>
                         <button id="rules-save-btn" class="btn-backup" type="button" hidden>Save</button>
                         <button id="rules-edit-toggle-btn" class="btn-backup" type="button" hidden>Edit</button>
                     </div>
@@ -94,7 +98,7 @@
                         <div id="rules-card-list" class="maintenance-card-list"></div>
                         <div id="rules-run-panel" class="maintenance-card rule-run-panel">
                             <label class="maintenance-check"><input id="rule-run-dry-run" type="checkbox" checked> Dry run (no files are deleted)</label>
-                            <label id="rule-run-destructive-confirm-wrap" class="maintenance-check" hidden><input id="rule-run-destructive-confirm" type="checkbox"> This action is destructive and cannot be undone. Please confirm.</label>
+                            <label id="rule-run-destructive-confirm-wrap" class="maintenance-check" hidden><input id="rule-run-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
                             <button id="run-rule-delete-btn" class="btn-start" type="button">Run Rule-Based Delete Now</button>
                         </div>
                     </div>
@@ -104,7 +108,7 @@
                             <div class="maintenance-form">
                                 <p class="maintenance-meta">Delete selected eligible files from the left pane.</p>
                                 <label class="maintenance-check"><input id="manual-dry-run" type="checkbox" checked> Dry run (no files are deleted)</label>
-                                <label id="manual-destructive-confirm-wrap" class="maintenance-check" hidden><input id="manual-destructive-confirm" type="checkbox"> This action is destructive and cannot be undone. Please confirm.</label>
+                                <label id="manual-destructive-confirm-wrap" class="maintenance-check" hidden><input id="manual-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
                                 <button id="run-manual-delete-btn" class="btn-start" type="button">Confirm Manual Cleanup</button>
                             </div>
                         </div>
@@ -155,8 +159,23 @@
         <ul id="maintenance-dry-run-files" class="modal-list"></ul>
         <h4 class="modal-subtitle">Errors / Issues</h4>
         <ul id="maintenance-dry-run-issues" class="modal-list"></ul>
+        <label id="maintenance-dry-run-destructive-confirm-wrap" class="maintenance-check" hidden><input id="maintenance-dry-run-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
         <div class="modal-actions">
-            <button id="maintenance-dry-run-ok" class="btn-backup" type="button">OK</button>
+            <button id="maintenance-dry-run-confirm-run" class="btn-stop" type="button" hidden disabled>Confirm</button>
+            <button id="maintenance-dry-run-ok" class="btn-backup" type="button">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div id="maintenance-ack-suggest-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="maintenance-ack-suggest-title">
+        <h3 id="maintenance-ack-suggest-title" class="modal-title">Missed Runs Acknowledged</h3>
+        <p class="modal-text">Suggested next step: run rule-based cleanup now.</p>
+        <label class="maintenance-check"><input id="maintenance-ack-suggest-dry-run" type="checkbox" checked> Dry run (no files are deleted)</label>
+        <label id="maintenance-ack-suggest-destructive-confirm-wrap" class="maintenance-check" hidden><input id="maintenance-ack-suggest-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
+        <div class="modal-actions">
+            <button id="maintenance-ack-suggest-cancel" class="btn-backup" type="button">Cancel</button>
+            <button id="maintenance-ack-suggest-run" class="btn-start" type="button">Run Rule-Based Delete Now</button>
         </div>
     </div>
 </div>

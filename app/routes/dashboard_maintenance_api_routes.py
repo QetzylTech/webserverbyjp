@@ -195,6 +195,15 @@ def register_maintenance_routes(app, state):
         """Handle maintenance api save schedules."""
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
+        ok_pw, err = _require_password(
+            payload,
+            what="save_schedules",
+            why="manual_save",
+            trigger="manual",
+            scope=scope,
+        )
+        if not ok_pw:
+            return err
         ok, parsed = _cleanup_validate_schedules(payload.get("schedules", []))
         if not ok:
             code = "schedule_conflict" if "conflict" in str(parsed).lower() else "validation_failure"
@@ -240,9 +249,6 @@ def register_maintenance_routes(app, state):
         dry_run = bool(raw_dry_run)
         if isinstance(raw_dry_run, str):
             dry_run = raw_dry_run.strip().lower() in {"1", "true", "yes", "on"}
-        ok_pw, err = _require_password(payload, what="run_rules", why="manual_apply", trigger="manual", scope=scope)
-        if not ok_pw:
-            return err
         full_cfg = _cleanup_load_config(state)
         cfg = _cleanup_get_scope_view(full_cfg, scope)
         if not cfg.get("rules", {}).get("enabled", True):
@@ -279,6 +285,9 @@ def register_maintenance_routes(app, state):
                 details=f"scope={scope};rule={selected_rule or 'all'};requested={preview['requested_delete_count']};capped={preview['capped_delete_count']}",
             )
             return jsonify({"ok": True, "dry_run": True, "preview": preview, "config": cfg, "scope": scope})
+        ok_pw, err = _require_password(payload, what="run_rules", why="manual_apply", trigger="manual", scope=scope)
+        if not ok_pw:
+            return err
         result = _cleanup_run_with_lock(state, eval_cfg, mode="rule", trigger="manual_rule")
         if result is None:
             _cleanup_log(state, what="run_rules", why="manual_apply", trigger="manual_rule", result="lock_held", details=f"scope={scope}")
@@ -322,9 +331,6 @@ def register_maintenance_routes(app, state):
         dry_run = bool(raw_dry_run)
         if isinstance(raw_dry_run, str):
             dry_run = raw_dry_run.strip().lower() in {"1", "true", "yes", "on"}
-        ok_pw, err = _require_password(payload, what="manual_delete", why="manual_selection", trigger="manual", scope=scope)
-        if not ok_pw:
-            return err
         selected = payload.get("selected_paths", [])
         if not isinstance(selected, list):
             return _cleanup_error("validation_failure", "selected_paths must be a list.", status=400)
@@ -363,6 +369,9 @@ def register_maintenance_routes(app, state):
                 details=f"scope={scope};selected={len(selected)};capped={preview['capped_delete_count']}",
             )
             return jsonify({"ok": True, "dry_run": True, "preview": preview, "config": cfg, "scope": scope})
+        ok_pw, err = _require_password(payload, what="manual_delete", why="manual_selection", trigger="manual", scope=scope)
+        if not ok_pw:
+            return err
         result = _cleanup_run_with_lock(state, cfg, mode="manual", selected_paths=selected, trigger="manual_selection")
         if result is None:
             _cleanup_log(state, what="manual_delete", why="manual_selection", trigger="manual_selection", result="lock_held", details=f"scope={scope}")

@@ -1,4 +1,4 @@
-"""Typed application runtime state container."""
+﻿"""Typed application runtime state container."""
 from dataclasses import dataclass
 from collections.abc import Iterator, MutableMapping
 from typing import Any
@@ -21,252 +21,275 @@ class SessionState:
     init_lock: Any
 
 
-@dataclass
+_STATE_CORE_KEYS = (
+    "BACKUP_DIR",
+    "BACKUP_INTERVAL_SECONDS",
+    "BACKUP_LOG_FILE",
+    "BACKUP_SCRIPT",
+    "BACKUP_STATE_FILE",
+    "BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS",
+    "BACKUP_WATCH_INTERVAL_OFF_SECONDS",
+    "BACKUP_WARNING_TTL_SECONDS",
+    "CRASH_REPORTS_DIR",
+    "CRASH_STOP_GRACE_SECONDS",
+    "CRASH_STOP_MARKERS",
+    "DEV_ENABLED",
+    "DEBUG_ENABLED",
+    "DEBUG_PAGE_VISIBLE",
+    "DEBUG_SERVER_PROPERTIES_KEYS",
+    "DEBUG_PAGE_LOG_FILE",
+    "DISPLAY_TZ",
+    "DOCS_DIR",
+    "DOC_README_URL",
+    "DEVICE_MAP_CSV_PATH",
+    "FAVICON_URL",
+    "FILES_TEMPLATE_NAME",
+    "FILE_PAGE_ACTIVE_TTL_SECONDS",
+    "FILE_PAGE_CACHE_REFRESH_SECONDS",
+    "FILE_PAGE_HEARTBEAT_INTERVAL_MS",
+    "HOME_PAGE_ACTIVE_TTL_SECONDS",
+    "HOME_PAGE_HEARTBEAT_INTERVAL_MS",
+    "HTML_TEMPLATE_NAME",
+    "IDLE_CHECK_INTERVAL_ACTIVE_SECONDS",
+    "IDLE_CHECK_INTERVAL_OFF_SECONDS",
+    "IDLE_ZERO_PLAYERS_SECONDS",
+    "LOG_FETCHER_IDLE_SLEEP_SECONDS",
+    "LOG_SOURCE_KEYS",
+    "LOG_STREAM_HEARTBEAT_SECONDS",
+    "LOG_STREAM_EVENT_BUFFER_SIZE",
+    "MINECRAFT_LOG_TEXT_LIMIT",
+    "BACKUP_LOG_TEXT_LIMIT",
+    "MCWEB_LOG_TEXT_LIMIT",
+    "MCWEB_ACTION_LOG_TEXT_LIMIT",
+    "MINECRAFT_JOURNAL_TAIL_LINES",
+    "MINECRAFT_LOG_VISIBLE_LINES",
+    "LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT",
+    "MCWEB_ACTION_LOG_FILE",
+    "MCWEB_LOG_FILE",
+    "MC_QUERY_INTERVAL_SECONDS",
+    "SERVICE_STATUS_CACHE_ACTIVE_SECONDS",
+    "SERVICE_STATUS_CACHE_OFF_SECONDS",
+    "SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS",
+    "JOURNAL_LOAD_TIMEOUT_SECONDS",
+    "RCON_STARTUP_JOURNAL_TIMEOUT_SECONDS",
+    "METRICS_COLLECT_INTERVAL_OFF_SECONDS",
+    "METRICS_COLLECT_INTERVAL_SECONDS",
+    "METRICS_STREAM_HEARTBEAT_SECONDS",
+    "MINECRAFT_LOGS_DIR",
+    "MAINTENANCE_SCOPE_BACKUP_ZIP",
+    "MAINTENANCE_SCOPE_STALE_WORLD_DIR",
+    "MAINTENANCE_SCOPE_OLD_WORLD_ZIP",
+    "MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N",
+    "MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP",
+    "MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD",
+    "OFF_STATES",
+    "RCON_HOST",
+    "RCON_STARTUP_FALLBACK_AFTER_SECONDS",
+    "RCON_STARTUP_FALLBACK_INTERVAL_SECONDS",
+    "RCON_STARTUP_READY_PATTERN",
+    "SERVER_PROPERTIES_CANDIDATES",
+    "SERVICE",
+    "ADMIN_PASSWORD_HASH",
+    "WORLD_DIR",
+    "USERS_FILE",
+    "backup_state",
+    "backup_warning_at",
+    "backup_warning_lock",
+    "backup_warning_message",
+    "backup_warning_seq",
+    "session_state",
+    "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS",
+    "SLOW_METRICS_INTERVAL_OFF_SECONDS",
+    "STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS",
+    "STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS",
+)
+
+_STATE_BINDING_KEYS = (
+    "_append_backup_log_cache_line",
+    "_append_mcweb_log_cache_line",
+    "_append_minecraft_log_cache_line",
+    "_backup_failed_response",
+    "_decrement_log_stream_clients",
+    "_ensure_csrf_token",
+    "_get_cached_backup_log_text",
+    "_get_cached_mcweb_log_text",
+    "_get_cached_minecraft_log_text",
+    "_increment_log_stream_clients",
+    "_list_download_files",
+    "_log_source_settings",
+    "_mark_file_page_client_active",
+    "_mark_home_page_client_active",
+    "_ok_response",
+    "_low_storage_blocked_response",
+    "_password_rejected_response",
+    "_rcon_rejected_response",
+    "_read_recent_file_lines",
+    "_refresh_rcon_config",
+    "_run_mcrcon",
+    "_safe_file_mtime_ns",
+    "_safe_filename_in_dir",
+    "_session_write_failed_response",
+    "_start_failed_response",
+    "apply_debug_env_overrides",
+    "backup_log_cache_lines",
+    "backup_log_cache_loaded",
+    "backup_log_cache_lock",
+    "backup_log_cache_mtime_ns",
+    "clear_session_start_time",
+    "crash_stop_lock",
+    "crash_stop_timer_active",
+    "debug_env_lock",
+    "debug_env_original_values",
+    "debug_env_overrides",
+    "debug_explorer_list",
+    "debug_run_backup",
+    "debug_schedule_backup",
+    "debug_start_service",
+    "debug_stop_service",
+    "device_name_map_lock",
+    "device_name_map_cache",
+    "device_name_map_mtime_ns_ref",
+    "ensure_file_page_cache_refresher_started",
+    "ensure_log_stream_fetcher_started",
+    "ensure_session_file",
+    "file_page_cache",
+    "file_page_cache_lock",
+    "file_page_cache_refresher_start_lock",
+    "file_page_cache_refresher_started",
+    "file_page_last_seen",
+    "get_backup_schedule_times",
+    "get_backup_status",
+    "get_backup_warning_state",
+    "get_cached_dashboard_metrics",
+    "get_cached_file_page_items",
+    "get_cpu_frequency",
+    "get_cpu_usage_per_core",
+    "get_debug_env_rows",
+    "get_debug_server_properties_rows",
+    "get_idle_countdown",
+    "get_log_source_text",
+    "get_device_name_map",
+    "get_players_online",
+    "get_ram_usage",
+    "get_server_time_text",
+    "get_service_status_class",
+    "get_service_status_display",
+    "get_service_status_intent",
+    "get_session_duration_text",
+    "get_status",
+    "get_storage_usage",
+    "get_storage_available_percent",
+    "get_tick_rate",
+    "get_world_name",
+    "graceful_stop_minecraft",
+    "home_page_last_seen",
+    "idle_lock",
+    "idle_zero_players_since",
+    "invalidate_status_cache",
+    "is_rcon_enabled",
+    "log_mcweb_action",
+    "log_mcweb_log",
+    "log_mcweb_exception",
+    "log_debug_page_action",
+    "log_stream_states",
+    "mc_cached_players_online",
+    "mc_cached_tick_rate",
+    "mc_last_query_at",
+    "mc_query_lock",
+    "mcweb_log_cache_lines",
+    "mcweb_log_cache_loaded",
+    "mcweb_log_cache_lock",
+    "mcweb_log_cache_mtime_ns",
+    "metrics_cache_cond",
+    "metrics_cache_payload",
+    "metrics_cache_seq",
+    "metrics_collector_start_lock",
+    "metrics_collector_started",
+    "metrics_stream_client_count",
+    "minecraft_log_cache_lines",
+    "minecraft_log_cache_loaded",
+    "minecraft_log_cache_lock",
+    "rcon_cached_enabled",
+    "rcon_cached_password",
+    "rcon_cached_port",
+    "rcon_config_lock",
+    "rcon_last_config_read_at",
+    "rcon_startup_lock",
+    "rcon_startup_ready",
+    "re",
+    "read_session_start_time",
+    "reset_backup_schedule_state",
+    "reset_all_debug_overrides",
+    "restore_lock",
+    "restore_status_lock",
+    "restore_status",
+    "restore_world_backup",
+    "start_restore_job",
+    "get_restore_status",
+    "start_undo_restore_job",
+    "append_restore_event",
+    "run_backup_script",
+    "set_backup_warning",
+    "service_status_cache_lock",
+    "service_status_cache_value_ref",
+    "service_status_cache_at_ref",
+    "service_status_intent",
+    "service_status_intent_lock",
+    "set_service_status_intent",
+    "set_debug_server_properties_values",
+    "slow_metrics_cache",
+    "slow_metrics_cache_at",
+    "slow_metrics_cache_status",
+    "slow_metrics_lock",
+    "stop_server_automatically",
+    "storage_emergency_active",
+    "storage_emergency_lock",
+    "is_storage_low",
+    "low_storage_error_message",
+    "start_storage_safety_watcher",
+    "stop_service_systemd",
+    "users_file_lock",
+    "validate_sudo_password",
+    "write_session_start_time",
+    "record_successful_password_ip",
+)
+
+REQUIRED_STATE_KEYS = _STATE_CORE_KEYS + _STATE_BINDING_KEYS
+REQUIRED_STATE_KEY_SET = frozenset(REQUIRED_STATE_KEYS)
+
+
 class AppState(MutableMapping[str, Any]):
-    """Typed shared dependency container passed to routes/services."""
-    BACKUP_DIR: Any
-    BACKUP_INTERVAL_SECONDS: Any
-    BACKUP_LOG_FILE: Any
-    BACKUP_SCRIPT: Any
-    BACKUP_STATE_FILE: Any
-    BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS: Any
-    BACKUP_WATCH_INTERVAL_OFF_SECONDS: Any
-    BACKUP_WARNING_TTL_SECONDS: Any
-    CRASH_REPORTS_DIR: Any
-    CRASH_STOP_GRACE_SECONDS: Any
-    CRASH_STOP_MARKERS: Any
-    DEV_ENABLED: Any
-    DEBUG_ENABLED: Any
-    DEBUG_PAGE_VISIBLE: Any
-    DEBUG_SERVER_PROPERTIES_KEYS: Any
-    DEBUG_PAGE_LOG_FILE: Any
-    DISPLAY_TZ: Any
-    DOCS_DIR: Any
-    DOC_README_URL: Any
-    DEVICE_MAP_CSV_PATH: Any
-    FAVICON_URL: Any
-    FILES_TEMPLATE_NAME: Any
-    FILE_PAGE_ACTIVE_TTL_SECONDS: Any
-    FILE_PAGE_CACHE_REFRESH_SECONDS: Any
-    FILE_PAGE_HEARTBEAT_INTERVAL_MS: Any
-    HOME_PAGE_ACTIVE_TTL_SECONDS: Any
-    HOME_PAGE_HEARTBEAT_INTERVAL_MS: Any
-    HTML_TEMPLATE_NAME: Any
-    IDLE_CHECK_INTERVAL_ACTIVE_SECONDS: Any
-    IDLE_CHECK_INTERVAL_OFF_SECONDS: Any
-    IDLE_ZERO_PLAYERS_SECONDS: Any
-    LOG_FETCHER_IDLE_SLEEP_SECONDS: Any
-    LOG_SOURCE_KEYS: Any
-    LOG_STREAM_HEARTBEAT_SECONDS: Any
-    LOG_STREAM_EVENT_BUFFER_SIZE: Any
-    MINECRAFT_LOG_TEXT_LIMIT: Any
-    BACKUP_LOG_TEXT_LIMIT: Any
-    MCWEB_LOG_TEXT_LIMIT: Any
-    MCWEB_ACTION_LOG_TEXT_LIMIT: Any
-    MINECRAFT_JOURNAL_TAIL_LINES: Any
-    MINECRAFT_LOG_VISIBLE_LINES: Any
-    LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT: Any
-    MCWEB_ACTION_LOG_FILE: Any
-    MCWEB_LOG_FILE: Any
-    MC_QUERY_INTERVAL_SECONDS: Any
-    METRICS_COLLECT_INTERVAL_OFF_SECONDS: Any
-    METRICS_COLLECT_INTERVAL_SECONDS: Any
-    METRICS_STREAM_HEARTBEAT_SECONDS: Any
-    MINECRAFT_LOGS_DIR: Any
-    MAINTENANCE_SCOPE_BACKUP_ZIP: Any
-    MAINTENANCE_SCOPE_STALE_WORLD_DIR: Any
-    MAINTENANCE_SCOPE_OLD_WORLD_ZIP: Any
-    MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N: Any
-    MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP: Any
-    MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD: Any
-    OFF_STATES: Any
-    RCON_HOST: Any
-    RCON_STARTUP_FALLBACK_AFTER_SECONDS: Any
-    RCON_STARTUP_FALLBACK_INTERVAL_SECONDS: Any
-    RCON_STARTUP_READY_PATTERN: Any
-    SERVER_PROPERTIES_CANDIDATES: Any
-    SERVICE: Any
-    ADMIN_PASSWORD_HASH: Any
-    WORLD_DIR: Any
-    USERS_FILE: Any
-    backup_state: BackupState
-    backup_warning_at: Any
-    backup_warning_lock: Any
-    backup_warning_message: Any
-    backup_warning_seq: Any
-    session_state: SessionState
-    SLOW_METRICS_INTERVAL_ACTIVE_SECONDS: Any
-    SLOW_METRICS_INTERVAL_OFF_SECONDS: Any
-    STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS: Any
-    STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS: Any
-    _append_backup_log_cache_line: Any
-    _append_mcweb_log_cache_line: Any
-    _append_minecraft_log_cache_line: Any
-    _backup_failed_response: Any
-    _decrement_log_stream_clients: Any
-    _ensure_csrf_token: Any
-    _get_cached_backup_log_text: Any
-    _get_cached_mcweb_log_text: Any
-    _get_cached_minecraft_log_text: Any
-    _increment_log_stream_clients: Any
-    _list_download_files: Any
-    _log_source_settings: Any
-    _mark_file_page_client_active: Any
-    _mark_home_page_client_active: Any
-    _ok_response: Any
-    _low_storage_blocked_response: Any
-    _password_rejected_response: Any
-    _rcon_rejected_response: Any
-    _read_recent_file_lines: Any
-    _refresh_rcon_config: Any
-    _run_mcrcon: Any
-    _safe_file_mtime_ns: Any
-    _safe_filename_in_dir: Any
-    _session_write_failed_response: Any
-    _start_failed_response: Any
-    apply_debug_env_overrides: Any
-    backup_log_cache_lines: Any
-    backup_log_cache_loaded: Any
-    backup_log_cache_lock: Any
-    backup_log_cache_mtime_ns: Any
-    clear_session_start_time: Any
-    crash_stop_lock: Any
-    crash_stop_timer_active: Any
-    debug_env_lock: Any
-    debug_env_original_values: Any
-    debug_env_overrides: Any
-    debug_explorer_list: Any
-    debug_run_backup: Any
-    debug_schedule_backup: Any
-    debug_start_service: Any
-    debug_stop_service: Any
-    ensure_file_page_cache_refresher_started: Any
-    ensure_log_stream_fetcher_started: Any
-    ensure_session_file: Any
-    file_page_cache: Any
-    file_page_cache_lock: Any
-    file_page_cache_refresher_start_lock: Any
-    file_page_cache_refresher_started: Any
-    file_page_last_seen: Any
-    get_backup_schedule_times: Any
-    get_backup_status: Any
-    get_backup_warning_state: Any
-    get_cached_dashboard_metrics: Any
-    get_cached_file_page_items: Any
-    get_cpu_frequency: Any
-    get_cpu_usage_per_core: Any
-    get_debug_env_rows: Any
-    get_debug_server_properties_rows: Any
-    get_idle_countdown: Any
-    get_log_source_text: Any
-    get_device_name_map: Any
-    get_players_online: Any
-    get_ram_usage: Any
-    get_server_time_text: Any
-    get_service_status_class: Any
-    get_service_status_display: Any
-    get_service_status_intent: Any
-    get_session_duration_text: Any
-    get_status: Any
-    get_storage_usage: Any
-    get_storage_available_percent: Any
-    get_tick_rate: Any
-    get_world_name: Any
-    graceful_stop_minecraft: Any
-    home_page_last_seen: Any
-    idle_lock: Any
-    idle_zero_players_since: Any
-    invalidate_status_cache: Any
-    is_rcon_enabled: Any
-    log_mcweb_action: Any
-    log_mcweb_log: Any
-    log_mcweb_exception: Any
-    log_debug_page_action: Any
-    log_stream_states: Any
-    mc_cached_players_online: Any
-    mc_cached_tick_rate: Any
-    mc_last_query_at: Any
-    mc_query_lock: Any
-    mcweb_log_cache_lines: Any
-    mcweb_log_cache_loaded: Any
-    mcweb_log_cache_lock: Any
-    mcweb_log_cache_mtime_ns: Any
-    metrics_cache_cond: Any
-    metrics_cache_payload: Any
-    metrics_cache_seq: Any
-    metrics_collector_start_lock: Any
-    metrics_collector_started: Any
-    metrics_stream_client_count: Any
-    minecraft_log_cache_lines: Any
-    minecraft_log_cache_loaded: Any
-    minecraft_log_cache_lock: Any
-    rcon_cached_enabled: Any
-    rcon_cached_password: Any
-    rcon_cached_port: Any
-    rcon_config_lock: Any
-    rcon_last_config_read_at: Any
-    rcon_startup_lock: Any
-    rcon_startup_ready: Any
-    re: Any
-    read_session_start_time: Any
-    reset_backup_schedule_state: Any
-    reset_all_debug_overrides: Any
-    restore_lock: Any
-    restore_status_lock: Any
-    restore_status: Any
-    restore_world_backup: Any
-    start_restore_job: Any
-    get_restore_status: Any
-    start_undo_restore_job: Any
-    append_restore_event: Any
-    run_backup_script: Any
-    set_backup_warning: Any
-    service_status_intent: Any
-    service_status_intent_lock: Any
-    set_service_status_intent: Any
-    set_debug_server_properties_values: Any
-    slow_metrics_cache: Any
-    slow_metrics_cache_at: Any
-    slow_metrics_cache_status: Any
-    slow_metrics_lock: Any
-    stop_server_automatically: Any
-    storage_emergency_active: Any
-    storage_emergency_lock: Any
-    is_storage_low: Any
-    low_storage_error_message: Any
-    start_storage_safety_watcher: Any
-    stop_service_systemd: Any
-    users_file_lock: Any
-    validate_sudo_password: Any
-    write_session_start_time: Any
-    record_successful_password_ip: Any
+    """Strict runtime mapping with attribute and dict-style access."""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data: dict[str, Any]):
+        missing = [key for key in REQUIRED_STATE_KEYS if key not in data]
+        if missing:
+            raise KeyError(f"Missing state members: {', '.join(missing)}")
+        self._data = {key: data[key] for key in REQUIRED_STATE_KEYS}
 
     @classmethod
     def from_namespace(cls, namespace: dict[str, Any]) -> "AppState":
-        """Runtime helper from_namespace."""
-        missing = []
-        kwargs: dict[str, Any] = {}
-        for name in cls.__annotations__.keys():
-            if name not in namespace:
-                missing.append(name)
-            else:
-                kwargs[name] = namespace[name]
-        if missing:
-            raise KeyError(f"Missing state members: {', '.join(missing)}")
-        return cls(**kwargs)
+        """Build AppState from a runtime namespace dictionary."""
+        data = {}
+        for key in REQUIRED_STATE_KEYS:
+            if key in namespace:
+                data[key] = namespace[key]
+        return cls(data)
 
     def __getitem__(self, key: str) -> Any:
         """Dunder method __getitem__."""
         try:
-            return getattr(self, key)
-        except AttributeError as exc:
+            return self._data[key]
+        except KeyError as exc:
             raise KeyError(key) from exc
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Dunder method __setitem__."""
-        if key not in self.__annotations__:
+        if key not in REQUIRED_STATE_KEY_SET:
             raise KeyError(key)
-        setattr(self, key, value)
+        self._data[key] = value
 
     def __delitem__(self, key: str) -> None:
         """Dunder method __delitem__."""
@@ -274,8 +297,25 @@ class AppState(MutableMapping[str, Any]):
 
     def __iter__(self) -> Iterator[str]:
         """Dunder method __iter__."""
-        return iter(self.__annotations__.keys())
+        return iter(REQUIRED_STATE_KEYS)
 
     def __len__(self) -> int:
         """Dunder method __len__."""
-        return len(self.__annotations__)
+        return len(REQUIRED_STATE_KEYS)
+
+    def __getattr__(self, name: str) -> Any:
+        """Support attribute-style state reads used across services."""
+        if name in REQUIRED_STATE_KEY_SET:
+            return self._data[name]
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Support attribute-style state writes for known keys only."""
+        if name == "_data":
+            object.__setattr__(self, name, value)
+            return
+        if name in REQUIRED_STATE_KEY_SET:
+            self._data[name] = value
+            return
+        raise AttributeError(name)
+

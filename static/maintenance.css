@@ -362,6 +362,10 @@ body {
   gap: 8px;
 }
 
+.maintenance-scope-toggle[hidden] {
+  display: none !important;
+}
+
 .maintenance-scope-toggle .maintenance-header-btn.active {
   background: var(--ui-blue) !important;
   color: #ffffff !important;
