@@ -7,7 +7,7 @@ This app provides:
 - Automatic idle shutdown and session-based backup scheduling
 """
 
-from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template_string, redirect, request, jsonify, Response, stream_with_context, session, has_request_context
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -16,15 +16,29 @@ import threading
 import re
 import shutil
 import json
+import os
+import secrets
+import traceback
+from collections import deque
 from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
+app.config["SECRET_KEY"] = (
+    os.environ.get("MCWEB_SECRET_KEY")
+    or os.environ.get("FLASK_SECRET_KEY")
+    or secrets.token_hex(32)
+)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # Core service and application settings.
 SERVICE = "minecraft"
 # BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
 BACKUP_SCRIPT = Path(__file__).resolve().parent / "backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
+BACKUP_LOG_FILE = Path(__file__).resolve().parent / "logs/backup.log"
+MCWEB_LOG_DIR = Path(__file__).resolve().parent / "logs"
+MCWEB_ACTION_LOG_FILE = MCWEB_LOG_DIR / "mcweb-actions.log"
 # BACKUP_STATE_FILE = Path("/opt/Minecraft/webserverbyjp/state.txt")
 BACKUP_STATE_FILE = Path(__file__).resolve().parent / "state.txt"
 SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
@@ -43,7 +57,7 @@ SERVER_PROPERTIES_CANDIDATES = [
 BACKUP_INTERVAL_HOURS = 3
 BACKUP_INTERVAL_SECONDS = max(60, int(BACKUP_INTERVAL_HOURS * 3600))
 IDLE_ZERO_PLAYERS_SECONDS = 180
-IDLE_CHECK_INTERVAL_SECONDS = 15
+IDLE_CHECK_INTERVAL_SECONDS = 5
 
 # Shared watcher state (protected by the locks below).
 idle_zero_players_since = None
@@ -59,13 +73,22 @@ service_status_intent = None
 service_status_intent_lock = threading.Lock()
 
 OFF_STATES = {"inactive", "failed"}
+LOG_SOURCE_KEYS = ("minecraft", "backup", "mcweb")
 
 # Cache Minecraft runtime probes so rapid UI polling does not overwhelm RCON.
 MC_QUERY_INTERVAL_SECONDS = 3
+RCON_STARTUP_FALLBACK_AFTER_SECONDS = 120
+RCON_STARTUP_FALLBACK_INTERVAL_SECONDS = 5
 mc_query_lock = threading.Lock()
 mc_last_query_at = 0.0
 mc_cached_players_online = "unknown"
 mc_cached_tick_rate = "unknown"
+rcon_startup_ready = False
+rcon_startup_lock = threading.Lock()
+RCON_STARTUP_READY_PATTERN = re.compile(
+    r"Dedicated server took\s+\d+(?:[.,]\d+)?\s+seconds to load",
+    re.IGNORECASE,
+)
 rcon_config_lock = threading.Lock()
 rcon_cached_password = None
 rcon_cached_port = RCON_PORT
@@ -75,11 +98,23 @@ rcon_last_config_read_at = 0.0
 # Shared dashboard metrics collector/broadcast state.
 METRICS_COLLECT_INTERVAL_SECONDS = 1
 METRICS_STREAM_HEARTBEAT_SECONDS = 20
+LOG_STREAM_HEARTBEAT_SECONDS = 20
+LOG_STREAM_EVENT_BUFFER_SIZE = 800
 metrics_collector_started = False
 metrics_collector_start_lock = threading.Lock()
 metrics_cache_cond = threading.Condition()
 metrics_cache_seq = 0
 metrics_cache_payload = {}
+log_stream_states = {
+    source: {
+        "cond": threading.Condition(),
+        "seq": 0,
+        "events": deque(maxlen=LOG_STREAM_EVENT_BUFFER_SIZE),
+        "started": False,
+        "start_lock": threading.Lock(),
+    }
+    for source in LOG_SOURCE_KEYS
+}
 
 # Single-file HTML template for the dashboard UI.
 HTML = """
@@ -293,11 +328,59 @@ HTML = """
         background: #f8fafc;
     }
 
-    .panel-header h3 {
+    #log-source {
         margin: 0;
-        font-size: 0.98rem;
-        color: #334155;
-        white-space: nowrap;
+        min-width: 190px;
+        border: 0;
+        border-radius: 10px;
+        padding: 8px 34px 8px 12px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #fff;
+        background: #1d4ed8;
+        cursor: pointer;
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        background-image:
+            linear-gradient(45deg, transparent 50%, #ffffff 50%),
+            linear-gradient(135deg, #ffffff 50%, transparent 50%);
+        background-position:
+            calc(100% - 18px) 50%,
+            calc(100% - 12px) 50%;
+        background-size:
+            6px 6px,
+            6px 6px;
+        background-repeat: no-repeat;
+        transition: transform 0.06s ease, opacity 0.16s ease, background 0.16s ease;
+    }
+
+    #log-source:hover {
+        background-color: #1e40af;
+    }
+
+    #log-source:focus {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+    }
+
+    #log-source option {
+        background: #ffffff;
+        color: #0f172a;
+    }
+
+    #log-source option:hover,
+    #log-source option:checked {
+        background: #1d4ed8;
+        color: #ffffff;
+    }
+
+    #rcon-submit {
+        background: #1d4ed8;
+    }
+
+    #rcon-submit:hover {
+        background: #1e40af;
     }
 
     .panel-controls {
@@ -317,8 +400,7 @@ HTML = """
         white-space: nowrap;
     }
 
-    .panel-controls input[type="text"],
-    .panel-controls select {
+    .panel-controls input[type="text"] {
         flex: 1;
         min-width: 0;
         border: 1px solid #cbd5e1;
@@ -350,6 +432,15 @@ HTML = """
         color: var(--console-text);
         flex: 1;
     }
+
+    .log-line { display: block; }
+    .log-text { color: #f8fafc; }
+    .log-ts { color: #86efac; }
+    .log-bracket { color: #93c5fd; }
+    .log-level-info { color: #4ade80; }
+    .log-level-warn { color: #fb923c; }
+    .log-level-error { color: #f87171; }
+    .log-muted { color: #94a3b8; }
 
     .modal-overlay {
         position: fixed;
@@ -473,8 +564,9 @@ HTML = """
             align-items: stretch;
         }
 
-        .panel-header h3 {
-            white-space: normal;
+        #log-source {
+            width: 100%;
+            min-width: 0;
         }
 
         .console-box {
@@ -495,13 +587,16 @@ HTML = """
                     <span class="server-time">Server time: <b id="server-time">{{ server_time }}</b></span>
                     <div class="action-buttons">
                         <form class="ajax-form" method="post" action="/start">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button id="start-btn" class="btn-start" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
                         </form>
                         <form class="ajax-form sudo-form" method="post" action="/stop">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <input type="hidden" name="sudo_password">
                             <button id="stop-btn" class="btn-stop" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Stop</button>
                         </form>
                         <form class="ajax-form" method="post" action="/backup">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status == "Running" %}disabled{% endif %}>Backup</button>
                         </form>
                     </div>
@@ -543,12 +638,17 @@ HTML = """
 
     </section>
 
-    <!-- Main content: filtered Minecraft service logs. -->
+    <!-- Main content: selectable log viewer. -->
     <section class="logs">
         <article class="panel">
             <div class="panel-header">
-                <h3>Minecraft Log</h3>
+                <select id="log-source">
+                    <option value="minecraft">Minecraft Log</option>
+                    <option value="backup">Backup Log</option>
+                    <option value="mcweb">Control Panel Logs</option>
+                </select>
                 <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <label class="panel-filter">
                         <input id="hide-rcon-noise" type="checkbox" checked>
                         Hide RCON noise
@@ -599,12 +699,40 @@ HTML = """
     // `alert_message` is set server-side when an action fails validation.
     const alertMessage = {{ alert_message | tojson }};
     const alertMessageCode = {{ alert_message_code | tojson }};
+    const csrfToken = {{ csrf_token | tojson }};
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
     let pendingSudoForm = null;
-    let rawMinecraftLogLines = [];
-    let logEventSource = null;
+    const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb"];
+    const LOG_SOURCE_STREAM_PATHS = {
+        minecraft: "/log-stream/minecraft",
+        backup: "/log-stream/backup",
+        mcweb: "/log-stream/mcweb",
+    };
+    const LOG_SOURCE_TEXT_PATHS = {
+        minecraft: "/log-text/minecraft",
+        backup: "/log-text/backup",
+        mcweb: "/log-text/mcweb",
+    };
+    let selectedLogSource = "minecraft";
+    let minecraftSourceLines = [];
+    let logSourceBuffers = {
+        minecraft: [],
+        backup: [],
+        mcweb: [],
+    };
+    let logSourceHtml = {
+        minecraft: "",
+        backup: "",
+        mcweb: "",
+    };
+    let logStreams = {
+        minecraft: null,
+        backup: null,
+        mcweb: null,
+    };
+    let logAutoScrollEnabled = true;
 
     // Refresh cadence configuration (milliseconds).
     const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
@@ -614,14 +742,29 @@ HTML = """
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
 
+    function isLogNearBottom(target, thresholdPx = 24) {
+        if (!target) return true;
+        const distance = target.scrollHeight - target.clientHeight - target.scrollTop;
+        return distance <= thresholdPx;
+    }
+
     function scrollLogToBottom() {
         const target = document.getElementById("minecraft-log");
         if (!target) return;
         target.scrollTop = target.scrollHeight;
     }
 
-    function getRawMinecraftLogText() {
-        return rawMinecraftLogLines.join("\\n");
+    function getLogSource() {
+        const select = document.getElementById("log-source");
+        const value = (select && select.value) ? select.value : "minecraft";
+        if (value === "backup") return "backup";
+        if (value === "mcweb") return "mcweb";
+        return "minecraft";
+    }
+
+    function capTail(lines, maxLines) {
+        if (!Array.isArray(lines)) return [];
+        return lines.length > maxLines ? lines.slice(-maxLines) : lines;
     }
 
     function isRconNoiseLine(line) {
@@ -636,44 +779,137 @@ HTML = """
         return !hideRcon || !hideRcon.checked;
     }
 
-    function setRawMinecraftLogText(rawText) {
-        let lines = (rawText || "").split("\\n");
+    function getBufferedLogText(source) {
+        const lines = logSourceBuffers[source] || [];
+        return lines.join("\\n");
+    }
+
+    function updateLogSourceUi() {
+        const hideRcon = document.getElementById("hide-rcon-noise");
+        if (hideRcon) hideRcon.disabled = selectedLogSource !== "minecraft";
+    }
+
+    function rebuildMinecraftVisibleBuffer() {
+        let lines = minecraftSourceLines.slice();
         if (!shouldStoreRconNoise()) {
             lines = lines.filter((line) => !isRconNoiseLine(line));
         }
-        rawMinecraftLogLines = lines;
-        if (rawMinecraftLogLines.length > 500) {
-            rawMinecraftLogLines = rawMinecraftLogLines.slice(-500);
-        }
+        logSourceBuffers.minecraft = capTail(lines, 500);
+        logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
     }
 
-    function appendRawMinecraftLogLine(line) {
-        if (!shouldStoreRconNoise() && isRconNoiseLine(line)) {
+    function setSourceLogText(source, rawText) {
+        const lines = (rawText || "").split("\\n");
+        if (source === "minecraft") {
+            minecraftSourceLines = capTail(lines, 2000);
+            rebuildMinecraftVisibleBuffer();
             return;
         }
-        rawMinecraftLogLines.push(line || "");
-        if (rawMinecraftLogLines.length > 500) {
-            rawMinecraftLogLines.shift();
-        }
+        logSourceBuffers[source] = capTail(lines, 500);
+        logSourceHtml[source] = formatLogHtmlForSource(source);
     }
 
-    function filterMinecraftLog(rawText) {
-        const hideRcon = document.getElementById("hide-rcon-noise");
-        if (!hideRcon || !hideRcon.checked) {
-            return (rawText || "").trim() || "(no logs)";
+    function appendSourceLogLine(source, line) {
+        const text = line || "";
+        if (source === "minecraft") {
+            minecraftSourceLines.push(text);
+            minecraftSourceLines = capTail(minecraftSourceLines, 2000);
+            if (!shouldStoreRconNoise() && isRconNoiseLine(text)) {
+                return;
+            }
+            logSourceBuffers.minecraft.push(text);
+            logSourceBuffers.minecraft = capTail(logSourceBuffers.minecraft, 500);
+            logSourceHtml.minecraft = formatLogHtmlForSource("minecraft");
+            return;
         }
-
-        const lines = (rawText || "").split("\\n");
-        const kept = lines.filter((line) => !isRconNoiseLine(line));
-        const out = kept.join("\\n").trim();
-        return out || "(no logs)";
+        logSourceBuffers[source].push(text);
+        logSourceBuffers[source] = capTail(logSourceBuffers[source], 500);
+        logSourceHtml[source] = formatLogHtmlForSource(source);
     }
 
-    function renderMinecraftLog() {
+    function escapeHtml(text) {
+        return (text || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function bracketClass(token) {
+        if (/^\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\]$/.test(token)) return "log-ts";
+        if (/[/]\\s*error\\]/i.test(token) || /[/]\\s*fatal\\]/i.test(token)) return "log-level-error";
+        if (/[/]\\s*warn\\]/i.test(token)) return "log-level-warn";
+        if (/[/]\\s*info\\]/i.test(token)) return "log-level-info";
+        return "log-bracket";
+    }
+
+    function formatTextSegment(text, isLineStart) {
+        if (!text) return "";
+        if (isLineStart) {
+            const m = text.match(/^([A-Z][a-z]{2}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})(\\s+.*)?$/);
+            if (m) {
+                const ts = `<span class="log-ts">${escapeHtml(m[1])}</span>`;
+                const rest = m[2] ? `<span class="log-text">${escapeHtml(m[2])}</span>` : "";
+                return ts + rest;
+            }
+        }
+        return `<span class="log-text">${escapeHtml(text)}</span>`;
+    }
+
+    function formatBracketAwareLogLine(line, highlightErrorLine) {
+        const raw = line || "";
+        if (highlightErrorLine) {
+            const lower = raw.toLowerCase();
+            if (lower.includes("error") || lower.includes("overloaded") || lower.includes("delayed")) {
+                return `<span class="log-line log-level-error">${escapeHtml(raw)}</span>`;
+            }
+        }
+        const bracketRe = /\\[[^\\]]*\\]/g;
+        let out = "";
+        let cursor = 0;
+        let firstSegment = true;
+        let match;
+        while ((match = bracketRe.exec(raw)) !== null) {
+            const start = match.index;
+            const end = start + match[0].length;
+            out += formatTextSegment(raw.slice(cursor, start), firstSegment);
+            out += `<span class="${bracketClass(match[0])}">${escapeHtml(match[0])}</span>`;
+            cursor = end;
+            firstSegment = false;
+        }
+        out += formatTextSegment(raw.slice(cursor), firstSegment);
+        return `<span class="log-line">${out || '<span class="log-muted">(empty line)</span>'}</span>`;
+    }
+
+    function formatMinecraftLogLine(line) {
+        return formatBracketAwareLogLine(line, true);
+    }
+
+    function formatNonMinecraftLogLine(line) {
+        // For backup/mcweb logs: color only timestamps and bracketed tokens.
+        return formatBracketAwareLogLine(line, false);
+    }
+
+    function formatLogHtmlForSource(source) {
+        const lines = logSourceBuffers[source] || [];
+        const formatter = source === "minecraft"
+            ? formatMinecraftLogLine
+            : formatNonMinecraftLogLine;
+        if (lines.length === 0) {
+            return formatNonMinecraftLogLine("(no logs)");
+        }
+        return lines.map(formatter).join("");
+    }
+
+    function renderActiveLog() {
         const target = document.getElementById("minecraft-log");
         if (!target) return;
-        target.textContent = filterMinecraftLog(getRawMinecraftLogText());
-        scrollLogToBottom();
+        const wasNearBottom = isLogNearBottom(target);
+        target.innerHTML = logSourceHtml[selectedLogSource] || formatLogHtmlForSource(selectedLogSource);
+        if (logAutoScrollEnabled && wasNearBottom) {
+            scrollLogToBottom();
+        }
     }
 
     function parseCountdown(text) {
@@ -704,22 +940,41 @@ HTML = """
         }
     }
 
-    function startMinecraftLogStream() {
-        if (logEventSource) return;
-        logEventSource = new EventSource("/minecraft-log-stream");
-        logEventSource.onmessage = (event) => {
-            appendRawMinecraftLogLine(event.data || "");
-            renderMinecraftLog();
+    function ensureLogStreamStarted(source) {
+        if (logStreams[source]) return;
+        const path = LOG_SOURCE_STREAM_PATHS[source];
+        const stream = new EventSource(path);
+        stream.onmessage = (event) => {
+            appendSourceLogLine(source, event.data || "");
+            if (selectedLogSource === source) {
+                renderActiveLog();
+            }
         };
-        logEventSource.onerror = () => {
+        stream.onerror = () => {
             // EventSource reconnects automatically.
         };
+        logStreams[source] = stream;
     }
 
-    function stopMinecraftLogStream() {
-        if (!logEventSource) return;
-        logEventSource.close();
-        logEventSource = null;
+    function startAllLogStreams() {
+        LOG_SOURCE_KEYS.forEach((source) => ensureLogStreamStarted(source));
+    }
+
+    async function loadAllLogSourcesFromServer() {
+        await Promise.all(LOG_SOURCE_KEYS.map(async (source) => {
+            try {
+                const response = await fetch(LOG_SOURCE_TEXT_PATHS[source], { cache: "no-store" });
+                if (!response.ok) {
+                    setSourceLogText(source, "(no logs)");
+                    return;
+                }
+                const payload = await response.json();
+                setSourceLogText(source, payload.logs || "");
+            } catch (err) {
+                setSourceLogText(source, "(no logs)");
+            }
+        }));
+        renderActiveLog();
     }
 
     function openSudoModal(form) {
@@ -858,11 +1113,10 @@ HTML = """
         applyRefreshMode(data.service_status);
     }
 
-    async function submitFormAjax(form, options = {}) {
+    async function submitFormAjax(form, sudoPassword = undefined) {
         if (!form) return;
         const action = form.getAttribute("action") || "/";
         const method = (form.getAttribute("method") || "POST").toUpperCase();
-        const suppressErrors = options.suppressErrors === true;
         if (action === "/backup") {
             const backupStatus = document.getElementById("backup-status");
             if (backupStatus) {
@@ -871,8 +1125,8 @@ HTML = """
             }
         }
         const formData = new FormData(form);
-        if (options.sudoPassword !== undefined) {
-            formData.set("sudo_password", options.sudoPassword);
+        if (sudoPassword !== undefined) {
+            formData.set("sudo_password", sudoPassword);
         }
         try {
             const response = await fetch(action, {
@@ -880,7 +1134,8 @@ HTML = """
                 body: formData,
                 headers: {
                     "X-Requested-With": "XMLHttpRequest",
-                    "Accept": "application/json"
+                    "Accept": "application/json",
+                    "X-CSRF-Token": csrfToken
                 }
             });
 
@@ -892,26 +1147,22 @@ HTML = """
             }
 
             if (!response.ok || payload.ok === false) {
-                if (!suppressErrors) {
-                    const message = (payload && payload.message) ? payload.message : "Action rejected.";
-                    const isPasswordRejected =
-                        payload &&
-                        payload.error === "password_incorrect" &&
-                        (action === "/stop" || action === "/rcon");
-                    if (isPasswordRejected) {
-                        showMessageModal(message);
-                    } else {
-                        showErrorModal(message);
-                    }
+                const message = (payload && payload.message) ? payload.message : "Action rejected.";
+                const isPasswordRejected =
+                    payload &&
+                    payload.error === "password_incorrect" &&
+                    (action === "/stop" || action === "/rcon");
+                if (isPasswordRejected) {
+                    showMessageModal(message);
+                } else {
+                    showErrorModal(message);
                 }
                 return;
             }
 
             await refreshMetrics();
         } catch (err) {
-            if (!suppressErrors) {
-                showErrorModal("Action failed. Please try again.");
-            }
+            showErrorModal("Action failed. Please try again.");
         }
     }
 
@@ -960,22 +1211,18 @@ HTML = """
         clearRefreshTimers();
 
         if (refreshMode === "off") {
-            stopMinecraftLogStream();
             return;
         }
 
-        // In Active mode, restore countdown and live logs.
+        // In Active mode, restore countdown.
         countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
-        startMinecraftLogStream();
     }
 
     window.addEventListener("load", () => {
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
             form.addEventListener("submit", async (event) => {
                 event.preventDefault();
-                await submitFormAjax(form, {
-                    suppressErrors: form.dataset.noRejectModal === "1"
-                });
+                await submitFormAjax(form);
             });
         });
 
@@ -999,7 +1246,7 @@ HTML = """
                 if (!password) return;
                 const form = pendingSudoForm;
                 closeSudoModal();
-                await submitFormAjax(form, { sudoPassword: password });
+                await submitFormAjax(form, password);
             });
         }
         if (modalInput) {
@@ -1044,14 +1291,36 @@ HTML = """
         const hideRcon = document.getElementById("hide-rcon-noise");
         if (hideRcon) {
             hideRcon.addEventListener("change", () => {
-                renderMinecraftLog();
+                rebuildMinecraftVisibleBuffer();
+                if (selectedLogSource === "minecraft") {
+                    renderActiveLog();
+                }
+            });
+        }
+        const logSource = document.getElementById("log-source");
+        if (logSource) {
+            logSource.addEventListener("change", () => {
+                selectedLogSource = getLogSource();
+                updateLogSourceUi();
+                renderActiveLog();
+                scrollLogToBottom();
             });
         }
         const existingLog = document.getElementById("minecraft-log");
-        setRawMinecraftLogText(existingLog ? existingLog.textContent : "");
         if (existingLog) {
-            renderMinecraftLog();
+            existingLog.addEventListener("scroll", () => {
+                logAutoScrollEnabled = isLogNearBottom(existingLog);
+            });
         }
+        selectedLogSource = getLogSource();
+        updateLogSourceUi();
+        setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
+        if (existingLog) {
+            renderActiveLog();
+            scrollLogToBottom();
+        }
+        startAllLogStreams();
+        loadAllLogSourcesFromServer();
         startMetricsStream();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
@@ -1072,6 +1341,92 @@ def get_status():
     )
     return result.stdout.strip()
 
+def _sanitize_log_fragment(text):
+    # Flatten user/system text into one line for action logs.
+    return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
+
+def _get_client_ip():
+    # Prefer reverse-proxy headers, then direct client address.
+    if not has_request_context():
+        return "mcweb"
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    x_real_ip = (request.headers.get("X-Real-IP") or "").strip()
+    if x_real_ip:
+        return x_real_ip
+    direct = (request.remote_addr or "").strip()
+    return direct or "mcweb"
+
+def log_mcweb_action(action, command=None, rejection_message=None):
+    # Append one mcweb action line:
+    # Mon dd HH:MM:SS <client-ip> [mcweb/action] command? rejection?
+    timestamp = datetime.now(tz=DISPLAY_TZ).strftime("%b %d %H:%M:%S")
+    client_ip = _sanitize_log_fragment(_get_client_ip()) or "unknown"
+    safe_action = _sanitize_log_fragment(action) or "unknown"
+    parts = [f"{timestamp} <{client_ip}> [mcweb/{safe_action}]"]
+    if command:
+        safe_command = _sanitize_log_fragment(command)
+        if safe_command:
+            parts.append(safe_command)
+    if rejection_message:
+        safe_rejection = _sanitize_log_fragment(rejection_message)
+        if safe_rejection:
+            parts.append(f"rejected: {safe_rejection}")
+    line = " ".join(parts).strip()
+    if not line:
+        return
+    try:
+        MCWEB_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with MCWEB_ACTION_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        # Logging must not break control endpoints.
+        pass
+
+def log_mcweb_exception(context, exc):
+    # Record exception class/message and traceback summary in action log.
+    exc_name = type(exc).__name__ if exc is not None else "Exception"
+    exc_text = _sanitize_log_fragment(str(exc) if exc is not None else "")
+    tb = ""
+    if exc is not None:
+        tb = _sanitize_log_fragment(" | ".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    message = f"{context}: {exc_name}"
+    if exc_text:
+        message += f": {exc_text}"
+    if tb:
+        # Keep log lines bounded.
+        message += f" | traceback: {tb[:700]}"
+    log_mcweb_action("error", rejection_message=message)
+
+def _detect_server_properties_path():
+    # Return first readable server.properties candidate, if any.
+    for path in SERVER_PROPERTIES_CANDIDATES:
+        if path.exists():
+            return path
+    return None
+
+def log_mcweb_boot_diagnostics():
+    # Log boot-time file/config detection snapshot.
+    try:
+        server_props = _detect_server_properties_path()
+        _, rcon_port, rcon_enabled = _refresh_rcon_config()
+        details = (
+            f"service={SERVICE}; "
+            f"backup_script={BACKUP_SCRIPT} exists={BACKUP_SCRIPT.exists()}; "
+            f"backup_log={BACKUP_LOG_FILE} exists={BACKUP_LOG_FILE.exists()}; "
+            f"mcweb_action_log={MCWEB_ACTION_LOG_FILE}; "
+            f"state_file={BACKUP_STATE_FILE} exists={BACKUP_STATE_FILE.exists()}; "
+            f"session_file={SESSION_FILE} exists={SESSION_FILE.exists()}; "
+            f"server_properties={(server_props if server_props else 'missing')}; "
+            f"rcon_enabled={rcon_enabled}; rcon_port={rcon_port}"
+        )
+        log_mcweb_action("boot", command=details)
+    except Exception as exc:
+        log_mcweb_exception("boot_diagnostics", exc)
+
 def set_service_status_intent(intent):
     # Set transient UI status intent: 'starting', 'shutting', or None.
     global service_status_intent
@@ -1088,8 +1443,8 @@ def stop_service_systemd():
     # Use only configured sudo-backed command to avoid interactive PolicyKit prompts.
     try:
         run_sudo(["systemctl", "stop", SERVICE])
-    except Exception:
-        pass
+    except Exception as exc:
+        log_mcweb_exception("stop_service_systemd", exc)
 
     # Give systemd a short window to transition to inactive/failed.
     deadline = time.time() + 10
@@ -1200,15 +1555,151 @@ def get_session_duration_text(service_status=None):
     seconds = elapsed % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def get_minecraft_logs_raw():
-    # Return raw recent journal lines for client-side filtering/display.
+def _log_source_settings(source):
+    normalized = (source or "").strip().lower()
+    if normalized not in LOG_SOURCE_KEYS:
+        return None
+    if normalized == "minecraft":
+        return {
+            "type": "journal",
+            "context": "minecraft_log_stream",
+            "unit": SERVICE,
+            "text_limit": 1000,
+        }
+    if normalized == "backup":
+        return {
+            "type": "file",
+            "context": "backup_log_stream",
+            "path": BACKUP_LOG_FILE,
+            "text_limit": 500,
+        }
+    return {
+        "type": "file",
+        "context": "mcweb_action_log_stream",
+        "path": MCWEB_ACTION_LOG_FILE,
+        "text_limit": 500,
+    }
+
+def get_log_source_text(source):
+    # Return recent logs for the requested source.
+    settings = _log_source_settings(source)
+    if settings is None:
+        return None
+
+    if settings["type"] == "journal":
+        result = subprocess.run(
+            ["journalctl", "-u", settings["unit"], "-n", str(settings["text_limit"]), "--no-pager"],
+            capture_output=True,
+            text=True,
+        )
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        return output or "(no logs)"
+
+    path = settings["path"]
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "(no logs)"
+    lines = text.splitlines()
+    limit = settings["text_limit"]
+    if len(lines) > limit:
+        lines = lines[-limit:]
+    return "\n".join(lines).strip() or "(no logs)"
+
+def _publish_log_stream_line(source, line):
+    # Publish one log line event for all subscribers of a source stream.
+    state = log_stream_states.get(source)
+    if state is None:
+        return
+    with state["cond"]:
+        state["seq"] += 1
+        state["events"].append((state["seq"], line))
+        state["cond"].notify_all()
+
+def _log_source_fetcher_loop(source):
+    # Background source reader: one subprocess per source, shared by all clients.
+    settings = _log_source_settings(source)
+    if settings is None:
+        return
+
+    while True:
+        proc = None
+        try:
+            if settings["type"] == "journal":
+                cmd = ["journalctl", "-u", settings["unit"], "-f", "-n", "0", "--no-pager"]
+            else:
+                path = settings["path"]
+                if not path.exists():
+                    time.sleep(1)
+                    continue
+                cmd = ["tail", "-n", "0", "-F", str(path)]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            if not proc.stdout:
+                time.sleep(1)
+                continue
+
+            for line in proc.stdout:
+                clean = line.rstrip("\r\n")
+                if not clean:
+                    continue
+                _publish_log_stream_line(source, clean)
+        except Exception as exc:
+            log_mcweb_exception(settings["context"], exc)
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+
+        # Keep the fetcher alive if source command exits unexpectedly.
+        time.sleep(1)
+
+def ensure_log_stream_fetcher_started(source):
+    # Start one background log fetcher per source.
+    state = log_stream_states.get(source)
+    if state is None:
+        return
+    if state["started"]:
+        return
+    with state["start_lock"]:
+        if state["started"]:
+            return
+        watcher = threading.Thread(target=_log_source_fetcher_loop, args=(source,), daemon=True)
+        watcher.start()
+        state["started"] = True
+
+def _is_rcon_startup_ready(service_status=None):
+    # Return True once startup log confirms Minecraft is fully loaded.
+    global rcon_startup_ready
+    if service_status is None:
+        service_status = get_status()
+
+    if service_status != "active":
+        with rcon_startup_lock:
+            rcon_startup_ready = False
+        return False
+
+    with rcon_startup_lock:
+        if rcon_startup_ready:
+            return True
+
     result = subprocess.run(
         ["journalctl", "-u", SERVICE, "-n", "500", "--no-pager"],
         capture_output=True,
         text=True,
     )
-    output = ((result.stdout or "") + (result.stderr or "")).strip()
-    return output or "(no logs)"
+    output = (result.stdout or "") + (result.stderr or "")
+    ready = bool(RCON_STARTUP_READY_PATTERN.search(output))
+    if ready:
+        with rcon_startup_lock:
+            rcon_startup_ready = True
+    return ready
 
 # ----------------------------
 # Backup status and display helpers
@@ -1481,7 +1972,8 @@ def _run_mcrcon(command, timeout=4):
                 last_result = result
                 if result.returncode == 0:
                     return result
-            except Exception:
+            except Exception as exc:
+                log_mcweb_exception("_run_mcrcon_candidate", exc)
                 continue
 
     if last_result is not None:
@@ -1517,49 +2009,49 @@ def _parse_players_online(output):
 
 def _probe_tick_rate():
     # Probe tick time using multiple command variants and return '<ms> ms' or None.
-    for cmd in ("mspt", "tps", "forge tps", "spark tps"):
+    try:
+        result = _run_mcrcon("forge tps", timeout=8)
+    except Exception as exc:
+        log_mcweb_exception("_probe_tick_rate", exc)
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    output = _clean_rcon_output((result.stdout or "") + (result.stderr or "")).strip()
+    if not output:
+        return None
+    cleaned = output
+
+    # Prefer direct mspt/ms values when available.
+    ms_match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*ms", cleaned, re.IGNORECASE)
+    if ms_match:
         try:
-            result = _run_mcrcon(cmd, timeout=8)
-        except Exception:
-            continue
+            ms_val = float(ms_match.group(1).replace(",", "."))
+            if ms_val > 0:
+                return f"{ms_val:.1f} ms"
+        except ValueError:
+            pass
 
-        if result.returncode != 0:
-            continue
+    # Convert explicit TPS values to ms/tick.
+    match = re.search(r"TPS[^0-9]*([0-9]+(?:[.,][0-9]+)?)", cleaned, re.IGNORECASE)
+    if match:
+        try:
+            tps = float(match.group(1).replace(",", "."))
+            if tps > 0:
+                return f"{(1000.0 / tps):.1f} ms"
+        except ValueError:
+            pass
 
-        output = _clean_rcon_output((result.stdout or "") + (result.stderr or "")).strip()
-        if not output:
-            continue
-        cleaned = output
-
-        # Prefer direct mspt/ms values when available.
-        ms_match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*ms", cleaned, re.IGNORECASE)
-        if ms_match:
-            try:
-                ms_val = float(ms_match.group(1).replace(",", "."))
-                if ms_val > 0:
-                    return f"{ms_val:.1f} ms"
-            except ValueError:
-                pass
-
-        # Convert explicit TPS values to ms/tick.
-        match = re.search(r"TPS[^0-9]*([0-9]+(?:[.,][0-9]+)?)", cleaned, re.IGNORECASE)
-        if match:
-            try:
-                tps = float(match.group(1).replace(",", "."))
-                if tps > 0:
-                    return f"{(1000.0 / tps):.1f} ms"
-            except ValueError:
-                pass
-
-        # Fallback: parse first numeric token (guarded to plausible TPS range).
-        match = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\b", cleaned)
-        if match:
-            try:
-                tps = float(match.group(1).replace(",", "."))
-                if 0 < tps <= 30:
-                    return f"{(1000.0 / tps):.1f} ms"
-            except ValueError:
-                pass
+    # Fallback: parse first numeric token (guarded to plausible TPS range).
+    match = re.search(r"\b([0-9]+(?:[.,][0-9]+)?)\b", cleaned)
+    if match:
+        try:
+            tps = float(match.group(1).replace(",", "."))
+            if 0 < tps <= 30:
+                return f"{(1000.0 / tps):.1f} ms"
+        except ValueError:
+            pass
 
     return None
 
@@ -1568,34 +2060,68 @@ def _probe_minecraft_runtime_metrics(force=False):
     global mc_last_query_at
     global mc_cached_players_online
     global mc_cached_tick_rate
+    global rcon_startup_ready
+
+    service_status = get_status()
 
     # Fast path: skip probing when the service is down.
-    if get_status() != "active":
+    if service_status != "active":
         with mc_query_lock:
             mc_cached_players_online = "unknown"
             mc_cached_tick_rate = "unknown"
         return "unknown", "unknown"
 
     now = time.time()
+    startup_ready = _is_rcon_startup_ready(service_status)
+    use_startup_fallback_probe = False
+
+    # Gate RCON queries until startup log confirms the world finished loading.
+    # Fallback: after prolonged startup, probe at low cadence to recover when
+    # log readiness line is missing/late.
+    if not startup_ready:
+        session_started_at = get_session_start_time(service_status)
+        startup_elapsed = None
+        if session_started_at is not None:
+            startup_elapsed = max(0.0, now - session_started_at)
+        if startup_elapsed is not None and startup_elapsed >= RCON_STARTUP_FALLBACK_AFTER_SECONDS:
+            use_startup_fallback_probe = True
+        else:
+            with mc_query_lock:
+                mc_cached_players_online = "unknown"
+                mc_cached_tick_rate = "unknown"
+            return "unknown", "unknown"
+
     with mc_query_lock:
-        if not force and (now - mc_last_query_at) < MC_QUERY_INTERVAL_SECONDS:
+        probe_interval = MC_QUERY_INTERVAL_SECONDS
+        if use_startup_fallback_probe:
+            probe_interval = max(MC_QUERY_INTERVAL_SECONDS, RCON_STARTUP_FALLBACK_INTERVAL_SECONDS)
+        if not force and (now - mc_last_query_at) < probe_interval:
             return mc_cached_players_online, mc_cached_tick_rate
 
     players_value = None
     tick_value = None
+    list_probe_ok = False
 
     try:
         result = _run_mcrcon("list", timeout=8)
         if result.returncode == 0:
+            list_probe_ok = True
             combined = (result.stdout or "") + (result.stderr or "")
             players_value = _parse_players_online(combined)
-    except Exception:
+    except Exception as exc:
+        log_mcweb_exception("_probe_players_online", exc)
         players_value = None
 
     try:
         tick_value = _probe_tick_rate()
-    except Exception:
+    except Exception as exc:
+        log_mcweb_exception("_probe_tick_wrapper", exc)
         tick_value = None
+
+    # Promote to startup-ready once fallback probing confirms RCON responsiveness.
+    if use_startup_fallback_probe and (list_probe_ok or tick_value is not None):
+        with rcon_startup_lock:
+            rcon_startup_ready = True
 
     with mc_query_lock:
         # Keep last known values on transient RCON failures while service is active.
@@ -1621,7 +2147,6 @@ def get_tick_rate():
     # Return server tick time from cached RCON probe.
     _, tick_rate = _probe_minecraft_runtime_metrics()
     return tick_rate
-
 def get_service_status_display(service_status, players_online):
     # Map raw service + start/stop intent into rule-based UI status labels.
     # Rule 1: show Off when systemd says the service is off.
@@ -1680,22 +2205,22 @@ def stop_server_automatically():
     set_service_status_intent("shutting")
     graceful_stop_minecraft()
     clear_session_start_time()
-    reset_backup_periodic_runs()
+    reset_backup_schedule_state()
 
-def run_backup_script():
+def run_backup_script(count_skip_as_success=True):
     # Run backup script and update in-memory backup status.
     global backup_last_error
     global backup_last_successful_at
 
     # Prevent duplicate launches from concurrent triggers in this process.
     if not backup_run_lock.acquire(blocking=False):
-        return True
+        return bool(count_skip_as_success)
     try:
         # Honor backup.sh state lock so overlapping runs are skipped.
         if is_backup_running():
             with backup_lock:
                 backup_last_error = ""
-            return True
+            return bool(count_skip_as_success)
 
         with backup_lock:
             backup_last_error = ""
@@ -1718,27 +2243,13 @@ def run_backup_script():
             with backup_lock:
                 backup_last_successful_at = time.time()
         else:
-            # Fallback to sudo-backed execution when direct run truly failed.
-            sudo_result = run_sudo([BACKUP_SCRIPT])
-            after_sudo_snapshot = get_backup_zip_snapshot()
-            sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
-            success = sudo_result.returncode == 0 or sudo_created_zip
-            if success:
-                with backup_lock:
-                    backup_last_successful_at = time.time()
-
-            if not success:
-                err = (
-                    (sudo_result.stderr or "")
-                    + "\n"
-                    + (sudo_result.stdout or "")
-                    + "\n"
-                    + (direct_result.stderr or "")
-                    + "\n"
-                    + (direct_result.stdout or "")
-                ).strip()
-                with backup_lock:
-                    backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
+            err = (
+                (direct_result.stderr or "")
+                + "\n"
+                + (direct_result.stdout or "")
+            ).strip()
+            with backup_lock:
+                backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
         return success
     finally:
         backup_run_lock.release()
@@ -1793,28 +2304,20 @@ def backup_snapshot_changed(before_snapshot, after_snapshot):
 
 def get_backup_schedule_times(service_status=None):
     # Return last/next backup timestamps for dashboard display.
-    global backup_last_successful_at
-
     if service_status is None:
         service_status = get_status()
 
+    # Last backup is strictly the newest ZIP found in backup folder.
     latest_zip_ts = get_latest_backup_zip_timestamp()
-    with backup_lock:
-        last_success_ts = backup_last_successful_at
-    if latest_zip_ts is None:
-        last_backup_ts = last_success_ts
-    elif last_success_ts is None:
-        last_backup_ts = latest_zip_ts
-    else:
-        last_backup_ts = max(latest_zip_ts, last_success_ts)
+    last_backup_ts = latest_zip_ts
 
     next_backup_at = None
     if service_status not in OFF_STATES:
-        # Next backup is aligned to fixed interval boundaries from session start.
-        anchor = get_session_start_time(service_status)
-        if anchor is not None:
-            elapsed_intervals = int(max(0, time.time() - anchor) // BACKUP_INTERVAL_SECONDS)
-            next_backup_at = anchor + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
+        # Fixed periodic schedule anchored to session start.
+        session_start = get_session_start_time(service_status)
+        if session_start is not None:
+            elapsed_intervals = int(max(0, time.time() - session_start) // BACKUP_INTERVAL_SECONDS)
+            next_backup_at = session_start + ((elapsed_intervals + 1) * BACKUP_INTERVAL_SECONDS)
 
     return {
         "last_backup_time": format_backup_time(last_backup_ts),
@@ -1823,12 +2326,7 @@ def get_backup_schedule_times(service_status=None):
 
 def get_backup_status():
     # Return backup status from backup state file: true=Running, false=Idle.
-    try:
-        raw = BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
-    except OSError:
-        raw = "false"
-
-    if raw == "true":
+    if is_backup_running():
         return "Running", "stat-green"
     return "Idle", "stat-yellow"
 
@@ -1840,8 +2338,8 @@ def is_backup_running():
         return False
     return raw == "true"
 
-def reset_backup_periodic_runs():
-    # Reset periodic backup run counter.
+def reset_backup_schedule_state():
+    # Reset periodic backup schedule state for a new/ended session.
     global backup_periodic_runs
     with backup_lock:
         backup_periodic_runs = 0
@@ -1897,7 +2395,8 @@ def _collect_and_publish_metrics():
     # Collect dashboard metrics once and publish; return success flag.
     try:
         snapshot = collect_dashboard_metrics()
-    except Exception:
+    except Exception as exc:
+        log_mcweb_exception("metrics_collect", exc)
         return False
     _publish_metrics_snapshot(snapshot)
     return True
@@ -1978,9 +2477,9 @@ def idle_player_watcher():
                         idle_zero_players_since = None
                 else:
                     idle_zero_players_since = None
-        except Exception:
+        except Exception as exc:
             # Keep watcher alive on transient command failures.
-            pass
+            log_mcweb_exception("idle_player_watcher", exc)
 
         time.sleep(IDLE_CHECK_INTERVAL_SECONDS)
 
@@ -2006,22 +2505,18 @@ def backup_session_watcher():
 
             should_run_periodic_backup = False
             should_run_shutdown_backup = False
+            periodic_due_runs = 0
 
             session_started_at = read_session_start_time()
 
             with backup_lock:
                 if is_running:
-                    # Session anchor is persisted in session.txt.
-                    if session_started_at is None:
-                        # No valid session anchor: skip schedule calculation.
-                        # Start button/init logic is responsible for setting it.
-                        pass
-
-                    # Number of interval boundaries crossed since session start.
+                    # Fixed interval schedule anchored to session start.
                     if session_started_at is not None:
-                        due_runs = int((now - session_started_at) // BACKUP_INTERVAL_SECONDS)
+                        due_runs = int(max(0, now - session_started_at) // BACKUP_INTERVAL_SECONDS)
                         if due_runs > backup_periodic_runs:
                             should_run_periodic_backup = True
+                            periodic_due_runs = due_runs
                 elif is_off and session_started_at is not None:
                     # Session ended (truly off): always run one final backup.
                     # Do not clear during transitional states like activating/deactivating.
@@ -2031,16 +2526,16 @@ def backup_session_watcher():
                     backup_periodic_runs = 0
 
             if should_run_periodic_backup:
-                # Keep schedule counters in sync only when backup succeeds.
-                if run_backup_script():
+                # Mark interval(s) as satisfied only when an actual backup run succeeds.
+                if run_backup_script(count_skip_as_success=False):
                     with backup_lock:
-                        backup_periodic_runs += 1
+                        backup_periodic_runs = max(backup_periodic_runs, periodic_due_runs)
 
             if should_run_shutdown_backup:
                 run_backup_script()
-        except Exception:
+        except Exception as exc:
             # Keep watcher alive on transient command failures.
-            pass
+            log_mcweb_exception("backup_session_watcher", exc)
 
         time.sleep(15)
 
@@ -2051,6 +2546,7 @@ def start_backup_session_watcher():
 
 def initialize_session_tracking():
     # Initialize session.txt on process boot with session-preserving rules.
+    global backup_periodic_runs
     ensure_session_file()
     service_status = get_status()
     session_start = read_session_start_time()
@@ -2064,6 +2560,14 @@ def initialize_session_tracking():
     # Only seed with current time when file is empty/invalid.
     if session_start is None:
         write_session_start_time()
+        with backup_lock:
+            backup_periodic_runs = 0
+        return
+
+    # Startup behavior: when server is already running, skip immediate "catch-up"
+    # auto-backup on process restart by aligning counter to current interval index.
+    with backup_lock:
+        backup_periodic_runs = int(max(0, time.time() - session_start) // BACKUP_INTERVAL_SECONDS)
 
 def _status_debug_note():
     # Return quick status note for troubleshooting session tracking.
@@ -2073,7 +2577,8 @@ def _status_debug_note():
         if ensure_session_file():
             session_raw = SESSION_FILE.read_text(encoding="utf-8").strip()
         return f"service={service_status}, session_file={'<empty>' if not session_raw else session_raw}"
-    except Exception:
+    except Exception as exc:
+        log_mcweb_exception("_status_debug_note", exc)
         return "service=unknown, session_file=unreadable"
 
 def _session_write_failed_response():
@@ -2082,6 +2587,26 @@ def _session_write_failed_response():
     if _is_ajax_request():
         return jsonify({"ok": False, "error": "session_write_failed", "message": f"{message} {_status_debug_note()}"}), 500
     return redirect("/?msg=session_write_failed")
+
+def _ensure_csrf_token():
+    # Return existing CSRF token from session or create a new one.
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+def _is_csrf_valid():
+    # Validate request CSRF token using header (AJAX) or form field fallback.
+    expected = session.get("csrf_token")
+    if not expected:
+        return False
+    supplied = (
+        request.headers.get("X-CSRF-Token")
+        or request.form.get("csrf_token")
+        or ""
+    )
+    return supplied == expected
 
 def ensure_session_tracking_initialized():
     # Run session tracking initialization once per process.
@@ -2099,10 +2624,10 @@ def _initialize_session_tracking_before_request():
     # Ensure background state is initialized even under WSGI launch.
     ensure_session_tracking_initialized()
     ensure_metrics_collector_started()
-
-# Eagerly initialize at import/startup so session.txt is reconciled immediately,
-# even before the first HTTP request is received.
-ensure_session_tracking_initialized()
+    _ensure_csrf_token()
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _is_csrf_valid():
+        log_mcweb_action("reject", command=request.path, rejection_message="Security check failed (csrf_invalid).")
+        return _csrf_rejected_response()
 
 def _is_ajax_request():
     # Return True when request expects JSON response (fetch/XHR).
@@ -2137,11 +2662,30 @@ def _backup_failed_response(message):
         return jsonify({"ok": False, "error": "backup_failed", "message": message}), 500
     return redirect("/?msg=backup_failed")
 
+def _csrf_rejected_response():
+    # Return CSRF validation failure response for ajax/non-ajax requests.
+    if _is_ajax_request():
+        return jsonify({
+            "ok": False,
+            "error": "csrf_invalid",
+            "message": "Security check failed. Please refresh and try again.",
+        }), 403
+    return redirect("/?msg=csrf_invalid")
+
 def _rcon_rejected_response(message, status_code):
     # Return RCON validation/runtime failure for ajax/non-ajax requests.
     if _is_ajax_request():
         return jsonify({"ok": False, "message": message}), status_code
     return redirect("/")
+
+@app.errorhandler(Exception)
+def _unhandled_exception_handler(exc):
+    # Log uncaught Flask request exceptions to mcweb action log.
+    path = request.path if has_request_context() else "unknown-path"
+    log_mcweb_exception(f"unhandled_exception path={path}", exc)
+    if _is_ajax_request():
+        return jsonify({"ok": False, "error": "internal_error", "message": "Internal server error."}), 500
+    return redirect("/?msg=internal_error")
 
 # ----------------------------
 # Flask routes
@@ -2154,10 +2698,14 @@ def index():
     alert_message = ""
     if message_code == "password_incorrect":
         alert_message = "Password incorrect. Action rejected."
+    elif message_code == "csrf_invalid":
+        alert_message = "Security check failed. Please refresh and try again."
     elif message_code == "session_write_failed":
         alert_message = "Session file write failed."
     elif message_code == "backup_failed":
         alert_message = "Backup failed."
+    elif message_code == "internal_error":
+        alert_message = "Internal server error."
 
     data = get_cached_dashboard_metrics()
     return render_template_string(
@@ -2182,43 +2730,49 @@ def index():
         server_time=data["server_time"],
         ram_usage=data["ram_usage"],
         ram_usage_class=data["ram_usage_class"],
-        minecraft_logs_raw=get_minecraft_logs_raw(),
+        minecraft_logs_raw=get_log_source_text("minecraft"),
         rcon_enabled=data["rcon_enabled"],
+        csrf_token=_ensure_csrf_token(),
         alert_message=alert_message,
         alert_message_code=message_code,
     )
 
-@app.route("/minecraft-log-stream")
-def minecraft_log_stream():
-    # Stream new Minecraft journal lines via SSE.
+@app.route("/log-stream/<source>")
+def log_stream(source):
+    settings = _log_source_settings(source)
+    if settings is None:
+        return Response("invalid log source", status=404)
+    ensure_log_stream_fetcher_started(source)
+    state = log_stream_states[source]
+
+    # Stream shared source events via SSE (single background fetcher per source).
     def generate():
-        # Yield new journal lines as Server-Sent Events.
-        proc = None
-        try:
-            proc = subprocess.Popen(
-                ["journalctl", "-u", SERVICE, "-f", "-n", "0", "--no-pager"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+        last_seq = 0
+        while True:
+            pending_lines = []
+            with state["cond"]:
+                state["cond"].wait_for(
+                    lambda: state["seq"] > last_seq,
+                    timeout=LOG_STREAM_HEARTBEAT_SECONDS,
+                )
+                current_seq = state["seq"]
+                if current_seq > last_seq:
+                    if state["events"]:
+                        first_available = state["events"][0][0]
+                        if last_seq < first_available - 1:
+                            last_seq = first_available - 1
+                        pending = [(seq, line) for seq, line in state["events"] if seq > last_seq]
+                        if pending:
+                            pending_lines = [line for _, line in pending]
+                            last_seq = pending[-1][0]
+                    else:
+                        last_seq = current_seq
 
-            if not proc.stdout:
-                return
-
-            for line in proc.stdout:
-                clean = line.rstrip("\r\n")
-                if not clean:
-                    continue
-                # SSE payload: one new journal line per message.
-                yield f"data: {clean}\n\n"
-        except GeneratorExit:
-            pass
-        except Exception:
-            yield "event: error\ndata: stream_error\n\n"
-        finally:
-            if proc and proc.poll() is None:
-                proc.terminate()
+            if pending_lines:
+                for line in pending_lines:
+                    yield f"data: {line}\n\n"
+            else:
+                yield ": keepalive\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -2229,17 +2783,21 @@ def minecraft_log_stream():
         },
     )
 
+@app.route("/log-text/<source>")
+def log_text(source):
+    logs = get_log_source_text(source)
+    if logs is None:
+        return jsonify({"logs": "(no logs)"}), 404
+    return jsonify({"logs": logs})
+
 @app.route("/metrics")
 def metrics():
     # Return latest shared dashboard metrics snapshot.
-    ensure_metrics_collector_started()
     return jsonify(get_cached_dashboard_metrics())
 
 @app.route("/metrics-stream")
 def metrics_stream():
     # Stream shared dashboard metric snapshots via SSE.
-    ensure_metrics_collector_started()
-
     def generate():
         last_seq = -1
         while True:
@@ -2279,8 +2837,10 @@ def start():
     # Start through systemd so status and automation watchers use a single source of truth.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
     if write_session_start_time() is None:
+        log_mcweb_action("start", rejection_message="Session file write failed.")
         return _session_write_failed_response()
-    reset_backup_periodic_runs()
+    reset_backup_schedule_state()
+    log_mcweb_action("start")
     return _ok_response()
 
 @app.route("/stop", methods=["POST"])
@@ -2288,13 +2848,15 @@ def stop():
     # Stop Minecraft service using user-supplied sudo password.
     sudo_password = request.form.get("sudo_password", "")
     if not validate_sudo_password(sudo_password):
+        log_mcweb_action("stop", rejection_message="Password incorrect.")
         return _password_rejected_response()
 
     set_service_status_intent("shutting")
     # Ordered shutdown path: systemd stop first, then final backup.
     graceful_stop_minecraft()
     clear_session_start_time()
-    reset_backup_periodic_runs()
+    reset_backup_schedule_state()
+    log_mcweb_action("stop")
     return _ok_response()
 
 @app.route("/backup", methods=["POST"])
@@ -2308,7 +2870,9 @@ def backup():
         message = "Backup failed."
         if detail:
             message = f"Backup failed: {detail}"
+        log_mcweb_action("backup", rejection_message=message)
         return _backup_failed_response(message)
+    log_mcweb_action("backup")
     return _ok_response()
 
 @app.route("/rcon", methods=["POST"])
@@ -2317,22 +2881,32 @@ def rcon():
     command = request.form.get("rcon_command", "").strip()
     sudo_password = request.form.get("sudo_password", "")
     if not command:
+        log_mcweb_action("submit", rejection_message="Command is required.")
         return _rcon_rejected_response("Command is required.", 400)
     if not is_rcon_enabled():
+        log_mcweb_action(
+            "submit",
+            command=command,
+            rejection_message="RCON is disabled: rcon.password not found in server.properties.",
+        )
         return _rcon_rejected_response(
             "RCON is disabled: rcon.password not found in server.properties.",
             503,
         )
     # Block command execution when the service is not active.
     if get_status() != "active":
+        log_mcweb_action("submit", command=command, rejection_message="Server is not running.")
         return _rcon_rejected_response("Server is not running.", 409)
     if not validate_sudo_password(sudo_password):
+        log_mcweb_action("submit", command=command, rejection_message="Password incorrect.")
         return _password_rejected_response()
 
     # Execute through the shared RCON runner using server.properties credentials.
     try:
         result = _run_mcrcon(command, timeout=8)
-    except Exception:
+    except Exception as exc:
+        log_mcweb_exception("rcon_execute", exc)
+        log_mcweb_action("submit", command=command, rejection_message="RCON command failed to execute.")
         return _rcon_rejected_response("RCON command failed to execute.", 500)
 
     if result.returncode != 0:
@@ -2340,14 +2914,21 @@ def rcon():
         message = "RCON command failed."
         if detail:
             message = f"RCON command failed: {detail[:400]}"
+        log_mcweb_action("submit", command=command, rejection_message=message)
         return _rcon_rejected_response(message, 500)
 
+    log_mcweb_action("submit", command=command)
     return _ok_response()
 
 if __name__ == "__main__":
     # Start background automation loops before serving HTTP requests.
-    ensure_session_tracking_initialized()
-    ensure_metrics_collector_started()
-    start_idle_player_watcher()
-    start_backup_session_watcher()
-    app.run(host="0.0.0.0", port=8080)
+    log_mcweb_boot_diagnostics()
+    try:
+        ensure_session_tracking_initialized()
+        ensure_metrics_collector_started()
+        start_idle_player_watcher()
+        start_backup_session_watcher()
+        app.run(host="0.0.0.0", port=8080)
+    except Exception as exc:
+        log_mcweb_exception("mcweb_main", exc)
+        raise
