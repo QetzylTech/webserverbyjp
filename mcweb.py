@@ -19,15 +19,14 @@ from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 
-# Core service/application settings.
+# Core service and application settings.
 SERVICE = "minecraft"
-BACKUP_SCRIPT = "/opt/Minecraft/backup.sh"
+BACKUP_SCRIPT = "/opt/Minecraft/webserverbyjp/backup.sh"
 BACKUP_DIR = Path("/home/marites/backups")
+BACKUP_STATE_FILE = Path("/opt/Minecraft/webserverbyjp/state.txt")
 SESSION_FILE = Path(__file__).resolve().parent / "session.txt"
-# "PST" here means Philippines Standard Time (UTC+8), not Pacific Time.
+# "PST" here refers to Philippines Standard Time (UTC+8), not Pacific Time.
 DISPLAY_TZ = ZoneInfo("Asia/Manila")
-SUDO_PASSWORD = "SuperCute"
-RCON_PASSWORD = "SuperCute"
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
 SERVER_PROPERTIES_CANDIDATES = [
@@ -36,21 +35,18 @@ SERVER_PROPERTIES_CANDIDATES = [
     Path(__file__).resolve().parent / "server.properties",
 ]
 
-# Backup/automation timing controls.
+# Backup and automation timing controls.
 BACKUP_INTERVAL_HOURS = 6
 BACKUP_INTERVAL_SECONDS = max(60, int(BACKUP_INTERVAL_HOURS * 3600))
 IDLE_ZERO_PLAYERS_SECONDS = 180
 IDLE_CHECK_INTERVAL_SECONDS = 15
 
-# Shared watcher state (protected by locks below).
+# Shared watcher state (protected by the locks below).
 idle_zero_players_since = None
 idle_lock = threading.Lock()
 backup_periodic_runs = 0
 backup_lock = threading.Lock()
-backup_active_jobs = 0
 backup_last_error = ""
-backup_waiting_for_last_change = False
-backup_waiting_baseline_snapshot = {}
 backup_last_successful_at = None
 session_tracking_initialized = False
 session_tracking_lock = threading.Lock()
@@ -59,15 +55,16 @@ service_status_intent_lock = threading.Lock()
 
 OFF_STATES = {"inactive", "failed"}
 
-# Cache Minecraft runtime probes so rapid UI polling does not spam RCON.
+# Cache Minecraft runtime probes so rapid UI polling does not overwhelm RCON.
 MC_QUERY_INTERVAL_SECONDS = 3
 mc_query_lock = threading.Lock()
 mc_last_query_at = 0.0
 mc_cached_players_online = "unknown"
 mc_cached_tick_rate = "unknown"
 rcon_config_lock = threading.Lock()
-rcon_cached_password = RCON_PASSWORD
+rcon_cached_password = None
 rcon_cached_port = RCON_PORT
+rcon_cached_enabled = False
 rcon_last_config_read_at = 0.0
 
 # Single-file HTML template for the dashboard UI.
@@ -537,8 +534,8 @@ HTML = """
                         Hide RCON noise
                     </label>
                     <input type="hidden" name="sudo_password">
-                    <input id="rcon-command" type="text" name="rcon_command" placeholder="Enter Minecraft server command" {% if service_running_status != "active" %}disabled{% endif %} required>
-                    <button id="rcon-submit" type="submit" {% if service_running_status != "active" %}disabled{% endif %}>Submit</button>
+                    <input id="rcon-command" type="text" name="rcon_command" placeholder="{% if not rcon_enabled %}RCON unavailable (missing rcon.password){% else %}Enter Minecraft server command{% endif %}" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %} required>
+                    <button id="rcon-submit" type="submit" {% if service_running_status != "active" or not rcon_enabled %}disabled{% endif %}>Submit</button>
                 </form>
             </div>
             <pre id="minecraft-log" class="console-box">{{ minecraft_logs_raw }}</pre>
@@ -780,9 +777,6 @@ HTML = """
             }
 
             if (!response.ok || payload.ok === false) {
-                if (!suppressErrors) {
-                    showMessageModal(payload.message || "Action rejected.");
-                }
                 return;
             }
 
@@ -851,11 +845,17 @@ HTML = """
                     serviceDurationPrefix.textContent = "";
                 }
             }
+            const rconEnabled = data.rcon_enabled === true;
             if (data.service_running_status === "active") {
                 if (startBtn) startBtn.disabled = true;
                 if (stopBtn) stopBtn.disabled = false;
-                if (rconInput) rconInput.disabled = false;
-                if (rconSubmit) rconSubmit.disabled = false;
+                if (rconInput) rconInput.disabled = !rconEnabled;
+                if (rconSubmit) rconSubmit.disabled = !rconEnabled;
+                if (rconInput) {
+                    rconInput.placeholder = rconEnabled
+                        ? "Enter Minecraft server command"
+                        : "RCON unavailable (missing rcon.password)";
+                }
             } else {
                 if (startBtn) startBtn.disabled = false;
                 if (stopBtn) stopBtn.disabled = true;
@@ -1007,7 +1007,7 @@ HTML = """
 """
 
 # ----------------------------
-# System / privilege helpers
+# System and privilege helpers
 # ----------------------------
 def get_status():
     """Return the raw systemd state for the Minecraft service."""
@@ -1044,18 +1044,35 @@ def stop_service_systemd():
         time.sleep(0.5)
     return False
 
+def get_sudo_password():
+    """Return sudo password, sourced from rcon.password in server.properties."""
+    password, _, enabled = _refresh_rcon_config()
+    if not enabled or not password:
+        return None
+    return password
+
+
 def run_sudo(cmd):
-    """Run a command with sudo using the configured service password."""
+    """Run a command with sudo using the password sourced from server.properties."""
+    sudo_password = get_sudo_password()
+    if not sudo_password:
+        raise RuntimeError("sudo password unavailable: rcon.password not found in server.properties")
+
     result = subprocess.run(
         ["sudo", "-S"] + cmd,
-        input=f"{SUDO_PASSWORD}\n",
-        capture_output=True, text=True
+        input=f"{sudo_password}\n",
+        capture_output=True,
+        text=True,
     )
     return result
 
+
 def validate_sudo_password(sudo_password):
-    """Validate user-supplied sudo password for privileged dashboard actions."""
-    return (sudo_password or "").strip() == SUDO_PASSWORD
+    """Validate user-supplied password against rcon.password from server.properties."""
+    expected_password = get_sudo_password()
+    if not expected_password:
+        return False
+    return (sudo_password or "").strip() == expected_password
 
 def ensure_session_file():
     """Ensure the session timestamp file exists."""
@@ -1139,7 +1156,7 @@ def get_minecraft_logs_raw():
     return output or "(no logs)"
 
 # ----------------------------
-# Backup status/display helpers
+# Backup status and display helpers
 # ----------------------------
 def get_backups_status():
     """Return whether the backup directory is present and file count."""
@@ -1315,21 +1332,25 @@ def _clean_rcon_output(text):
     cleaned = text or ""
     # Strip ANSI escape sequences.
     cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", cleaned)
-    # Strip Minecraft section-formatting codes.
+    # Strip Minecraft section formatting codes.
     cleaned = re.sub(r"\u00a7.", "", cleaned)
     return cleaned
 
 def _refresh_rcon_config():
-    """Refresh RCON password/port from server.properties when available."""
+    """Refresh RCON password/port from server.properties.
+
+    RCON is considered enabled only when rcon.password is present and non-empty.
+    """
     global rcon_cached_password
     global rcon_cached_port
+    global rcon_cached_enabled
     global rcon_last_config_read_at
 
     now = time.time()
     with rcon_config_lock:
         # Refresh at most once per minute.
         if now - rcon_last_config_read_at < 60:
-            return rcon_cached_password, rcon_cached_port
+            return rcon_cached_password, rcon_cached_port, rcon_cached_enabled
 
         rcon_last_config_read_at = now
         parsed_password = None
@@ -1354,22 +1375,37 @@ def _refresh_rcon_config():
             if kv.get("enable-rcon", "").lower() == "false":
                 continue
 
-            if kv.get("rcon.password"):
-                parsed_password = kv.get("rcon.password")
+            candidate_password = kv.get("rcon.password", "").strip()
+            if not candidate_password:
+                continue
+
+            parsed_password = candidate_password
             if kv.get("rcon.port", "").isdigit():
                 parsed_port = int(kv.get("rcon.port"))
             break
 
         if parsed_password:
             rcon_cached_password = parsed_password
-        if parsed_port:
-            rcon_cached_port = parsed_port
+            rcon_cached_enabled = True
+            if parsed_port:
+                rcon_cached_port = parsed_port
+        else:
+            rcon_cached_password = None
+            rcon_cached_enabled = False
 
-        return rcon_cached_password, rcon_cached_port
+        return rcon_cached_password, rcon_cached_port, rcon_cached_enabled
+
+def is_rcon_enabled():
+    """Return True when RCON credentials are available from server.properties."""
+    _, _, enabled = _refresh_rcon_config()
+    return enabled
+
 
 def _run_mcrcon(command, timeout=4):
     """Run one RCON command against local server (with compatibility fallbacks)."""
-    password, port = _refresh_rcon_config()
+    password, port, enabled = _refresh_rcon_config()
+    if not enabled or not password:
+        raise RuntimeError("RCON is disabled: rcon.password not found in server.properties")
 
     last_result = None
     for bin_path in _candidate_mcrcon_bins():
@@ -1477,7 +1513,7 @@ def _probe_minecraft_runtime_metrics(force=False):
     global mc_cached_players_online
     global mc_cached_tick_rate
 
-    # Fast path: skip probing when service is down.
+    # Fast path: skip probing when the service is down.
     if get_status() != "active":
         with mc_query_lock:
             mc_cached_players_online = "unknown"
@@ -1532,30 +1568,30 @@ def get_tick_rate():
 
 def get_service_status_display(service_status, players_online):
     """Map raw service + start/stop intent into rule-based UI status labels."""
-    # Rule 1: Off when systemd says service is off.
+    # Rule 1: show Off when systemd says the service is off.
     if service_status in ("inactive", "failed"):
         set_service_status_intent(None)
         return "Off"
 
-    # Transitional systemd states keep obvious lifecycle labels.
+    # Transitional systemd states keep clear lifecycle labels.
     if service_status == "activating":
         return "Starting"
     if service_status == "deactivating":
         return "Shutting Down"
 
-    # Active state: apply user-requested rules based on players + trigger intent.
+    # Active state: apply intent rules based on players and transient UI intent.
     if service_status == "active":
         players_is_integer = isinstance(players_online, str) and players_online.isdigit()
         intent = get_service_status_intent()
 
-        # Rule 2: Running when systemd active and players is an integer.
+        # Rule 2: show Running when systemd is active and players is an integer.
         if players_is_integer:
             # Once players become resolvable, startup/shutdown transient intent is done.
             if intent in ("starting", "shutting"):
                 set_service_status_intent(None)
             return "Running"
 
-        # Rule 3 and 4: unknown players + trigger intent.
+        # Rules 3 and 4: handle unknown player count with trigger intent.
         if intent == "shutting":
             return "Shutting Down"
         # Default unknown-on-active and explicit start intent both map to Starting.
@@ -1592,59 +1628,51 @@ def stop_server_automatically():
 
 def run_backup_script():
     """Run backup script and update in-memory backup status."""
-    global backup_active_jobs
     global backup_last_error
     global backup_last_successful_at
 
     with backup_lock:
-        # Track active backup jobs for UI status.
-        backup_active_jobs += 1
         backup_last_error = ""
 
     success = False
     before_snapshot = get_backup_zip_snapshot()
-    try:
-        # Try direct execution first; some setups succeed even if script emits
-        # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
-        direct_result = subprocess.run(
-            [BACKUP_SCRIPT],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        after_direct_snapshot = get_backup_zip_snapshot()
-        direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
+    # Try direct execution first; some setups succeed even if script emits
+    # non-zero due to auxiliary commands (e.g., mcrcon syntax mismatch).
+    direct_result = subprocess.run(
+        [BACKUP_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    after_direct_snapshot = get_backup_zip_snapshot()
+    direct_created_zip = backup_snapshot_changed(before_snapshot, after_direct_snapshot)
 
-        if direct_result.returncode == 0 or direct_created_zip:
-            success = True
+    if direct_result.returncode == 0 or direct_created_zip:
+        success = True
+        with backup_lock:
+            backup_last_successful_at = time.time()
+    else:
+        # Fallback to sudo-backed execution when direct run truly failed.
+        sudo_result = run_sudo([BACKUP_SCRIPT])
+        after_sudo_snapshot = get_backup_zip_snapshot()
+        sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
+        success = sudo_result.returncode == 0 or sudo_created_zip
+        if success:
             with backup_lock:
                 backup_last_successful_at = time.time()
-        else:
-            # Fallback to sudo-backed execution when direct run truly failed.
-            sudo_result = run_sudo([BACKUP_SCRIPT])
-            after_sudo_snapshot = get_backup_zip_snapshot()
-            sudo_created_zip = backup_snapshot_changed(before_snapshot, after_sudo_snapshot)
-            success = sudo_result.returncode == 0 or sudo_created_zip
-            if success:
-                with backup_lock:
-                    backup_last_successful_at = time.time()
 
-            if not success:
-                err = (
-                    (sudo_result.stderr or "")
-                    + "\n"
-                    + (sudo_result.stdout or "")
-                    + "\n"
-                    + (direct_result.stderr or "")
-                    + "\n"
-                    + (direct_result.stdout or "")
-                ).strip()
-                with backup_lock:
-                    backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
-    finally:
-        with backup_lock:
-            backup_active_jobs = max(0, backup_active_jobs - 1)
-
+        if not success:
+            err = (
+                (sudo_result.stderr or "")
+                + "\n"
+                + (sudo_result.stdout or "")
+                + "\n"
+                + (direct_result.stderr or "")
+                + "\n"
+                + (direct_result.stdout or "")
+            ).strip()
+            with backup_lock:
+                backup_last_error = err[:700] if err else "Backup command returned non-zero exit status."
     return success
 
 def format_backup_time(timestamp):
@@ -1725,30 +1753,14 @@ def get_backup_schedule_times(service_status=None):
         "next_backup_time": format_backup_time(next_backup_at),
     }
 
-def get_backup_status(latest_backup_snapshot=None):
-    """Return dashboard backup activity status label and color class."""
-    global backup_waiting_for_last_change
-    global backup_waiting_baseline_snapshot
+def get_backup_status():
+    """Return backup status from backup state file: true=Running, false=Idle."""
+    try:
+        raw = BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        raw = "false"
 
-    if latest_backup_snapshot is None:
-        latest_backup_snapshot = get_backup_zip_snapshot()
-
-    with backup_lock:
-        active = backup_active_jobs > 0
-        waiting = backup_waiting_for_last_change
-        baseline_snapshot = backup_waiting_baseline_snapshot or {}
-
-    if waiting:
-        # Stay in Running state until the "last backup" source value changes.
-        if backup_snapshot_changed(baseline_snapshot, latest_backup_snapshot):
-            with backup_lock:
-                backup_waiting_for_last_change = False
-                backup_waiting_baseline_snapshot = {}
-            waiting = False
-        else:
-            return "Running", "stat-green"
-
-    if active:
+    if raw == "true":
         return "Running", "stat-green"
     return "Idle", "stat-yellow"
 
@@ -1770,8 +1782,7 @@ def collect_dashboard_metrics():
     session_duration = get_session_duration_text(service_status)
     service_status_display = get_service_status_display(service_status, players_online)
     backup_schedule = get_backup_schedule_times(service_status)
-    latest_backup_snapshot = get_backup_zip_snapshot()
-    backup_status, backup_status_class = get_backup_status(latest_backup_snapshot)
+    backup_status, backup_status_class = get_backup_status()
 
     return {
         "service_status": service_status_display,
@@ -1794,6 +1805,7 @@ def collect_dashboard_metrics():
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
         "server_time": get_server_time_text(),
+        "rcon_enabled": is_rcon_enabled(),
     }
 
 def format_countdown(seconds):
@@ -2009,7 +2021,6 @@ def _backup_failed_response(message):
         return jsonify({"ok": False, "error": "backup_failed", "message": message}), 500
     return redirect("/?msg=backup_failed")
 
-#
 # ----------------------------
 # Flask routes
 # ----------------------------
@@ -2050,6 +2061,7 @@ def index():
         ram_usage=data["ram_usage"],
         ram_usage_class=data["ram_usage_class"],
         minecraft_logs_raw=get_minecraft_logs_raw(),
+        rcon_enabled=data["rcon_enabled"],
         alert_message=alert_message,
     )
 
@@ -2062,6 +2074,7 @@ def minecraft_log():
 def minecraft_log_stream():
     """Stream new Minecraft journal lines via SSE."""
     def generate():
+        """Yield new journal lines as Server-Sent Events."""
         proc = None
         try:
             proc = subprocess.Popen(
@@ -2101,15 +2114,14 @@ def minecraft_log_stream():
 @app.route("/metrics")
 def metrics():
     """Return dynamic dashboard metrics as JSON."""
-    # This endpoint is polled by the UI; keep payload compact and explicit.
+    # This endpoint is polled by the UI, so keep the payload compact and explicit.
     return jsonify(collect_dashboard_metrics())
 
 @app.route("/start", methods=["POST"])
 def start():
     """Start Minecraft service and initialize backup session state."""
     set_service_status_intent("starting")
-    # Start via systemd so status/auto-watchers remain aligned to one source.
-    # Start service using systemd as source-of-truth for process lifecycle.
+    # Start through systemd so status and automation watchers use a single source of truth.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
     if not _ensure_session_anchor_for_start_or_fail():
         return _session_write_failed_response()
@@ -2124,9 +2136,7 @@ def stop():
         return _password_rejected_response()
 
     set_service_status_intent("shutting")
-    # Ordered shutdown path:
-    # 1) RCON stop, 2) final backup, 3) systemd stop (inside helper).
-    # Executes ordered shutdown (RCON stop -> backup -> systemd stop).
+    # Ordered shutdown path: systemd stop first, then final backup.
     graceful_stop_minecraft()
     _ensure_session_clear_for_stop_or_fail()
     reset_backup_periodic_runs()
@@ -2135,14 +2145,7 @@ def stop():
 @app.route("/backup", methods=["POST"])
 def backup():
     """Run backup script manually from dashboard."""
-    global backup_waiting_for_last_change
-    global backup_waiting_baseline_snapshot
-
-    with backup_lock:
-        backup_waiting_for_last_change = True
-        backup_waiting_baseline_snapshot = get_backup_zip_snapshot()
-
-    # Manual backup should not shift the periodic schedule anchor.
+    # Manual backup should not shift the periodic backup schedule anchor.
     if not run_backup_script():
         detail = ""
         with backup_lock:
@@ -2162,7 +2165,11 @@ def rcon():
         if _is_ajax_request():
             return jsonify({"ok": False, "message": "Command is required."}), 400
         return redirect("/")
-    # Block command execution when service is not active.
+    if not is_rcon_enabled():
+        if _is_ajax_request():
+            return jsonify({"ok": False, "message": "RCON is disabled: rcon.password not found in server.properties."}), 503
+        return redirect("/")
+    # Block command execution when the service is not active.
     if get_status() != "active":
         if _is_ajax_request():
             return jsonify({"ok": False, "message": "Server is not running."}), 409
@@ -2170,7 +2177,7 @@ def rcon():
     if not validate_sudo_password(sudo_password):
         return _password_rejected_response()
 
-    # Execute through the shared RCON runner so host/port/password fallbacks apply.
+    # Execute through the shared RCON runner using server.properties credentials.
     try:
         result = _run_mcrcon(command, timeout=8)
     except Exception:
