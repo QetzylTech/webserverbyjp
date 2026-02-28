@@ -201,7 +201,42 @@ Restore behavior:
 - pre-restore snapshot creation is required; restore is canceled if snapshot creation fails
 - undo restore is available using the latest pre-restore snapshot
 
-13. TODO
+13. Maintenance page (cleanup)
+
+Maintenance is scope-based and keeps separate rule/schedule/history metadata per scope:
+- `backups`
+- `stale_worlds`
+
+Maintenance data files in `DATA_DIR`:
+- `cleanup.json` (rules/schedules/meta/scopes)
+- `cleanup history.json` (run history)
+- `cleanup_non_normal.txt` (missed-run tracking)
+- `logs/cleanup.log` (maintenance action logs)
+
+Protected actions (sudo password required):
+- open rules edit mode
+- save rules
+- run rule cleanup
+- manual cleanup
+
+If password validation fails, action is rejected with `invalid_password`.
+
+Rule behavior (backups):
+- backup deletion uses AND semantics for enabled gates (age/count/space)
+- count rule is per backup type (`session`, `manual`, `pre_restore`)
+
+Dry-run behavior:
+- dry-run for rule cleanup and manual cleanup returns preview data
+- UI shows a Dry Run Results modal with:
+  - files that would be deleted
+  - reported errors/issues (if present)
+
+History and audit UI:
+- `Last changed by` shows device name if IP mapping exists, otherwise raw IP
+- timestamps are rendered in a human-readable local format
+- `Next run` is shown in the same readable time format
+
+14. TODO
 
 - [ ] Add automatic retention/cleanup for old restored world directories (using `data/old_world.txt` for visibility and safe pruning)
 - [ ] Add UI surfacing for explicit debug-stop auth failures (`Password incorrect`) instead of generic stop failure

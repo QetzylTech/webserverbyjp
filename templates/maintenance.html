@@ -73,7 +73,7 @@
 
             <section id="maintenance-action-pane" class="panel maintenance-panel pane-primary maintenance-right-pane">
                 <input id="maintenance-csrf-token" type="hidden" value="{{ csrf_token }}">
-                <div id="maintenance-bootstrap-data" data-config='{{ maintenance_snapshot.config|tojson|safe }}' data-preview='{{ maintenance_preview|tojson|safe }}' data-non-normal='{{ maintenance_snapshot.non_normal|tojson|safe }}' data-storage='{{ maintenance_snapshot.storage|tojson|safe }}' data-history='{{ maintenance_snapshot.history|tojson|safe }}' data-next-run='{{ maintenance_snapshot.next_run_at|tojson|safe }}' data-scope='{{ maintenance_scope|tojson|safe }}' hidden></div>
+                <div id="maintenance-bootstrap-data" data-config='{{ maintenance_snapshot.config|tojson|safe }}' data-preview='{{ maintenance_preview|tojson|safe }}' data-non-normal='{{ maintenance_snapshot.non_normal|tojson|safe }}' data-storage='{{ maintenance_snapshot.storage|tojson|safe }}' data-history='{{ maintenance_snapshot.history|tojson|safe }}' data-next-run='{{ maintenance_snapshot.next_run_at|tojson|safe }}' data-scope='{{ maintenance_scope|tojson|safe }}' data-device-map='{{ maintenance_device_map|tojson|safe }}' hidden></div>
 
                 <div class="maintenance-pane-head">
                     <div class="maintenance-pane-title-row">
@@ -102,7 +102,7 @@
                     <div id="maintenance-view-manual" class="maintenance-action-view" hidden>
                         <div class="maintenance-card">
                             <div class="maintenance-form">
-                                <p class="maintenance-meta">Delete selected eligible files from the left pane. This action is destructive and cannot be undone.</p>
+                                <p class="maintenance-meta">Delete selected eligible files from the left pane.</p>
                                 <label class="maintenance-check"><input id="manual-dry-run" type="checkbox" checked> Dry run (no files are deleted)</label>
                                 <label id="manual-destructive-confirm-wrap" class="maintenance-check" hidden><input id="manual-destructive-confirm" type="checkbox"> This action is destructive and cannot be undone. Please confirm.</label>
                                 <button id="run-manual-delete-btn" class="btn-start" type="button">Confirm Manual Cleanup</button>
@@ -143,6 +143,20 @@
         <pre id="maintenance-error-details" class="modal-details"></pre>
         <div class="modal-actions">
             <button id="maintenance-error-ok" class="btn-backup" type="button">OK</button>
+        </div>
+    </div>
+</div>
+
+<div id="maintenance-dry-run-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="maintenance-dry-run-title">
+        <h3 id="maintenance-dry-run-title" class="modal-title">Dry Run Results</h3>
+        <p id="maintenance-dry-run-summary" class="modal-text"></p>
+        <h4 class="modal-subtitle">Files That Would Be Deleted</h4>
+        <ul id="maintenance-dry-run-files" class="modal-list"></ul>
+        <h4 class="modal-subtitle">Errors / Issues</h4>
+        <ul id="maintenance-dry-run-issues" class="modal-list"></ul>
+        <div class="modal-actions">
+            <button id="maintenance-dry-run-ok" class="btn-backup" type="button">OK</button>
         </div>
     </div>
 </div>

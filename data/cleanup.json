@@ -49,6 +49,7 @@
       "used_trigger_percent": 80
     },
     "time_based": {
+      "enabled": true,
       "every_n_days": 1,
       "monthly_date": 1,
       "repeat_mode": "does_not_repeat",
@@ -62,7 +63,7 @@
     "backups": {
       "meta": {
         "cooldown_until_unix": 0,
-        "last_changed_at": "2026-02-27T15:55:26+08:00",
+        "last_changed_at": "2026-02-28T02:15:45+08:00",
         "last_changed_by": "192.168.1.202",
         "last_run_at": "",
         "last_run_deleted": 0,
@@ -70,8 +71,8 @@
         "last_run_result": "",
         "last_run_trigger": "",
         "last_space_trigger_armed": true,
-        "rule_version": 2,
-        "schedule_version": 1
+        "rule_version": 8,
+        "schedule_version": 7
       },
       "rules": {
         "age": {
@@ -90,10 +91,10 @@
         },
         "count": {
           "enabled": true,
-          "manual_backups_to_keep": 30,
-          "max_per_category": 30,
-          "prerestore_backups_to_keep": 30,
-          "session_backups_to_keep": 30
+          "manual_backups_to_keep": 5,
+          "max_per_category": 5,
+          "prerestore_backups_to_keep": 3,
+          "session_backups_to_keep": 5
         },
         "enabled": true,
         "guards": {
@@ -110,19 +111,32 @@
           "used_trigger_percent": 80
         },
         "time_based": {
+          "enabled": true,
           "every_n_days": 1,
           "monthly_date": 1,
-          "repeat_mode": "does_not_repeat",
-          "time_of_backup": "03:00",
-          "weekly_day": "Sunday"
+          "repeat_mode": "weekly",
+          "time_of_backup": "18:00",
+          "weekly_day": "Saturday"
         }
       },
-      "schedules": []
+      "schedules": [
+        {
+          "anchor_date": "2026-02-28",
+          "day_of_month": 1,
+          "day_of_week": 5,
+          "enabled": true,
+          "every_n_days": 1,
+          "id": "time-based-rule",
+          "interval": "weekly",
+          "mode": "time",
+          "time": "18:00"
+        }
+      ]
     },
     "stale_worlds": {
       "meta": {
         "cooldown_until_unix": 0,
-        "last_changed_at": "2026-02-27T15:55:26+08:00",
+        "last_changed_at": "2026-02-28T02:16:05+08:00",
         "last_changed_by": "192.168.1.202",
         "last_run_at": "",
         "last_run_deleted": 0,
@@ -130,8 +144,8 @@
         "last_run_result": "",
         "last_run_trigger": "",
         "last_space_trigger_armed": true,
-        "rule_version": 2,
-        "schedule_version": 1
+        "rule_version": 4,
+        "schedule_version": 3
       },
       "rules": {
         "age": {
@@ -150,10 +164,10 @@
         },
         "count": {
           "enabled": true,
-          "manual_backups_to_keep": 30,
-          "max_per_category": 30,
-          "prerestore_backups_to_keep": 30,
-          "session_backups_to_keep": 30
+          "manual_backups_to_keep": 3,
+          "max_per_category": 3,
+          "prerestore_backups_to_keep": 3,
+          "session_backups_to_keep": 3
         },
         "enabled": true,
         "guards": {
@@ -170,14 +184,27 @@
           "used_trigger_percent": 80
         },
         "time_based": {
+          "enabled": true,
           "every_n_days": 1,
           "monthly_date": 1,
-          "repeat_mode": "does_not_repeat",
-          "time_of_backup": "03:00",
-          "weekly_day": "Sunday"
+          "repeat_mode": "weekly",
+          "time_of_backup": "18:10",
+          "weekly_day": "Saturday"
         }
       },
-      "schedules": []
+      "schedules": [
+        {
+          "anchor_date": "2026-02-28",
+          "day_of_month": 1,
+          "day_of_week": 5,
+          "enabled": true,
+          "every_n_days": 1,
+          "id": "time-based-rule",
+          "interval": "weekly",
+          "mode": "time",
+          "time": "18:10"
+        }
+      ]
     }
   }
 }

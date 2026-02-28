@@ -50,40 +50,41 @@ def _cleanup_validate_rules(raw_rules):
     rules["space"]["target_free_percent"] = max(0, min(50, 100 - used_trigger))
     rules["space"]["cooldown_seconds"] = _safe_int(rules["space"].get("cooldown_seconds", 600), 600, minimum=0, maximum=86400)
 
-    rules["age"]["days"] = _safe_int(rules["age"].get("days", 7), 7, minimum=0, maximum=3650)
+    rules["age"]["days"] = _safe_int(rules["age"].get("days", 7), 7, minimum=7, maximum=3650)
     rules["count"]["session_backups_to_keep"] = _safe_int(
         rules["count"].get("session_backups_to_keep", rules["count"].get("max_per_category", 30)),
         30,
-        minimum=0,
+        minimum=3,
         maximum=100000,
     )
     rules["count"]["manual_backups_to_keep"] = _safe_int(
         rules["count"].get("manual_backups_to_keep", rules["count"].get("max_per_category", 30)),
         30,
-        minimum=0,
+        minimum=3,
         maximum=100000,
     )
     rules["count"]["prerestore_backups_to_keep"] = _safe_int(
         rules["count"].get("prerestore_backups_to_keep", rules["count"].get("max_per_category", 30)),
         30,
-        minimum=0,
+        minimum=3,
         maximum=100000,
     )
     rules["count"]["max_per_category"] = max(
         rules["count"]["session_backups_to_keep"],
         rules["count"]["manual_backups_to_keep"],
         rules["count"]["prerestore_backups_to_keep"],
-        _safe_int(rules["count"].get("max_per_category", 30), 30, minimum=0, maximum=100000),
+        _safe_int(rules["count"].get("max_per_category", 30), 30, minimum=3, maximum=100000),
     )
 
     time_based = rules.setdefault("time_based", {})
+    time_based["enabled"] = bool(time_based.get("enabled", True))
     time_based["time_of_backup"] = str(time_based.get("time_of_backup", "03:00")).strip()
     if not re.match(r"^\d{2}:\d{2}$", time_based["time_of_backup"]):
-        return False, "Time of backup must be HH:MM."
+        return False, "Time of cleanup must be HH:MM."
     hour = int(time_based["time_of_backup"][:2])
     minute = int(time_based["time_of_backup"][3:])
     if hour > 23 or minute > 59:
-        return False, "Time of backup is out of range."
+        return False, "Time of cleanup is out of range."
     repeat_mode = str(time_based.get("repeat_mode", "does_not_repeat")).strip().lower()
     valid_repeat = {"does_not_repeat", "daily", "weekly", "monthly", "weekdays", "every_n_days"}
     if repeat_mode not in valid_repeat:

@@ -13,7 +13,7 @@ from app.services.maintenance_basics import (
     _cleanup_safe_used_percent,
     _safe_int,
 )
-from app.services.maintenance_candidates import _cleanup_collect_candidates
+from app.services.maintenance_candidates import _backup_bucket, _cleanup_collect_candidates
 
 _cleanup_run_lock = threading.Lock()
 
@@ -69,7 +69,7 @@ def _add_age_targets(eligible, rules, reasons_map, to_delete):
     age_rule = rules.get("age", {})
     if not age_rule.get("enabled", True):
         return
-    cutoff = time.time() - (_safe_int(age_rule.get("days", 7), 7, minimum=0, maximum=3650) * 86400)
+    cutoff = time.time() - (_safe_int(age_rule.get("days", 7), 7, minimum=7, maximum=3650) * 86400)
     for row in eligible:
         if row["mtime"] <= cutoff:
             to_delete.append(row)
@@ -141,6 +141,93 @@ def _add_space_targets(state, cfg, eligible, rules, reasons_map, to_delete):
     meta["cooldown_until_unix"] = now_unix + cooldown_seconds
 
 
+def _space_rule_gate(state, cfg, rules):
+    """Return whether space-based cleanup gate is open."""
+    space_rule = rules.get("space", {})
+    if not space_rule.get("enabled", True):
+        return True
+
+    used_trigger = _safe_int(space_rule.get("used_trigger_percent", 80), 80, minimum=50, maximum=100)
+    hysteresis = _safe_int(space_rule.get("hysteresis_percent", 5), 5, minimum=1, maximum=30)
+    cooldown_seconds = _safe_int(space_rule.get("cooldown_seconds", 600), 600, minimum=0, maximum=86400)
+    meta = cfg.setdefault("meta", {})
+
+    used_percent, _, _ = _cleanup_safe_used_percent(state["BACKUP_DIR"])
+    armed = bool(meta.get("last_space_trigger_armed", True))
+    now_unix = int(time.time())
+    cooldown_until = _safe_int(meta.get("cooldown_until_unix", 0), 0, minimum=0, maximum=2_147_483_647)
+
+    if used_percent is not None and used_percent <= max(0, used_trigger - hysteresis):
+        armed = True
+    meta["last_space_trigger_armed"] = armed
+
+    should_run = (
+        used_percent is not None
+        and used_percent >= used_trigger
+        and armed
+        and now_unix >= cooldown_until
+    )
+    if should_run:
+        meta["last_space_trigger_armed"] = False
+        meta["cooldown_until_unix"] = now_unix + cooldown_seconds
+    return bool(should_run)
+
+
+def _bucket_keep_limit(bucket, count_rule):
+    """Return keep limit for backup bucket."""
+    fallback = _safe_int(count_rule.get("max_per_category", 30), 30, minimum=3, maximum=100000)
+    if bucket == "session":
+        return _safe_int(count_rule.get("session_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
+    if bucket == "manual":
+        return _safe_int(count_rule.get("manual_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
+    if bucket == "pre_restore":
+        return _safe_int(count_rule.get("prerestore_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
+    return fallback
+
+
+def _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete):
+    """Add backup targets that satisfy all enabled rules."""
+    backup_rows = [row for row in candidates if row["eligible"] and row.get("category") == "backup_zip"]
+    if not backup_rows:
+        return
+
+    age_rule = rules.get("age", {})
+    count_rule = rules.get("count", {})
+    age_enabled = bool(age_rule.get("enabled", True))
+    count_enabled = bool(count_rule.get("enabled", True))
+    space_enabled = bool(rules.get("space", {}).get("enabled", True))
+    space_ok = _space_rule_gate(state, cfg, rules) if space_enabled else True
+
+    cutoff = None
+    if age_enabled:
+        cutoff = time.time() - (_safe_int(age_rule.get("days", 7), 7, minimum=0, maximum=3650) * 86400)
+
+    backup_by_bucket = {"session": [], "manual": [], "pre_restore": [], "auto": [], "other": []}
+    for row in by_category.get("backup_zip", []):
+        bucket = _backup_bucket(row["name"])
+        backup_by_bucket.setdefault(bucket, []).append(row)
+
+    count_allowed = {}
+    for bucket, rows in backup_by_bucket.items():
+        keep_limit = _bucket_keep_limit(bucket, count_rule)
+        for idx, row in enumerate(rows):
+            count_allowed[row["path"]] = idx >= keep_limit
+
+    for row in backup_rows:
+        age_ok = (not age_enabled) or (row["mtime"] <= cutoff)
+        count_ok = (not count_enabled) or bool(count_allowed.get(row["path"], False))
+        all_ok = age_ok and count_ok and space_ok
+        if not all_ok:
+            continue
+        to_delete.append(row)
+        if age_enabled:
+            _mark(reasons_map, row["path"], "age_rule")
+        if count_enabled:
+            _mark(reasons_map, row["path"], "count_rule")
+        if space_enabled:
+            _mark(reasons_map, row["path"], "space_reclaim")
+
+
 def _dedupe_oldest_first(rows):
     """Dedupe oldest first."""
     unique = {}
@@ -210,9 +297,14 @@ def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_cha
             elif row["path"] in selected_paths and not row["eligible"]:
                 _mark(reasons_map, row["path"], "ineligible_selection")
     else:
-        _add_age_targets(eligible, rules, reasons_map, to_delete)
-        _add_count_targets(by_category, rules, reasons_map, to_delete)
-        _add_space_targets(state, cfg, eligible, rules, reasons_map, to_delete)
+        _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete)
+
+        non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
+        if non_backup_eligible:
+            non_backup_by_category = _group_by_category([row for row in candidates if row.get("category") != "backup_zip"])
+            _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
+            _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
+            _add_space_targets(state, cfg, non_backup_eligible, rules, reasons_map, to_delete)
 
     ordered = _dedupe_oldest_first(to_delete)
     eligible_count = len(eligible)

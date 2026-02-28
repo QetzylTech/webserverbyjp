@@ -41,6 +41,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const passwordSubmit = document.getElementById("maintenance-password-submit");
     const passwordCancel = document.getElementById("maintenance-password-cancel");
     const passwordText = document.getElementById("maintenance-password-text");
+    const dryRunModal = document.getElementById("maintenance-dry-run-modal");
+    const dryRunSummary = document.getElementById("maintenance-dry-run-summary");
+    const dryRunFiles = document.getElementById("maintenance-dry-run-files");
+    const dryRunIssues = document.getElementById("maintenance-dry-run-issues");
+    const dryRunOk = document.getElementById("maintenance-dry-run-ok");
+    const acknowledgeButtonHome = runAcknowledgeBtn?.parentElement || null;
 
     const UI_ONLY_MODE = false;
     const SCOPE_LABELS = { backups: "Backups", stale_worlds: "Stale Worlds" };
@@ -54,18 +60,19 @@ document.addEventListener("DOMContentLoaded", () => {
     let rulesEditMode = false;
     let rulesDraft = null;
     const RULE_FIELD_UPDATERS = {
-        "age.days": (draft, value) => { draft.age.days = Math.max(0, Number(value || 0)); },
-        "space.free_space_below_gb": (draft, value) => { draft.space.free_space_below_gb = Math.max(0, Number(value || 0)); },
-        "count.session_backups_to_keep": (draft, value) => { draft.count.session_backups_to_keep = Math.max(0, Number(value || 0)); },
-        "count.manual_backups_to_keep": (draft, value) => { draft.count.manual_backups_to_keep = Math.max(0, Number(value || 0)); },
-        "count.prerestore_backups_to_keep": (draft, value) => { draft.count.prerestore_backups_to_keep = Math.max(0, Number(value || 0)); },
+        "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
+        "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
+        "count.session_backups_to_keep": (draft, value) => { draft.count.session_backups_to_keep = Math.max(3, Number(value || 3)); },
+        "count.manual_backups_to_keep": (draft, value) => { draft.count.manual_backups_to_keep = Math.max(3, Number(value || 3)); },
+        "count.prerestore_backups_to_keep": (draft, value) => { draft.count.prerestore_backups_to_keep = Math.max(3, Number(value || 3)); },
         "count.max_per_category": (draft, value) => {
-            const n = Math.max(0, Number(value || 0));
+            const n = Math.max(3, Number(value || 3));
             draft.count.max_per_category = n;
             draft.count.session_backups_to_keep = n;
             draft.count.manual_backups_to_keep = n;
             draft.count.prerestore_backups_to_keep = n;
         },
+        "time_based.enabled": (draft, value) => { draft.time_based.enabled = !!value; },
         "time_based.time_of_backup": (draft, value) => { draft.time_based.time_of_backup = String(value || "03:00"); },
         "time_based.repeat_mode": (draft, value) => { draft.time_based.repeat_mode = String(value || "does_not_repeat"); },
         "time_based.weekly_day": (draft, value) => { draft.time_based.weekly_day = String(value || "Sunday"); },
@@ -100,6 +107,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let storage = parseDataAttr("storage", {});
     let cleanupHistory = parseDataAttr("history", { runs: [] });
     let nextRunAt = parseDataAttr("nextRun", "-");
+    let deviceMap = parseDataAttr("deviceMap", {});
 
     function showError(message, details) {
         if (!errorModal || !errorText || !errorDetails) return;
@@ -113,6 +121,102 @@ document.addEventListener("DOMContentLoaded", () => {
         errorModal.setAttribute("aria-hidden", "true");
     }
 
+    function closeDryRunModal() {
+        if (!dryRunModal) return;
+        dryRunModal.setAttribute("aria-hidden", "true");
+    }
+
+    function appendModalListItem(listEl, text) {
+        if (!listEl) return;
+        const li = document.createElement("li");
+        li.textContent = text;
+        listEl.appendChild(li);
+    }
+
+    function showDryRunModal(previewPayload, actionKey) {
+        if (!dryRunModal || !dryRunSummary || !dryRunFiles || !dryRunIssues) return;
+        const previewData = (previewPayload && typeof previewPayload === "object") ? previewPayload : {};
+        const items = Array.isArray(previewData.items) ? previewData.items : [];
+        const selectedRows = items.filter((item) => !!item?.selected_for_delete);
+        const errors = Array.isArray(previewData.errors) ? previewData.errors : [];
+        const selectedIneligible = Array.isArray(previewData.selected_ineligible) ? previewData.selected_ineligible : [];
+        const actionLabel = actionKey === "manual-delete" ? "Manual cleanup dry run" : "Rule cleanup dry run";
+        const requested = Number(previewData.requested_delete_count || 0);
+        const capped = Number(previewData.capped_delete_count || 0);
+        dryRunSummary.textContent = `${actionLabel}: ${selectedRows.length} file(s) would be deleted (requested ${requested}, capped ${capped}).`;
+
+        dryRunFiles.innerHTML = "";
+        if (selectedRows.length === 0) {
+            appendModalListItem(dryRunFiles, "No files would be deleted.");
+        } else {
+            selectedRows.forEach((item) => {
+                const reasons = Array.isArray(item?.reasons) && item.reasons.length > 0 ? item.reasons.join(", ") : "no reason";
+                appendModalListItem(dryRunFiles, `${item?.name || item?.path || "unknown"} | ${item?.category || "-"} | ${reasons}`);
+            });
+        }
+
+        dryRunIssues.innerHTML = "";
+        if (errors.length === 0 && selectedIneligible.length === 0) {
+            appendModalListItem(dryRunIssues, "No errors or issues reported.");
+        } else {
+            errors.forEach((entry) => appendModalListItem(dryRunIssues, `Error: ${String(entry)}`));
+            selectedIneligible.forEach((entry) => appendModalListItem(dryRunIssues, `Ineligible selection: ${String(entry)}`));
+        }
+
+        dryRunModal.setAttribute("aria-hidden", "false");
+    }
+
+    function getRuleFieldWarning(target) {
+        if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return "";
+        if (target.disabled || target.validity.valid) return "";
+        const field = target.getAttribute("data-rule-field") || "";
+        if (target.validity.valueMissing) return "Value is required.";
+        if (target.validity.badInput) return "Enter a valid number.";
+        if (target.validity.rangeUnderflow) {
+            if (field === "age.days") return "Minimum is 7 days.";
+            if (field.startsWith("count.")) return "Minimum is 3.";
+            if (field === "space.used_trigger_percent") return "Minimum is 50%.";
+            return "Value is below the minimum.";
+        }
+        if (target.validity.rangeOverflow) {
+            if (field === "space.used_trigger_percent") return "Maximum is 100%.";
+            return "Value is above the maximum.";
+        }
+        if (target.validity.stepMismatch) return "Use a whole number.";
+        if (target.validity.typeMismatch || target.validity.patternMismatch) return "Enter a valid value.";
+        return "Invalid value.";
+    }
+
+    function setRuleFieldWarning(target) {
+        if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+        const row = target.closest(".rule-inline-sentence");
+        if (!row) return;
+        const warning = getRuleFieldWarning(target);
+        let warningEl = row.querySelector(".rule-inline-warning");
+        if (!warningEl) {
+            warningEl = document.createElement("span");
+            warningEl.className = "rule-inline-warning";
+            warningEl.setAttribute("aria-live", "polite");
+            row.appendChild(warningEl);
+        }
+        warningEl.textContent = warning;
+        warningEl.hidden = !warning;
+        target.classList.toggle("rule-input-invalid", !!warning);
+    }
+
+    function hasRuleFieldValidationErrors() {
+        if (!rulesCardList) return false;
+        const fields = rulesCardList.querySelectorAll("input[data-rule-field], select[data-rule-field]");
+        let hasErrors = false;
+        fields.forEach((field) => {
+            setRuleFieldWarning(field);
+            if ((field instanceof HTMLInputElement || field instanceof HTMLSelectElement) && !field.disabled && !field.validity.valid) {
+                hasErrors = true;
+            }
+        });
+        return hasErrors;
+    }
+
     function humanBytes(bytes) {
         const n = Number(bytes || 0);
         if (!Number.isFinite(n)) return "0 B";
@@ -120,6 +224,32 @@ document.addEventListener("DOMContentLoaded", () => {
         if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
         if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
         return `${(n / (1024 * 1024 * 1024)).toFixed(3)} GB`;
+    }
+
+    function formatAuditTimestamp(raw) {
+        const text = String(raw || "").trim();
+        if (!text || text === "-") return "-";
+        const parsed = new Date(text);
+        if (Number.isNaN(parsed.getTime())) return text;
+        return parsed.toLocaleString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+            timeZoneName: "short",
+        });
+    }
+
+    function formatAuditActor(rawActor) {
+        const actor = String(rawActor || "").trim();
+        if (!actor || actor === "-") return "-";
+        const map = (deviceMap && typeof deviceMap === "object") ? deviceMap : {};
+        const deviceName = String(map[actor] || "").trim();
+        if (deviceName) return `${deviceName} (${actor})`;
+        return actor;
     }
 
     function syncMaintenanceOverflowState() {
@@ -231,23 +361,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (staleSummary) staleSummary.textContent = `${staleTotal.count} entries | ${humanBytes(staleTotal.total)}`;
         if (rulesEl) rulesEl.textContent = String(ruleCount);
         if (schedulesEl) schedulesEl.textContent = String(scheduleCount);
-        if (nextRunEl) nextRunEl.textContent = String(nextRunAt || "-");
-    }
-
-    function toTotalGb() {
-        const totalBytes = Number(storage?.total_bytes || 0);
-        if (!Number.isFinite(totalBytes) || totalBytes <= 0) return 0;
-        return totalBytes / (1024 * 1024 * 1024);
-    }
-
-    function deriveFreeSpaceBelowGb(spaceRule) {
-        const explicit = Number(spaceRule?.free_space_below_gb);
-        if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-        const totalGb = toTotalGb();
-        if (totalGb <= 0) return 0;
-        const usedTrigger = Number(spaceRule?.used_trigger_percent ?? 80);
-        const freePercent = Math.max(0, Math.min(100, 100 - usedTrigger));
-        return Number((totalGb * (freePercent / 100)).toFixed(1));
+        if (nextRunEl) nextRunEl.textContent = formatAuditTimestamp(nextRunAt || "-");
     }
 
     function getEffectiveRules() {
@@ -266,9 +380,9 @@ document.addEventListener("DOMContentLoaded", () => {
             space: {
                 used_trigger_percent: Number(rules?.space?.used_trigger_percent ?? 80),
                 cooldown_seconds: Number(rules?.space?.cooldown_seconds ?? 600),
-                free_space_below_gb: deriveFreeSpaceBelowGb(rules?.space || {}),
             },
             time_based: {
+                enabled: Boolean(rules?.time_based?.enabled ?? true),
                 time_of_backup: String(rules?.time_based?.time_of_backup || "03:00"),
                 repeat_mode: String(rules?.time_based?.repeat_mode || "does_not_repeat"),
                 weekly_day: String(rules?.time_based?.weekly_day || "Sunday"),
@@ -301,59 +415,60 @@ document.addEventListener("DOMContentLoaded", () => {
         syncRulesHeaderButtons();
     }
 
-    async function saveRulesEdit() {
-        if (!rulesEditMode || !rulesDraft) return;
-        const nextRules = getEffectiveRules();
-        const totalGb = toTotalGb();
-        const freeGb = Number(nextRules.space.free_space_below_gb ?? 0);
-        const derivedUsedTrigger = totalGb > 0
-            ? Math.max(50, Math.min(100, Math.round(100 - ((Math.max(0, freeGb) / totalGb) * 100))))
-            : Number(config?.rules?.space?.used_trigger_percent ?? 80);
-        const maxCount = Math.max(
-            Number(nextRules.count.session_backups_to_keep ?? 0),
-            Number(nextRules.count.manual_backups_to_keep ?? 0),
-            Number(nextRules.count.prerestore_backups_to_keep ?? 0),
-        );
-        try {
-            const payload = await apiPost("/maintenance/api/save-rules", {
-                scope: currentScope,
-                rules: {
-                    age: {
-                        days: Number(nextRules.age.days ?? 7),
-                    },
-                    count: {
-                        max_per_category: Number(maxCount || 0),
-                        session_backups_to_keep: Number(nextRules.count.session_backups_to_keep ?? 0),
-                        manual_backups_to_keep: Number(nextRules.count.manual_backups_to_keep ?? 0),
-                        prerestore_backups_to_keep: Number(nextRules.count.prerestore_backups_to_keep ?? 0),
-                    },
-                    space: {
-                        used_trigger_percent: Number(derivedUsedTrigger),
-                        cooldown_seconds: Number(nextRules.space.cooldown_seconds ?? 600),
-                        free_space_below_gb: Number(nextRules.space.free_space_below_gb ?? 0),
-                    },
-                    time_based: {
-                        time_of_backup: String(nextRules.time_based.time_of_backup || "03:00"),
-                        repeat_mode: String(nextRules.time_based.repeat_mode || "does_not_repeat"),
-                        weekly_day: String(nextRules.time_based.weekly_day || "Sunday"),
-                        monthly_date: Number(nextRules.time_based.monthly_date ?? 1),
-                        every_n_days: Number(nextRules.time_based.every_n_days ?? 1),
-                    },
-                    caps: {
-                        max_delete_files_absolute: 5,
-                        max_delete_percent_eligible: 10,
-                        max_delete_min_if_non_empty: 1,
-                    },
-                },
-            });
-            config = payload.config || config;
-            preview = payload.preview || preview;
-            renderHistory();
-            renderStats();
-            cancelRulesEdit();
-        } catch (err) {
-            showError(err?.message || "Failed to save rules.", err?.details || err?.error_code);
+    async function saveRulesEdit(sudoPassword = "") {
+        if (!rulesEditMode || !rulesDraft) return false;
+        if (hasRuleFieldValidationErrors()) {
+            showError("Some rule values are invalid.", "Fix the highlighted fields before saving.");
+            const firstInvalid = rulesCardList?.querySelector("input.rule-input-invalid, select.rule-input-invalid");
+            if (firstInvalid && typeof firstInvalid.focus === "function") firstInvalid.focus();
+            return false;
         }
+        const nextRules = getEffectiveRules();
+        const maxCount = Math.max(
+            Number(nextRules.count.session_backups_to_keep ?? 3),
+            Number(nextRules.count.manual_backups_to_keep ?? 3),
+            Number(nextRules.count.prerestore_backups_to_keep ?? 3),
+            3,
+        );
+        const payload = await apiPost("/maintenance/api/save-rules", {
+            scope: currentScope,
+            sudo_password: String(sudoPassword || ""),
+            rules: {
+                age: {
+                    days: Math.max(7, Number(nextRules.age.days ?? 7)),
+                },
+                count: {
+                    max_per_category: Math.max(3, Number(maxCount || 3)),
+                    session_backups_to_keep: Math.max(3, Number(nextRules.count.session_backups_to_keep ?? 3)),
+                    manual_backups_to_keep: Math.max(3, Number(nextRules.count.manual_backups_to_keep ?? 3)),
+                    prerestore_backups_to_keep: Math.max(3, Number(nextRules.count.prerestore_backups_to_keep ?? 3)),
+                },
+                space: {
+                    used_trigger_percent: Math.max(50, Math.min(100, Number(nextRules.space.used_trigger_percent ?? 80))),
+                    cooldown_seconds: Number(nextRules.space.cooldown_seconds ?? 600),
+                    free_space_below_gb: 0,
+                },
+                time_based: {
+                    enabled: !!nextRules.time_based.enabled,
+                    time_of_backup: String(nextRules.time_based.time_of_backup || "03:00"),
+                    repeat_mode: String(nextRules.time_based.repeat_mode || "does_not_repeat"),
+                    weekly_day: String(nextRules.time_based.weekly_day || "Sunday"),
+                    monthly_date: Number(nextRules.time_based.monthly_date ?? 1),
+                    every_n_days: Number(nextRules.time_based.every_n_days ?? 1),
+                },
+                caps: {
+                    max_delete_files_absolute: 5,
+                    max_delete_percent_eligible: 10,
+                    max_delete_min_if_non_empty: 1,
+                },
+            },
+        });
+        config = payload.config || config;
+        preview = payload.preview || preview;
+        renderHistory();
+        renderStats();
+        cancelRulesEdit();
+        return true;
     }
 
     // Render the rules pane from current scope + edit state.
@@ -363,11 +478,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const effective = getEffectiveRules();
         const inputDisabled = rulesEditMode ? "" : "disabled";
         const ageDays = Number(effective?.age?.days ?? 7);
-        const freeGb = Number(effective?.space?.free_space_below_gb ?? 0);
+        const usedTrigger = Number(effective?.space?.used_trigger_percent ?? 80);
         const sessionKeep = Number(effective?.count?.session_backups_to_keep ?? 30);
         const manualKeep = Number(effective?.count?.manual_backups_to_keep ?? 30);
         const prerestoreKeep = Number(effective?.count?.prerestore_backups_to_keep ?? 30);
         const maxPerCategory = Number(effective?.count?.max_per_category ?? Math.max(sessionKeep, manualKeep, prerestoreKeep));
+        const timeEnabled = !!effective?.time_based?.enabled;
         const backupTime = String(effective?.time_based?.time_of_backup || "03:00");
         const repeatMode = String(effective?.time_based?.repeat_mode || "does_not_repeat");
         const weeklyDay = String(effective?.time_based?.weekly_day || "Sunday");
@@ -382,7 +498,7 @@ document.addEventListener("DOMContentLoaded", () => {
             weekdays: "Every weekday (Monday to Friday)",
             every_n_days: `Every ${everyNDays} day`,
         };
-        const repeatLabel = repeatLabelMap[repeatMode] || "Does not repeat";
+        const repeatLabel = !timeEnabled ? "Disabled" : (repeatLabelMap[repeatMode] || "Does not repeat");
 
         const item = document.createElement("article");
         item.className = "maintenance-card";
@@ -390,9 +506,9 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="rule-section">
                 <h3 class="maintenance-card-title">Age Rule</h3>
                 <p class="rule-inline-sentence">
-                    <span class="rule-inline-label">Minimum age to start deleting</span>
+                    <span class="rule-inline-label">Minimum age to start deleting (Days)</span>
                     ${rulesEditMode
-                        ? `<input class="ui-text-input" type="number" min="0" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
+                        ? `<input class="ui-text-input" type="number" min="7" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
                         : `<span class="rule-inline-value">${ageDays}</span>`
                     }
                 </p>
@@ -400,10 +516,10 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="rule-section">
                 <h3 class="maintenance-card-title">Space Rule</h3>
                 <p class="rule-inline-sentence">
-                    <span class="rule-inline-label">Max disk usage before deleting starts (Gb):</span>
+                    <span class="rule-inline-label">Max disk usage before deleting starts (% used)</span>
                     ${rulesEditMode
-                        ? `<input class="ui-text-input" type="number" min="0" step="1" value="${freeGb}" data-rule-field="space.free_space_below_gb" ${inputDisabled}>`
-                        : `<span class="rule-inline-value">${freeGb}</span>`
+                        ? `<input class="ui-text-input" type="number" min="50" max="100" step="1" value="${usedTrigger}" data-rule-field="space.used_trigger_percent" ${inputDisabled}>`
+                        : `<span class="rule-inline-value">${usedTrigger}%</span>`
                     }
                 </p>
             </div>
@@ -412,32 +528,32 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${isStaleScope
                     ? `
                         <p class="rule-inline-sentence">
-                            <span class="rule-inline-label">Stale world entries to keep:</span>
+                            <span class="rule-inline-label">Newest stale world entries to keep</span>
                             ${rulesEditMode
-                                ? `<input class="ui-text-input" type="number" min="0" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
+                                ? `<input class="ui-text-input" type="number" min="3" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
                                 : `<span class="rule-inline-value">${maxPerCategory}</span>`
                             }
                         </p>
                     `
                     : `
                         <p class="rule-inline-sentence">
-                            <span class="rule-inline-label">Session backups to keep:</span>
+                            <span class="rule-inline-label">Newest Session backups to keep</span>
                             ${rulesEditMode
-                                ? `<input class="ui-text-input" type="number" min="0" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
+                                ? `<input class="ui-text-input" type="number" min="3" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
                                 : `<span class="rule-inline-value">${sessionKeep}</span>`
                             }
                         </p>
                         <p class="rule-inline-sentence">
-                            <span class="rule-inline-label">Manual Backups to keep:</span>
+                            <span class="rule-inline-label">Newest Manual backups to keep</span>
                             ${rulesEditMode
-                                ? `<input class="ui-text-input" type="number" min="0" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
+                                ? `<input class="ui-text-input" type="number" min="3" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
                                 : `<span class="rule-inline-value">${manualKeep}</span>`
                             }
                         </p>
                         <p class="rule-inline-sentence">
-                            <span class="rule-inline-label">Prerestore Backups to keep:</span>
+                            <span class="rule-inline-label">Newest Prerestore backups to keep</span>
                             ${rulesEditMode
-                                ? `<input class="ui-text-input" type="number" min="0" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
+                                ? `<input class="ui-text-input" type="number" min="3" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
                                 : `<span class="rule-inline-value">${prerestoreKeep}</span>`
                             }
                         </p>
@@ -447,17 +563,24 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="rule-section">
                 <h3 class="maintenance-card-title">Time Based Rule</h3>
                 <p class="rule-inline-sentence">
-                    <span class="rule-inline-label">${isStaleScope ? "Time of cleanup:" : "Time of backup:"}</span>
+                    <span class="rule-inline-label">Enable time based cleanup</span>
                     ${rulesEditMode
-                        ? `<input class="ui-text-input rule-inline-control" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${inputDisabled}>`
+                        ? `<input class="rule-inline-control" type="checkbox" data-rule-field="time_based.enabled" ${timeEnabled ? "checked" : ""}>`
+                        : `<span class="rule-inline-value rule-inline-value-wide">${timeEnabled ? "Enabled" : "Disabled"}</span>`
+                    }
+                </p>
+                <p class="rule-inline-sentence">
+                    <span class="rule-inline-label">Time of cleanup</span>
+                    ${rulesEditMode
+                        ? `<input class="ui-text-input rule-inline-control" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${!timeEnabled ? "disabled" : inputDisabled}>`
                         : `<span class="rule-inline-value rule-inline-value-wide">${backupTime}</span>`
                     }
                 </p>
                 <p class="rule-inline-sentence">
-                    <span class="rule-inline-label">Repeat:</span>
+                    <span class="rule-inline-label">Repeat</span>
                     ${rulesEditMode
                         ? `
-                            <select class="rule-inline-control" data-rule-field="time_based.repeat_mode" ${inputDisabled}>
+                            <select class="rule-inline-control" data-rule-field="time_based.repeat_mode" ${!timeEnabled ? "disabled" : inputDisabled}>
                                 <option value="does_not_repeat"${repeatMode === "does_not_repeat" ? " selected" : ""}>Does not repeat</option>
                                 <option value="daily"${repeatMode === "daily" ? " selected" : ""}>Daily</option>
                                 <option value="weekly"${repeatMode === "weekly" ? " selected" : ""}>Weekly on &lt;day&gt;</option>
@@ -469,7 +592,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         : `<span class="rule-inline-value rule-inline-value-wide">${repeatLabel}</span>`
                     }
                 </p>
-                ${rulesEditMode && repeatMode === "weekly"
+                ${rulesEditMode && timeEnabled && repeatMode === "weekly"
                     ? `
                         <p class="rule-inline-sentence">
                             <span class="rule-inline-label">Day:</span>
@@ -486,7 +609,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     `
                     : ""
                 }
-                ${rulesEditMode && repeatMode === "monthly"
+                ${rulesEditMode && timeEnabled && repeatMode === "monthly"
                     ? `
                         <p class="rule-inline-sentence">
                             <span class="rule-inline-label">Date (1-31):</span>
@@ -495,7 +618,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     `
                     : ""
                 }
-                ${rulesEditMode && repeatMode === "every_n_days"
+                ${rulesEditMode && timeEnabled && repeatMode === "every_n_days"
                     ? `
                         <p class="rule-inline-sentence">
                             <span class="rule-inline-label">Every N day(s):</span>
@@ -577,7 +700,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const ackBtn = runAcknowledgeBtn;
 
         if (lastRun) {
-            const runAt = meta.last_run_at || "-";
+            const runAt = formatAuditTimestamp(meta.last_run_at || "-");
             const trigger = meta.last_run_trigger || "-";
             const result = meta.last_run_result || "-";
             lastRun.textContent = `${runAt} | ${trigger} | ${result}`;
@@ -585,12 +708,15 @@ document.addEventListener("DOMContentLoaded", () => {
         if (ruleVersion) ruleVersion.textContent = String(meta.rule_version ?? "-");
         if (scheduleVersion) scheduleVersion.textContent = String(meta.schedule_version ?? "-");
         if (lastChangedBy) {
-            const by = meta.last_changed_by || "-";
-            const at = meta.last_changed_at || "-";
+            const by = formatAuditActor(meta.last_changed_by || "-");
+            const at = formatAuditTimestamp(meta.last_changed_at || "-");
             lastChangedBy.textContent = `${by} @ ${at}`;
         }
         if (missedRunsCount) missedRunsCount.textContent = String(missedRuns.length);
-        if (ackBtn) ackBtn.disabled = missedRuns.length === 0;
+        if (ackBtn) {
+            ackBtn.disabled = missedRuns.length === 0;
+            ackBtn.hidden = missedRuns.length === 0;
+        }
 
         if (historyCardList) {
             historyCardList.innerHTML = "";
@@ -614,7 +740,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     const dryRun = !!entry?.dry_run;
                     item.innerHTML = `
                         <h3 class="maintenance-card-title">Run #${idx + 1}</h3>
-                        <p class="maintenance-card-meta">${at} | ${trigger} | ${result}</p>
+                        <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${trigger} | ${result}</p>
                         <p class="maintenance-card-meta">${dryRun ? "Dry run" : "Apply"} | Deleted: ${deleted}</p>
                     `;
                     historyCardList.appendChild(item);
@@ -626,6 +752,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 empty.className = "maintenance-card";
                 empty.innerHTML = `<h3 class="maintenance-card-title">Missed Runs</h3><p class="maintenance-card-meta">No missed runs.</p>`;
                 historyCardList.appendChild(empty);
+                if (ackBtn && acknowledgeButtonHome && ackBtn.parentElement !== acknowledgeButtonHome) {
+                    acknowledgeButtonHome.appendChild(ackBtn);
+                }
             } else {
                 missedRuns.forEach((entry, idx) => {
                     const at = typeof entry === "string" ? entry : (entry?.at || entry?.run_at || "-");
@@ -634,8 +763,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     item.className = "maintenance-card";
                     item.innerHTML = `
                         <h3 class="maintenance-card-title">Missed Run #${idx + 1}</h3>
-                        <p class="maintenance-card-meta">${at} | ${reason}</p>
+                        <p class="maintenance-card-meta">${formatAuditTimestamp(at)} | ${reason}</p>
                     `;
+                    if (idx === 0 && ackBtn) {
+                        item.appendChild(ackBtn);
+                    }
                     historyCardList.appendChild(item);
                 });
             }
@@ -774,6 +906,20 @@ document.addEventListener("DOMContentLoaded", () => {
             showError("Password required.", "Enter sudo password to continue.");
             return null;
         }
+        if (pendingProtectedAction === "open-rules-edit") {
+            await apiPost("/maintenance/api/confirm-password", {
+                scope: currentScope,
+                action: "open_rules_edit",
+                sudo_password: sudoPassword,
+            });
+            beginRulesEdit();
+            return { skipRefresh: true };
+        }
+        if (pendingProtectedAction === "save-rules") {
+            const saved = await saveRulesEdit(sudoPassword);
+            if (!saved) return null;
+            return { skipRefresh: true };
+        }
         if (pendingProtectedAction === "run-rules") {
             return await apiPost("/maintenance/api/run-rules", {
                 scope: currentScope,
@@ -873,6 +1019,7 @@ document.addEventListener("DOMContentLoaded", () => {
         nonNormal = payload.non_normal || nonNormal;
         storage = payload.storage || storage;
         cleanupHistory = payload.history || cleanupHistory;
+        deviceMap = payload.device_map || deviceMap;
         nextRunAt = payload.next_run_at || "-";
         syncScopeButtons();
         renderSummaryPanels();
@@ -916,6 +1063,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     passwordSubmit?.addEventListener("click", async () => {
         try {
+            const actionKey = pendingProtectedAction;
             const payload = await submitProtectedAction();
             if (!payload) return;
             const preservePreview = !!payload?.dry_run && !!payload?.preview && Array.isArray(payload.preview.items);
@@ -923,10 +1071,20 @@ document.addEventListener("DOMContentLoaded", () => {
                 preview = payload.preview;
             }
             closePasswordModal();
-            await refreshState({ preservePreview });
+            if (!payload?.skipRefresh) {
+                await refreshState({ preservePreview });
+            }
+            if (payload?.dry_run && payload?.preview) {
+                showDryRunModal(payload.preview, actionKey);
+            }
         } catch (err) {
             showError(err?.message || "Cleanup action failed.", err?.details || err?.error_code);
         }
+    });
+
+    dryRunOk?.addEventListener("click", closeDryRunModal);
+    dryRunModal?.addEventListener("click", (event) => {
+        if (event.target === dryRunModal) closeDryRunModal();
     });
 
     runAcknowledgeBtn?.addEventListener("click", async () => {
@@ -946,12 +1104,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function onRuleFieldChanged(target) {
         if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+        setRuleFieldWarning(target);
         const field = target.getAttribute("data-rule-field");
         if (!field || !rulesEditMode || !rulesDraft) return;
 
         const applyUpdate = RULE_FIELD_UPDATERS[field];
         if (!applyUpdate) return;
-        applyUpdate(rulesDraft, target.value);
+        const nextValue = (target instanceof HTMLInputElement && target.type === "checkbox") ? target.checked : target.value;
+        applyUpdate(rulesDraft, nextValue);
 
         if (field.startsWith("time_based.")) {
             renderRuleCards();
@@ -1007,10 +1167,17 @@ document.addEventListener("DOMContentLoaded", () => {
             cancelRulesEdit();
             return;
         }
-        beginRulesEdit();
+        openPasswordModal("open-rules-edit", "Enter sudo password to edit cleanup rules.");
     });
     rulesSaveBtn?.addEventListener("click", async () => {
-        await saveRulesEdit();
+        if (!rulesEditMode) return;
+        if (hasRuleFieldValidationErrors()) {
+            showError("Some rule values are invalid.", "Fix the highlighted fields before saving.");
+            const firstInvalid = rulesCardList?.querySelector("input.rule-input-invalid, select.rule-input-invalid");
+            if (firstInvalid && typeof firstInvalid.focus === "function") firstInvalid.focus();
+            return;
+        }
+        openPasswordModal("save-rules", "Enter sudo password to save cleanup rules.");
     });
     const missedRuns = getMissedRuns();
     setActionView(missedRuns.length > 0 ? "history" : "rules");

@@ -112,19 +112,22 @@ body {
   color: #b91c1c;
 }
 
-.maintenance-check {
+.maintenance-form label.maintenance-check {
   display: flex;
+  flex-direction: row;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 8px;
   font-weight: 600;
   width: 100%;
+  text-align: left;
 }
 
-.maintenance-check[hidden] {
+.maintenance-form label.maintenance-check[hidden] {
   display: none !important;
 }
 
-.maintenance-check input[type="checkbox"] {
+.maintenance-form label.maintenance-check input[type="checkbox"] {
   margin-top: 2px;
   flex: 0 0 auto;
 }
@@ -407,6 +410,19 @@ body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
   width: var(--rule-label-width);
 }
 
+.rule-inline-warning {
+  grid-column: 2;
+  justify-self: start;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: #b91c1c;
+  margin-top: 2px;
+}
+
+.rule-input-invalid {
+  outline: 1px solid #b91c1c !important;
+}
+
 .rule-section .rule-inline-sentence + .rule-inline-sentence {
   margin-top: 4px;
 }
@@ -536,6 +552,22 @@ body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
 
 .modal-text {
   margin: 0 0 8px;
+}
+
+.modal-subtitle {
+  margin: 10px 0 6px;
+  font-size: 0.88rem;
+}
+
+.modal-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.86rem;
+}
+
+.modal-list li {
+  margin: 2px 0;
+  line-height: 1.35;
 }
 
 .modal-details {
@@ -672,6 +704,10 @@ html.theme-dark .rule-inline-value-wide {
   color: #e6edf3;
 }
 
+html.theme-dark .rule-inline-warning {
+  color: #fca5a5;
+}
+
 html.theme-dark .maintenance-action-view input[type="number"].ui-text-input,
 html.theme-dark .maintenance-action-view input[type="number"].ui-text-input:disabled,
 html.theme-dark #rules-card-list .rule-inline-sentence .ui-text-input,
@@ -693,6 +729,10 @@ html.theme-dark #rules-card-list .rule-inline-sentence select.rule-inline-contro
 html.theme-dark .modal-card {
   background: #161b22;
   color: #e6edf3;
+}
+
+html.theme-dark .modal-list {
+  color: #c9d1d9;
 }
 
 html.theme-dark .modal-details {

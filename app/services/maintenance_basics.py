@@ -117,6 +117,7 @@ def _cleanup_default_config():
                 "free_space_below_gb": 0,
             },
             "time_based": {
+                "enabled": True,
                 "time_of_backup": "03:00",
                 "repeat_mode": "does_not_repeat",
                 "weekly_day": "Sunday",
@@ -228,21 +229,27 @@ def _cleanup_migrate_config_dict(state, loaded, default_cfg):
 
     rules = cfg.setdefault("rules", {})
     count = rules.setdefault("count", {})
-    max_per = _safe_int(count.get("max_per_category", 30), 30, minimum=0, maximum=100000)
-    count["session_backups_to_keep"] = _safe_int(count.get("session_backups_to_keep", max_per), max_per, minimum=0, maximum=100000)
-    count["manual_backups_to_keep"] = _safe_int(count.get("manual_backups_to_keep", max_per), max_per, minimum=0, maximum=100000)
-    count["prerestore_backups_to_keep"] = _safe_int(count.get("prerestore_backups_to_keep", max_per), max_per, minimum=0, maximum=100000)
+    max_per = _safe_int(count.get("max_per_category", 30), 30, minimum=3, maximum=100000)
+    count["session_backups_to_keep"] = _safe_int(count.get("session_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
+    count["manual_backups_to_keep"] = _safe_int(count.get("manual_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
+    count["prerestore_backups_to_keep"] = _safe_int(count.get("prerestore_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
     count["max_per_category"] = max(
-        _safe_int(count.get("max_per_category", max_per), max_per, minimum=0, maximum=100000),
+        _safe_int(count.get("max_per_category", max_per), max_per, minimum=3, maximum=100000),
         count["session_backups_to_keep"],
         count["manual_backups_to_keep"],
         count["prerestore_backups_to_keep"],
     )
 
     space = rules.setdefault("space", {})
+    space["used_trigger_percent"] = _safe_int(space.get("used_trigger_percent", 80), 80, minimum=50, maximum=100)
+    space["target_free_percent"] = max(0, min(50, 100 - space["used_trigger_percent"]))
     space["free_space_below_gb"] = _safe_int(space.get("free_space_below_gb", 0), 0, minimum=0, maximum=1_000_000)
 
+    age = rules.setdefault("age", {})
+    age["days"] = _safe_int(age.get("days", 7), 7, minimum=7, maximum=3650)
+
     time_based = rules.setdefault("time_based", {})
+    time_based["enabled"] = bool(time_based.get("enabled", True))
     time_based["time_of_backup"] = str(time_based.get("time_of_backup", "03:00"))
     time_based["repeat_mode"] = str(time_based.get("repeat_mode", "does_not_repeat")).strip().lower()
     if time_based["repeat_mode"] not in {"does_not_repeat", "daily", "weekly", "monthly", "weekdays", "every_n_days"}:
