@@ -78,16 +78,12 @@ HTML = """
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
 <style>
     :root {
-        --bg: #f4f6f8;
         --surface: #ffffff;
         --border: #d8dee6;
         --text: #1f2a37;
         --muted: #5a6878;
         --accent: #1e40af;
         --accent-hover: #1b3a9a;
-        --ok: #166534;
-        --warn: #92400e;
-        --console-bg: #0b1220;
         --console-border: #1f2d45;
         --console-text: #d2e4ff;
     }
@@ -406,6 +402,16 @@ HTML = """
         background: #334155;
     }
 
+    @media (max-width: 1100px) and (min-width: 901px) {
+        .stats-groups {
+            grid-template-columns: repeat(2, minmax(260px, 1fr));
+        }
+
+        .stats-groups > .stats-group:nth-child(3) {
+            grid-column: 1 / -1;
+        }
+    }
+
     @media (max-width: 900px) {
         html, body {
             height: auto;
@@ -437,14 +443,12 @@ HTML = """
         }
 
         .logs {
-            display: block;
             flex: 0 0 auto;
             overflow: visible;
         }
 
         .panel {
             height: auto;
-            min-height: 0;
         }
 
         .panel-header {
@@ -458,7 +462,6 @@ HTML = """
 
         .console-box {
             min-height: calc(80 * 1.45em + 28px);
-            max-height: none;
             flex: 0 0 auto;
         }
     }
@@ -777,6 +780,10 @@ HTML = """
             }
 
             if (!response.ok || payload.ok === false) {
+                if (!suppressErrors) {
+                    const message = (payload && payload.message) ? payload.message : "Action rejected.";
+                    showMessageModal(message);
+                }
                 return;
             }
 
@@ -1010,7 +1017,7 @@ HTML = """
 # System and privilege helpers
 # ----------------------------
 def get_status():
-    """Return the raw systemd state for the Minecraft service."""
+    # Return the raw systemd state for the Minecraft service.
     result = subprocess.run(
         ["systemctl", "is-active", SERVICE],
         capture_output=True, text=True
@@ -1018,18 +1025,18 @@ def get_status():
     return result.stdout.strip()
 
 def set_service_status_intent(intent):
-    """Set transient UI status intent: 'starting', 'shutting', or None."""
+    # Set transient UI status intent: 'starting', 'shutting', or None.
     global service_status_intent
     with service_status_intent_lock:
         service_status_intent = intent
 
 def get_service_status_intent():
-    """Read transient UI status intent."""
+    # Read transient UI status intent.
     with service_status_intent_lock:
         return service_status_intent
 
 def stop_service_systemd():
-    """Attempt to stop the service and verify it is no longer active."""
+    # Attempt to stop the service and verify it is no longer active.
     # Use only configured sudo-backed command to avoid interactive PolicyKit prompts.
     try:
         run_sudo(["systemctl", "stop", SERVICE])
@@ -1045,7 +1052,7 @@ def stop_service_systemd():
     return False
 
 def get_sudo_password():
-    """Return sudo password, sourced from rcon.password in server.properties."""
+    # Return sudo password, sourced from rcon.password in server.properties.
     password, _, enabled = _refresh_rcon_config()
     if not enabled or not password:
         return None
@@ -1053,7 +1060,7 @@ def get_sudo_password():
 
 
 def run_sudo(cmd):
-    """Run a command with sudo using the password sourced from server.properties."""
+    # Run a command with sudo using the password sourced from server.properties.
     sudo_password = get_sudo_password()
     if not sudo_password:
         raise RuntimeError("sudo password unavailable: rcon.password not found in server.properties")
@@ -1068,14 +1075,14 @@ def run_sudo(cmd):
 
 
 def validate_sudo_password(sudo_password):
-    """Validate user-supplied password against rcon.password from server.properties."""
+    # Validate user-supplied password against rcon.password from server.properties.
     expected_password = get_sudo_password()
     if not expected_password:
         return False
     return (sudo_password or "").strip() == expected_password
 
 def ensure_session_file():
-    """Ensure the session timestamp file exists."""
+    # Ensure the session timestamp file exists.
     try:
         SESSION_FILE.touch(exist_ok=True)
         return True
@@ -1083,7 +1090,7 @@ def ensure_session_file():
         return False
 
 def read_session_start_time():
-    """Read session start UNIX timestamp from session file, or None."""
+    # Read session start UNIX timestamp from session file, or None.
     if not ensure_session_file():
         return None
     try:
@@ -1104,7 +1111,7 @@ def read_session_start_time():
     return ts
 
 def write_session_start_time(timestamp=None):
-    """Persist session start UNIX timestamp to session file."""
+    # Persist session start UNIX timestamp to session file.
     if not ensure_session_file():
         return None
     ts = time.time() if timestamp is None else float(timestamp)
@@ -1115,7 +1122,7 @@ def write_session_start_time(timestamp=None):
     return ts
 
 def clear_session_start_time():
-    """Clear persisted session start timestamp."""
+    # Clear persisted session start timestamp.
     if not ensure_session_file():
         return False
     try:
@@ -1125,7 +1132,7 @@ def clear_session_start_time():
     return True
 
 def get_session_start_time(service_status=None):
-    """Return session start time from session.txt when service is not off."""
+    # Return session start time from session.txt when service is not off.
     if service_status is None:
         service_status = get_status()
 
@@ -1134,7 +1141,7 @@ def get_session_start_time(service_status=None):
     return read_session_start_time()
 
 def get_session_duration_text(service_status=None):
-    """Return elapsed session duration based strictly on session.txt UNIX time."""
+    # Return elapsed session duration based strictly on session.txt UNIX time.
     start_time = read_session_start_time()
     if start_time is None:
         return "--"
@@ -1146,7 +1153,7 @@ def get_session_duration_text(service_status=None):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 def get_minecraft_logs_raw():
-    """Return raw recent journal lines for client-side filtering/display."""
+    # Return raw recent journal lines for client-side filtering/display.
     result = subprocess.run(
         ["journalctl", "-u", SERVICE, "-n", "500", "--no-pager"],
         capture_output=True,
@@ -1159,19 +1166,19 @@ def get_minecraft_logs_raw():
 # Backup status and display helpers
 # ----------------------------
 def get_backups_status():
-    """Return whether the backup directory is present and file count."""
+    # Return whether the backup directory is present and file count.
     if not BACKUP_DIR.exists() or not BACKUP_DIR.is_dir():
         return "missing"
     zip_count = sum(1 for _ in BACKUP_DIR.glob("*.zip"))
     return f"ready ({zip_count} zip files)"
 
 def _read_proc_stat():
-    """Read CPU stat lines from /proc/stat."""
+    # Read CPU stat lines from /proc/stat.
     with open("/proc/stat", "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.startswith("cpu")]
 
 def _parse_cpu_times(line):
-    """Parse total/idle jiffies from one /proc/stat CPU line."""
+    # Parse total/idle jiffies from one /proc/stat CPU line.
     parts = line.split()
     values = [int(v) for v in parts[1:]]
     idle = values[3] + (values[4] if len(values) > 4 else 0)
@@ -1179,7 +1186,7 @@ def _parse_cpu_times(line):
     return total, idle
 
 def get_cpu_usage_per_core():
-    """Compute per-core CPU usage by sampling /proc/stat twice."""
+    # Compute per-core CPU usage by sampling /proc/stat twice.
     first = _read_proc_stat()
     time.sleep(0.15)
     second = _read_proc_stat()
@@ -1198,7 +1205,7 @@ def get_cpu_usage_per_core():
     return usages
 
 def _class_from_percent(value):
-    """Map percentage to severity color class for the dashboard."""
+    # Map percentage to severity color class for the dashboard.
     if value < 60:
         return "stat-green"
     if value < 75:
@@ -1208,7 +1215,7 @@ def _class_from_percent(value):
     return "stat-red"
 
 def _extract_percent(usage_text):
-    """Extract percent value from strings like '12 / 100 (12.0%)'."""
+    # Extract percent value from strings like '12 / 100 (12.0%)'.
     match = re.search(r"\(([\d.]+)%\)", usage_text or "")
     if not match:
         return None
@@ -1217,8 +1224,15 @@ def _extract_percent(usage_text):
     except ValueError:
         return None
 
+def _usage_class_from_text(usage_text):
+    # Color class for usage strings that include a '(NN.N%)' token.
+    percent = _extract_percent(usage_text)
+    if percent is None:
+        return "stat-red"
+    return _class_from_percent(percent)
+
 def get_cpu_per_core_items(cpu_per_core):
-    """Return per-core values with independent color classes."""
+    # Return per-core values with independent color classes.
     # Each core is rendered independently so one hot core does not hide others.
     items = []
     for i, raw in enumerate(cpu_per_core):
@@ -1231,25 +1245,19 @@ def get_cpu_per_core_items(cpu_per_core):
     return items
 
 def get_ram_usage_class(ram_usage):
-    """Color class based on RAM utilization percentage."""
-    percent = _extract_percent(ram_usage)
-    if percent is None:
-        return "stat-red"
-    return _class_from_percent(percent)
+    # Color class based on RAM utilization percentage.
+    return _usage_class_from_text(ram_usage)
 
 def get_storage_usage_class(storage_usage):
-    """Color class based on root filesystem utilization percentage."""
-    percent = _extract_percent(storage_usage)
-    if percent is None:
-        return "stat-red"
-    return _class_from_percent(percent)
+    # Color class based on root filesystem utilization percentage.
+    return _usage_class_from_text(storage_usage)
 
 def get_cpu_frequency_class(cpu_frequency):
-    """Color class for CPU frequency readout."""
+    # Color class for CPU frequency readout.
     return "stat-red" if cpu_frequency == "unknown" else "stat-green"
 
 def get_ram_usage():
-    """Return RAM usage string based on /proc/meminfo."""
+    # Return RAM usage string based on /proc/meminfo.
     mem_total_kb = 0
     mem_available_kb = 0
     with open("/proc/meminfo", "r", encoding="utf-8") as f:
@@ -1269,7 +1277,7 @@ def get_ram_usage():
     return f"{used_gb:.2f} / {total_gb:.2f} GB ({percent:.1f}%)"
 
 def get_cpu_frequency():
-    """Return average current CPU frequency across cores."""
+    # Return average current CPU frequency across cores.
     freq_paths = sorted(Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq"))
     freqs_khz = []
     for path in freq_paths:
@@ -1298,7 +1306,7 @@ def get_cpu_frequency():
     return "unknown"
 
 def get_storage_usage():
-    """Return root filesystem usage from df -h."""
+    # Return root filesystem usage from df -h.
     result = subprocess.run(["df", "-h", "/"], capture_output=True, text=True)
     if result.returncode != 0:
         return "unknown"
@@ -1317,7 +1325,7 @@ def get_storage_usage():
     return f"{used} / {size} ({percent})"
 
 def _candidate_mcrcon_bins():
-    """Return possible mcrcon executable paths."""
+    # Return possible mcrcon executable paths.
     candidates = []
     found = shutil.which("mcrcon")
     if found:
@@ -1328,7 +1336,7 @@ def _candidate_mcrcon_bins():
     return candidates
 
 def _clean_rcon_output(text):
-    """Normalize RCON output by removing color/control codes."""
+    # Normalize RCON output by removing color/control codes.
     cleaned = text or ""
     # Strip ANSI escape sequences.
     cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", cleaned)
@@ -1337,10 +1345,10 @@ def _clean_rcon_output(text):
     return cleaned
 
 def _refresh_rcon_config():
-    """Refresh RCON password/port from server.properties.
-
-    RCON is considered enabled only when rcon.password is present and non-empty.
-    """
+    # Refresh RCON password/port from server.properties.
+    #
+    #     RCON is considered enabled only when rcon.password is present and non-empty.
+    #     
     global rcon_cached_password
     global rcon_cached_port
     global rcon_cached_enabled
@@ -1396,13 +1404,13 @@ def _refresh_rcon_config():
         return rcon_cached_password, rcon_cached_port, rcon_cached_enabled
 
 def is_rcon_enabled():
-    """Return True when RCON credentials are available from server.properties."""
+    # Return True when RCON credentials are available from server.properties.
     _, _, enabled = _refresh_rcon_config()
     return enabled
 
 
 def _run_mcrcon(command, timeout=4):
-    """Run one RCON command against local server (with compatibility fallbacks)."""
+    # Run one RCON command against local server (with compatibility fallbacks).
     password, port, enabled = _refresh_rcon_config()
     if not enabled or not password:
         raise RuntimeError("RCON is disabled: rcon.password not found in server.properties")
@@ -1425,7 +1433,7 @@ def _run_mcrcon(command, timeout=4):
                 last_result = result
                 if result.returncode == 0:
                     return result
-            except Exception as exc:
+            except Exception:
                 continue
 
     if last_result is not None:
@@ -1433,7 +1441,7 @@ def _run_mcrcon(command, timeout=4):
     raise RuntimeError("mcrcon invocation failed")
 
 def _parse_players_online(output):
-    """Parse player count from common `list` output variants."""
+    # Parse player count from common `list` output variants.
     text = _clean_rcon_output(output).strip()
     if not text:
         return None
@@ -1460,7 +1468,7 @@ def _parse_players_online(output):
     return None
 
 def _probe_tick_rate():
-    """Probe tick time using multiple command variants and return '<ms> ms' or None."""
+    # Probe tick time using multiple command variants and return '<ms> ms' or None.
     for cmd in ("mspt", "tps", "forge tps", "spark tps"):
         try:
             result = _run_mcrcon(cmd, timeout=8)
@@ -1508,7 +1516,7 @@ def _probe_tick_rate():
     return None
 
 def _probe_minecraft_runtime_metrics(force=False):
-    """Return cached/updated (players_online, tick_rate) values."""
+    # Return cached/updated (players_online, tick_rate) values.
     global mc_last_query_at
     global mc_cached_players_online
     global mc_cached_tick_rate
@@ -1557,17 +1565,17 @@ def _probe_minecraft_runtime_metrics(force=False):
         return mc_cached_players_online, mc_cached_tick_rate
 
 def get_players_online():
-    """Return online player count from cached RCON probe."""
+    # Return online player count from cached RCON probe.
     players_online, _ = _probe_minecraft_runtime_metrics()
     return players_online
 
 def get_tick_rate():
-    """Return server tick time from cached RCON probe."""
+    # Return server tick time from cached RCON probe.
     _, tick_rate = _probe_minecraft_runtime_metrics()
     return tick_rate
 
 def get_service_status_display(service_status, players_online):
-    """Map raw service + start/stop intent into rule-based UI status labels."""
+    # Map raw service + start/stop intent into rule-based UI status labels.
     # Rule 1: show Off when systemd says the service is off.
     if service_status in ("inactive", "failed"):
         set_service_status_intent(None)
@@ -1600,7 +1608,7 @@ def get_service_status_display(service_status, players_online):
     return "Off"
 
 def get_service_status_class(service_status_display):
-    """Map display status to UI severity color class."""
+    # Map display status to UI severity color class.
     if service_status_display == "Running":
         return "stat-green"
     if service_status_display == "Starting":
@@ -1610,7 +1618,7 @@ def get_service_status_class(service_status_display):
     return "stat-red"
 
 def graceful_stop_minecraft():
-    """Stop sequence: systemd stop -> backup."""
+    # Stop sequence: systemd stop -> backup.
     # Run steps in strict order, regardless of intermediate failures.
     systemd_ok = stop_service_systemd()
     backup_ok = run_backup_script()
@@ -1620,14 +1628,14 @@ def graceful_stop_minecraft():
     }
 
 def stop_server_automatically():
-    """Gracefully stop Minecraft (used by idle watcher)."""
+    # Gracefully stop Minecraft (used by idle watcher).
     set_service_status_intent("shutting")
     graceful_stop_minecraft()
     clear_session_start_time()
     reset_backup_periodic_runs()
 
 def run_backup_script():
-    """Run backup script and update in-memory backup status."""
+    # Run backup script and update in-memory backup status.
     global backup_last_error
     global backup_last_successful_at
 
@@ -1676,17 +1684,17 @@ def run_backup_script():
     return success
 
 def format_backup_time(timestamp):
-    """Format UNIX timestamp for the dashboard or return '--'."""
+    # Format UNIX timestamp for the dashboard or return '--'.
     if timestamp is None:
         return "--"
     return datetime.fromtimestamp(timestamp, tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 def get_server_time_text():
-    """Return current server time for header display."""
+    # Return current server time for header display.
     return datetime.now(tz=DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 def get_latest_backup_zip_timestamp():
-    """Return mtime of newest ZIP backup file, if available."""
+    # Return mtime of newest ZIP backup file, if available.
     if not BACKUP_DIR.exists() or not BACKUP_DIR.is_dir():
         return None
     latest = None
@@ -1700,7 +1708,7 @@ def get_latest_backup_zip_timestamp():
     return latest
 
 def get_backup_zip_snapshot():
-    """Return snapshot of zip files as {path: mtime_ns} for change detection."""
+    # Return snapshot of zip files as {path: mtime_ns} for change detection.
     snapshot = {}
     if not BACKUP_DIR.exists() or not BACKUP_DIR.is_dir():
         return snapshot
@@ -1712,7 +1720,7 @@ def get_backup_zip_snapshot():
     return snapshot
 
 def backup_snapshot_changed(before_snapshot, after_snapshot):
-    """Return True when backup artifacts changed (new file or updated mtime)."""
+    # Return True when backup artifacts changed (new file or updated mtime).
     if not before_snapshot and after_snapshot:
         return True
     for file_path, after_mtime in after_snapshot.items():
@@ -1724,7 +1732,7 @@ def backup_snapshot_changed(before_snapshot, after_snapshot):
     return False
 
 def get_backup_schedule_times(service_status=None):
-    """Return last/next backup timestamps for dashboard display."""
+    # Return last/next backup timestamps for dashboard display.
     global backup_last_successful_at
 
     if service_status is None:
@@ -1754,7 +1762,7 @@ def get_backup_schedule_times(service_status=None):
     }
 
 def get_backup_status():
-    """Return backup status from backup state file: true=Running, false=Idle."""
+    # Return backup status from backup state file: true=Running, false=Idle.
     try:
         raw = BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
     except OSError:
@@ -1765,13 +1773,13 @@ def get_backup_status():
     return "Idle", "stat-yellow"
 
 def reset_backup_periodic_runs():
-    """Reset periodic backup run counter."""
+    # Reset periodic backup run counter.
     global backup_periodic_runs
     with backup_lock:
         backup_periodic_runs = 0
 
 def collect_dashboard_metrics():
-    """Collect shared dashboard metrics for both HTML and JSON responses."""
+    # Collect shared dashboard metrics for both HTML and JSON responses.
     cpu_per_core = get_cpu_usage_per_core()
     ram_usage = get_ram_usage()
     cpu_frequency = get_cpu_frequency()
@@ -1809,7 +1817,7 @@ def collect_dashboard_metrics():
     }
 
 def format_countdown(seconds):
-    """Render remaining seconds as MM:SS."""
+    # Render remaining seconds as MM:SS.
     if seconds <= 0:
         return "00:00"
     mins = int(seconds // 60)
@@ -1817,7 +1825,7 @@ def format_countdown(seconds):
     return f"{mins:02d}:{secs:02d}"
 
 def get_idle_countdown(service_status=None, players_online=None):
-    """Return idle auto-shutdown countdown string for UI."""
+    # Return idle auto-shutdown countdown string for UI.
     if service_status is None:
         service_status = get_status()
     if players_online is None:
@@ -1835,7 +1843,7 @@ def get_idle_countdown(service_status=None, players_online=None):
     return format_countdown(remaining)
 
 def idle_player_watcher():
-    """Background loop: stop server after sustained zero-player idle time."""
+    # Background loop: stop server after sustained zero-player idle time.
     global idle_zero_players_since
 
     while True:
@@ -1861,16 +1869,16 @@ def idle_player_watcher():
         time.sleep(IDLE_CHECK_INTERVAL_SECONDS)
 
 def start_idle_player_watcher():
-    """Start idle watcher in a daemon thread."""
+    # Start idle watcher in a daemon thread.
     watcher = threading.Thread(target=idle_player_watcher, daemon=True)
     watcher.start()
 
 def backup_session_watcher():
-    """Background loop: periodic backups during active sessions.
-
-    If a session ends before reaching the backup interval, run one backup at
-    shutdown so short sessions still produce a backup artifact.
-    """
+    # Background loop: periodic backups during active sessions.
+    #
+    #     If a session ends before reaching the backup interval, run one backup at
+    #     shutdown so short sessions still produce a backup artifact.
+    #     
     global backup_periodic_runs
 
     while True:
@@ -1921,12 +1929,12 @@ def backup_session_watcher():
         time.sleep(15)
 
 def start_backup_session_watcher():
-    """Start backup scheduler in a daemon thread."""
+    # Start backup scheduler in a daemon thread.
     watcher = threading.Thread(target=backup_session_watcher, daemon=True)
     watcher.start()
 
 def initialize_session_tracking():
-    """Initialize session.txt on process boot with session-preserving rules."""
+    # Initialize session.txt on process boot with session-preserving rules.
     ensure_session_file()
     service_status = get_status()
     session_start = read_session_start_time()
@@ -1942,7 +1950,7 @@ def initialize_session_tracking():
         write_session_start_time()
 
 def _status_debug_note():
-    """Return quick status note for troubleshooting session tracking."""
+    # Return quick status note for troubleshooting session tracking.
     try:
         service_status = get_status()
         session_raw = ""
@@ -1953,23 +1961,14 @@ def _status_debug_note():
         return "service=unknown, session_file=unreadable"
 
 def _session_write_failed_response():
-    """Uniform response when session file cannot be written."""
+    # Uniform response when session file cannot be written.
     message = "Session file write failed."
     if _is_ajax_request():
         return jsonify({"ok": False, "error": "session_write_failed", "message": f"{message} {_status_debug_note()}"}), 500
     return redirect("/?msg=session_write_failed")
 
-def _ensure_session_anchor_for_start_or_fail():
-    """Set session start for explicit start action and validate persistence."""
-    ts = write_session_start_time()
-    return ts is not None
-
-def _ensure_session_clear_for_stop_or_fail():
-    """Clear session file after stop and validate persistence."""
-    return clear_session_start_time()
-
 def ensure_session_tracking_initialized():
-    """Run session tracking initialization once per process."""
+    # Run session tracking initialization once per process.
     global session_tracking_initialized
     if session_tracking_initialized:
         return
@@ -1981,7 +1980,7 @@ def ensure_session_tracking_initialized():
 
 @app.before_request
 def _initialize_session_tracking_before_request():
-    """Ensure session tracking is initialized even under WSGI launch."""
+    # Ensure session tracking is initialized even under WSGI launch.
     ensure_session_tracking_initialized()
 
 # Eagerly initialize at import/startup so session.txt is reconciled immediately,
@@ -1989,7 +1988,7 @@ def _initialize_session_tracking_before_request():
 ensure_session_tracking_initialized()
 
 def _is_ajax_request():
-    """Return True when request expects JSON response (fetch/XHR)."""
+    # Return True when request expects JSON response (fetch/XHR).
     # Primary AJAX signal used by fetch requests from this UI.
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return True
@@ -1998,35 +1997,41 @@ def _is_ajax_request():
     return "application/json" in accept.lower()
 
 def _ok_response():
-    """Return appropriate success response for ajax/non-ajax requests."""
+    # Return appropriate success response for ajax/non-ajax requests.
     # AJAX callers need JSON, while legacy form submissions expect redirect.
     if _is_ajax_request():
         return jsonify({"ok": True})
     return redirect("/")
 
 def _password_rejected_response():
-    """Return password rejection response for ajax/non-ajax requests."""
+    # Return password rejection response for ajax/non-ajax requests.
     # Keep one shared password-rejected payload/message for consistency.
     if _is_ajax_request():
         return jsonify({
             "ok": False,
             "error": "password_incorrect",
-            "message": "Password incorrect. Action rejected.",
+            "message": "Password incorrect. Whatever you were trying to do is cancelled.",
         }), 403
     return redirect("/?msg=password_incorrect")
 
 def _backup_failed_response(message):
-    """Return backup failure response for ajax/non-ajax requests."""
+    # Return backup failure response for ajax/non-ajax requests.
     if _is_ajax_request():
         return jsonify({"ok": False, "error": "backup_failed", "message": message}), 500
     return redirect("/?msg=backup_failed")
+
+def _rcon_rejected_response(message, status_code):
+    # Return RCON validation/runtime failure for ajax/non-ajax requests.
+    if _is_ajax_request():
+        return jsonify({"ok": False, "message": message}), status_code
+    return redirect("/")
 
 # ----------------------------
 # Flask routes
 # ----------------------------
 @app.route("/")
 def index():
-    """Render dashboard page."""
+    # Render dashboard page.
     # Legacy query-parameter path (kept for non-AJAX fallback flows).
     message_code = request.args.get("msg", "")
     alert_message = ""
@@ -2067,14 +2072,14 @@ def index():
 
 @app.route("/minecraft-log")
 def minecraft_log():
-    """Return plain-text Minecraft service log snippet."""
+    # Return plain-text Minecraft service log snippet.
     return get_minecraft_logs_raw(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 @app.route("/minecraft-log-stream")
 def minecraft_log_stream():
-    """Stream new Minecraft journal lines via SSE."""
+    # Stream new Minecraft journal lines via SSE.
     def generate():
-        """Yield new journal lines as Server-Sent Events."""
+        # Yield new journal lines as Server-Sent Events.
         proc = None
         try:
             proc = subprocess.Popen(
@@ -2113,24 +2118,24 @@ def minecraft_log_stream():
 
 @app.route("/metrics")
 def metrics():
-    """Return dynamic dashboard metrics as JSON."""
+    # Return dynamic dashboard metrics as JSON.
     # This endpoint is polled by the UI, so keep the payload compact and explicit.
     return jsonify(collect_dashboard_metrics())
 
 @app.route("/start", methods=["POST"])
 def start():
-    """Start Minecraft service and initialize backup session state."""
+    # Start Minecraft service and initialize backup session state.
     set_service_status_intent("starting")
     # Start through systemd so status and automation watchers use a single source of truth.
     subprocess.run(["sudo", "systemctl", "start", SERVICE])
-    if not _ensure_session_anchor_for_start_or_fail():
+    if write_session_start_time() is None:
         return _session_write_failed_response()
     reset_backup_periodic_runs()
     return _ok_response()
 
 @app.route("/stop", methods=["POST"])
 def stop():
-    """Stop Minecraft service using user-supplied sudo password."""
+    # Stop Minecraft service using user-supplied sudo password.
     sudo_password = request.form.get("sudo_password", "")
     if not validate_sudo_password(sudo_password):
         return _password_rejected_response()
@@ -2138,13 +2143,13 @@ def stop():
     set_service_status_intent("shutting")
     # Ordered shutdown path: systemd stop first, then final backup.
     graceful_stop_minecraft()
-    _ensure_session_clear_for_stop_or_fail()
+    clear_session_start_time()
     reset_backup_periodic_runs()
     return _ok_response()
 
 @app.route("/backup", methods=["POST"])
 def backup():
-    """Run backup script manually from dashboard."""
+    # Run backup script manually from dashboard.
     # Manual backup should not shift the periodic backup schedule anchor.
     if not run_backup_script():
         detail = ""
@@ -2158,22 +2163,19 @@ def backup():
 
 @app.route("/rcon", methods=["POST"])
 def rcon():
-    """Execute an RCON command after validating sudo password."""
+    # Execute an RCON command after validating sudo password.
     command = request.form.get("rcon_command", "").strip()
     sudo_password = request.form.get("sudo_password", "")
     if not command:
-        if _is_ajax_request():
-            return jsonify({"ok": False, "message": "Command is required."}), 400
-        return redirect("/")
+        return _rcon_rejected_response("Command is required.", 400)
     if not is_rcon_enabled():
-        if _is_ajax_request():
-            return jsonify({"ok": False, "message": "RCON is disabled: rcon.password not found in server.properties."}), 503
-        return redirect("/")
+        return _rcon_rejected_response(
+            "RCON is disabled: rcon.password not found in server.properties.",
+            503,
+        )
     # Block command execution when the service is not active.
     if get_status() != "active":
-        if _is_ajax_request():
-            return jsonify({"ok": False, "message": "Server is not running."}), 409
-        return redirect("/")
+        return _rcon_rejected_response("Server is not running.", 409)
     if not validate_sudo_password(sudo_password):
         return _password_rejected_response()
 
@@ -2181,18 +2183,14 @@ def rcon():
     try:
         result = _run_mcrcon(command, timeout=8)
     except Exception:
-        if _is_ajax_request():
-            return jsonify({"ok": False, "message": "RCON command failed to execute."}), 500
-        return redirect("/")
+        return _rcon_rejected_response("RCON command failed to execute.", 500)
 
     if result.returncode != 0:
         detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
         message = "RCON command failed."
         if detail:
             message = f"RCON command failed: {detail[:400]}"
-        if _is_ajax_request():
-            return jsonify({"ok": False, "message": message}), 500
-        return redirect("/")
+        return _rcon_rejected_response(message, 500)
 
     return _ok_response()
 
