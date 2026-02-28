@@ -52,6 +52,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const dryRunConfirmRunBtn = document.getElementById("maintenance-dry-run-confirm-run");
     const dryRunDestructiveConfirmWrap = document.getElementById("maintenance-dry-run-destructive-confirm-wrap");
     const dryRunDestructiveConfirmInput = document.getElementById("maintenance-dry-run-destructive-confirm");
+    const completeModal = document.getElementById("maintenance-complete-modal");
+    const completeSummary = document.getElementById("maintenance-complete-summary");
+    const completeFiles = document.getElementById("maintenance-complete-files");
+    const completeIssues = document.getElementById("maintenance-complete-issues");
+    const completeOk = document.getElementById("maintenance-complete-ok");
     const ackSuggestModal = document.getElementById("maintenance-ack-suggest-modal");
     const ackSuggestRunBtn = document.getElementById("maintenance-ack-suggest-run");
     const ackSuggestCancelBtn = document.getElementById("maintenance-ack-suggest-cancel");
@@ -60,7 +65,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const ackSuggestDestructiveConfirmInput = document.getElementById("maintenance-ack-suggest-destructive-confirm");
     const acknowledgeButtonHome = runAcknowledgeBtn?.parentElement || null;
 
-    const UI_ONLY_MODE = false;
     const SCOPE_LABELS = { backups: "Backups", stale_worlds: "Stale Worlds" };
     const SCOPE_CATEGORIES = {
         backups: new Set(["backup_zip"]),
@@ -73,6 +77,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let pendingRunRulesDryRunOverride = null;
     let pendingManualDeleteDryRunOverride = null;
     let pendingDryRunActionKey = "";
+    let manualSelectedPaths = new Set();
     let rulesEditMode = false;
     let rulesDraft = null;
     const RULE_FIELD_UPDATERS = {
@@ -95,19 +100,6 @@ document.addEventListener("DOMContentLoaded", () => {
         "time_based.monthly_date": (draft, value) => { draft.time_based.monthly_date = Math.max(1, Math.min(31, Number(value || 1))); },
         "time_based.every_n_days": (draft, value) => { draft.time_based.every_n_days = Math.max(1, Math.min(365, Number(value || 1))); },
     };
-
-    function devActionAlert(label, details = "") {
-        const suffix = details ? `\n${details}` : "";
-        window.alert(`[DEV MODE] ${label}${suffix}`);
-    }
-
-    function formatDevPayload(payload) {
-        try {
-            return JSON.stringify(payload, null, 2);
-        } catch (_) {
-            return String(payload);
-        }
-    }
 
     function parseDataAttr(name, fallback) {
         try {
@@ -223,6 +215,45 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         dryRunModal.setAttribute("aria-hidden", "false");
+    }
+
+    function closeCompleteModal() {
+        if (!completeModal) return;
+        completeModal.setAttribute("aria-hidden", "true");
+    }
+
+    function showCompleteModal(resultPayload, actionKey) {
+        if (!completeModal || !completeSummary || !completeFiles || !completeIssues) return;
+        const result = (resultPayload && typeof resultPayload === "object") ? resultPayload : {};
+        const deletedItems = Array.isArray(result.deleted_items) ? result.deleted_items : [];
+        const errors = Array.isArray(result.errors) ? result.errors : [];
+        const deletedCount = Number(result.deleted_count || deletedItems.length || 0);
+        const deletedBytes = humanBytes(result.deleted_bytes || 0);
+        const requested = Number(result.requested_delete_count || 0);
+        const capped = Number(result.capped_delete_count || deletedCount);
+        const actionLabel = actionKey === "manual-delete" ? "Manual cleanup" : "Rule cleanup";
+        completeSummary.textContent = `${actionLabel} finished: deleted ${deletedCount} file(s) (${deletedBytes}), requested ${requested}, capped ${capped}.`;
+
+        completeFiles.innerHTML = "";
+        if (deletedItems.length === 0) {
+            appendModalListItem(completeFiles, "No files were deleted.");
+        } else {
+            deletedItems.forEach((item) => {
+                const label = item?.name || item?.path || "unknown";
+                const category = item?.category || "-";
+                const sizeText = humanBytes(item?.size || 0);
+                appendModalListItem(completeFiles, `${label} | ${category} | ${sizeText}`);
+            });
+        }
+
+        completeIssues.innerHTML = "";
+        if (errors.length === 0) {
+            appendModalListItem(completeIssues, "No errors reported.");
+        } else {
+            errors.forEach((entry) => appendModalListItem(completeIssues, `Error: ${String(entry)}`));
+        }
+
+        completeModal.setAttribute("aria-hidden", "false");
     }
 
     function getRuleFieldWarning(target) {
@@ -702,6 +733,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!fileList) return;
         const items = (Array.isArray(preview?.items) ? preview.items : []).filter((item) => isItemInCurrentScope(item));
         const showSelectors = currentActionView === "manual";
+        const visiblePaths = new Set(items.map((item) => String(item?.path || "")));
+        manualSelectedPaths = new Set(
+            Array.from(manualSelectedPaths).filter((path) => visiblePaths.has(String(path || "")))
+        );
         fileList.innerHTML = "";
         if (items.length === 0) {
             const li = document.createElement("li");
@@ -738,6 +773,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 checkbox.className = "maintenance-select";
                 checkbox.disabled = !item.eligible;
                 checkbox.value = item.path;
+                checkbox.checked = !!item.eligible && (manualSelectedPaths.has(item.path) || rowMarkedForDelete);
                 li.appendChild(checkbox);
             }
             const title = document.createElement("span");
@@ -925,6 +961,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function clearUnsavedActions() {
         cancelRulesEdit();
+        manualSelectedPaths = new Set();
         document.querySelectorAll(".maintenance-select:checked").forEach((node) => {
             node.checked = false;
         });
@@ -1026,7 +1063,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
         if (pendingProtectedAction === "manual-delete") {
-            const selected = Array.from(document.querySelectorAll(".maintenance-select:checked")).map((node) => node.value);
+            const selected = Array.from(manualSelectedPaths);
             if (selected.length === 0) {
                 showError("No files selected.", "Select at least one eligible file from the left pane.");
                 return null;
@@ -1048,42 +1085,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Thin API client for maintenance JSON endpoints with shared error handling.
     async function apiPost(path, body) {
-        if (UI_ONLY_MODE) {
-            const payloadBody = body || {};
-            if (path === "/maintenance/api/save-rules") {
-                config = { ...(config || {}), rules: payloadBody.rules || config?.rules || {} };
-                devActionAlert("Would save cleanup rules", formatDevPayload(payloadBody));
-                return { ok: true, config, preview };
-            }
-            if (path === "/maintenance/api/run-rules") {
-                devActionAlert("Would run rule-based cleanup", formatDevPayload(payloadBody));
-                return { ok: true, dry_run: !!payloadBody.dry_run, config };
-            }
-            if (path === "/maintenance/api/manual-delete") {
-                devActionAlert("Would run manual cleanup", formatDevPayload(payloadBody));
-                return { ok: true, dry_run: !!payloadBody.dry_run, config };
-            }
-            if (path === "/maintenance/api/ack-non-normal") {
-                const existing = Array.isArray(nonNormal?.missed_runs) ? nonNormal.missed_runs : [];
-                const kept = existing.filter((entry) => {
-                    if (!entry || typeof entry !== "object") return false;
-                    const explicitScope = String(entry.scope || "").trim().toLowerCase();
-                    if (explicitScope === "backups" || explicitScope === "stale_worlds") {
-                        return explicitScope !== currentScope;
-                    }
-                    const scheduleId = String(entry.schedule_id || "").trim().toLowerCase();
-                    if (scheduleId.startsWith("backups:")) return currentScope !== "backups";
-                    if (scheduleId.startsWith("stale_worlds:")) return currentScope !== "stale_worlds";
-                    return false;
-                });
-                nonNormal = { ...(nonNormal || {}), missed_runs: kept };
-                devActionAlert("Would acknowledge missed runs", formatDevPayload(payloadBody));
-                return { ok: true, non_normal: nonNormal };
-            }
-            devActionAlert(`Would call ${path}`, formatDevPayload(payloadBody));
-            return { ok: true };
-        }
-
         const response = await fetch(path, {
             method: "POST",
             headers: {
@@ -1102,13 +1103,6 @@ document.addEventListener("DOMContentLoaded", () => {
     async function refreshState(options = {}) {
         const preservePreview = !!options.preservePreview;
         const requestedScope = options.scope || currentScope;
-        if (UI_ONLY_MODE) {
-            renderSummaryPanels();
-            if (currentActionView === "rules") {
-                setActionView(currentActionView);
-            }
-            return;
-        }
 
         const response = await fetch(`/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}`, { headers: { Accept: "application/json" } });
         const payload = await response.json();
@@ -1147,7 +1141,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function runManualDeleteDryRunWithoutPassword() {
-        const selected = Array.from(document.querySelectorAll(".maintenance-select:checked")).map((node) => node.value);
+        const selected = Array.from(manualSelectedPaths);
         if (selected.length === 0) {
             showError("No files selected.", "Select at least one eligible file from the left pane.");
             return;
@@ -1168,6 +1162,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.getElementById("maintenance-error-ok")?.addEventListener("click", closeError);
+    fileList?.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || !target.classList.contains("maintenance-select")) return;
+        const path = String(target.value || "");
+        if (!path) return;
+        if (target.checked) {
+            manualSelectedPaths.add(path);
+        } else {
+            manualSelectedPaths.delete(path);
+        }
+    });
     errorModal?.addEventListener("click", (event) => {
         if (event.target === errorModal) closeError();
     });
@@ -1233,6 +1238,10 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (payload?.dry_run && payload?.preview) {
                 showDryRunModal(payload.preview, actionKey);
+                return;
+            }
+            if ((actionKey === "run-rules" || actionKey === "manual-delete") && payload?.result) {
+                showCompleteModal(payload.result, actionKey);
             }
         } catch (err) {
             showError(err?.message || "Cleanup action failed.", err?.details || err?.error_code);
@@ -1256,6 +1265,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         pendingManualDeleteDryRunOverride = false;
         openPasswordModal("manual-delete", "Enter sudo password to confirm manual cleanup.");
+    });
+    completeOk?.addEventListener("click", closeCompleteModal);
+    completeModal?.addEventListener("click", (event) => {
+        if (event.target === completeModal) closeCompleteModal();
     });
 
     ackSuggestCancelBtn?.addEventListener("click", closeAckSuggestModal);

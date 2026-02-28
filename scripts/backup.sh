@@ -9,6 +9,8 @@ BACKUP_LOG_MAX_BYTES="${BACKUP_LOG_MAX_BYTES:-5242880}"
 BACKUP_LOG_BACKUPS="${BACKUP_LOG_BACKUPS:-5}"
 
 BACKUP_DIR="/home/marites/backups"
+MINECRAFT_ROOT_DIR="/opt/Minecraft"
+SERVICE="minecraft"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 BACKUP_TRIGGER="${1:-manual}"
 BACKUP_SUFFIX=""
@@ -17,20 +19,15 @@ RCON_HOST="127.0.0.1"
 AUTO_SNAPSHOT_DIR=""
 WORLD_DIR=""
 DEBUG_MODE="false"
-DEBUG_WORLD_DIR="/opt/Minecraft/config"
+DEBUG_WORLD_DIR=""
 WORLD_SAVE_DISABLED="false"
 WORLD_NAME="world"
 WORLD_NAME_FROM_PROPS=""
-
-SERVER_PROPERTIES_CANDIDATES=(
-  "/opt/Minecraft/server.properties"
-  "/opt/Minecraft/server/server.properties"
-  "$APP_DIR/server.properties"
-  "$APP_DIR/../server.properties"
-)
+SERVER_PROPERTIES_CANDIDATES=()
 
 RCON_PASS=""
 RCON_PORT="25575"
+RCON_AVAILABLE="false"
 
 normalize_path() {
   local p="$1"
@@ -109,8 +106,9 @@ load_web_conf() {
       fi
     fi
     case "$key" in
+      SERVICE) SERVICE="$value" ;;
       BACKUP_DIR) BACKUP_DIR="$value" ;;
-      BACKUP_STATE_FILE) BACKUP_STATE_FILE="$value" ;;
+      MINECRAFT_ROOT_DIR) MINECRAFT_ROOT_DIR="$value" ;;
       RCON_HOST) RCON_HOST="$value" ;;
       RCON_PORT) RCON_PORT="$value" ;;
       AUTO_SNAPSHOT_DIR) AUTO_SNAPSHOT_DIR="$value" ;;
@@ -129,14 +127,32 @@ is_true() {
   [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" || "$v" == "on" ]]
 }
 
+is_service_active() {
+  systemctl is-active --quiet "$SERVICE"
+}
+
+run_rcon() {
+  if [[ "$RCON_AVAILABLE" != "true" ]]; then
+    return 1
+  fi
+  mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "$@"
+}
+
 load_web_conf
 BACKUP_DIR="$(normalize_path "$BACKUP_DIR")"
-BACKUP_STATE_FILE="$(normalize_path "$BACKUP_STATE_FILE")"
+MINECRAFT_ROOT_DIR="$(normalize_path "$MINECRAFT_ROOT_DIR")"
 if [[ -z "$AUTO_SNAPSHOT_DIR" ]]; then
   AUTO_SNAPSHOT_DIR="$BACKUP_DIR/snapshots"
 else
   AUTO_SNAPSHOT_DIR="$(normalize_path "$AUTO_SNAPSHOT_DIR")"
 fi
+DEBUG_WORLD_DIR="$MINECRAFT_ROOT_DIR/config"
+SERVER_PROPERTIES_CANDIDATES=(
+  "$MINECRAFT_ROOT_DIR/server.properties"
+  "$MINECRAFT_ROOT_DIR/server/server.properties"
+  "$APP_DIR/server.properties"
+  "$APP_DIR/../server.properties"
+)
 
 if is_true "$DEBUG_MODE"; then
   WORLD_DIR="$DEBUG_WORLD_DIR"
@@ -196,8 +212,10 @@ read_server_properties_config() {
 
   if [[ -z "$RCON_PASS" ]]; then
     echo "[$(date +"%Y-%m-%d %H:%M:%S")] rcon.password missing in $props"
-    return 1
+    RCON_AVAILABLE="false"
+    return 0
   fi
+  RCON_AVAILABLE="true"
 
   return 0
 }
@@ -212,7 +230,7 @@ cleanup() {
   local exit_code=$?
   # If save-off was issued, always try to restore save-on on any exit path.
   if [[ "$WORLD_SAVE_DISABLED" == "true" ]]; then
-    mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "save-on" >/dev/null 2>&1 || true
+    run_rcon "save-on" >/dev/null 2>&1 || true
     WORLD_SAVE_DISABLED="false"
   fi
   echo "false" > "$BACKUP_STATE_FILE"
@@ -222,6 +240,14 @@ cleanup() {
 if ! read_server_properties_config; then
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup aborted: unable to load server.properties settings"
   exit 1
+fi
+
+if [[ "$RCON_AVAILABLE" != "true" ]]; then
+  if is_service_active; then
+    echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup aborted: RCON is required while service '$SERVICE' is active (missing rcon.password)."
+    exit 1
+  fi
+  echo "[$(date +"%Y-%m-%d %H:%M:%S")] proceeding without RCON because service '$SERVICE' is not active."
 fi
 
 if is_true "$DEBUG_MODE"; then
@@ -246,12 +272,14 @@ trap cleanup EXIT INT TERM
 mkdir -p "$BACKUP_DIR"
 
 # Notify players that backup is starting
-mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup starting! Server may lag for a few seconds."
+run_rcon "say Backup starting! Server may lag for a few seconds." >/dev/null 2>&1 || true
 
 # Force world save and disable writes
-mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "save-all"
-WORLD_SAVE_DISABLED="true"
-mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "save-off"
+if [[ "$RCON_AVAILABLE" == "true" ]]; then
+  run_rcon "save-all" >/dev/null 2>&1 || true
+  WORLD_SAVE_DISABLED="true"
+  run_rcon "save-off" >/dev/null 2>&1 || true
+fi
 
 # Give disk a moment to flush
 sleep 5
@@ -292,13 +320,13 @@ else
 fi
 
 if [[ "$backup_ok" -eq 1 ]]; then
-  mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup completed successfully! Saved to $backup_target"
+  run_rcon "say Backup completed successfully! Saved to $backup_target" >/dev/null 2>&1 || true
 else
-  mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "say Backup failed! Check server logs."
+  run_rcon "say Backup failed! Check server logs." >/dev/null 2>&1 || true
 fi
 
 # Re-enable saving
-mcrcon -H "$RCON_HOST" -P "$RCON_PORT" -p "$RCON_PASS" "save-on"
+run_rcon "save-on" >/dev/null 2>&1 || true
 WORLD_SAVE_DISABLED="false"
 
 if [[ "$backup_ok" -ne 1 ]]; then

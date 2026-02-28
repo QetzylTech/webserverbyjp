@@ -96,3 +96,16 @@ Feb 26 19:54:44 <mcweb> [mcweb/debug-boot] prepared /opt/Minecraft/server.proper
 Feb 26 21:13:11 <mcweb> [mcweb/debug-boot] prepared /opt/Minecraft/server.properties from /opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T131311Z.bak
 Feb 26 21:15:48 <mcweb> [mcweb/debug-boot] kept active debug server.properties /opt/Minecraft/server.properties
 Feb 26 21:20:18 <mcweb> [mcweb/debug-boot] prepared /opt/Minecraft/server.properties from /opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T132018Z.bak
+Mar 01 00:55:48 <mcweb> [mcweb/debug-boot] prepared /home/marites/Minecraft/server.properties from /home/marites/webserverbyjp/data/properties/server.properties.20260228T165548Z.bak
+Mar 01 01:00:02 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:03:05 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:03:36 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:08:08 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:16:11 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:20:58 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:22:32 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:25:29 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:25:32 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:26:04 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:32:07 <mcweb> [mcweb/debug-boot] kept active debug server.properties /home/marites/Minecraft/server.properties
+Mar 01 01:36:56 <mcweb> [mcweb/debug-boot] repaired active debug server.properties /home/marites/Minecraft/server.properties

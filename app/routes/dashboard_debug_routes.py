@@ -2,7 +2,7 @@
 from flask import abort, jsonify, redirect, render_template, request
 
 
-def register_debug_routes(app, state, *, is_maintenance_allowed, dummy_debug_env_rows):
+def register_debug_routes(app, state):
     """Register debug page routes."""
 
     # Route: /debug
@@ -11,13 +11,11 @@ def register_debug_routes(app, state, *, is_maintenance_allowed, dummy_debug_env
         """Runtime helper debug_page."""
         if not state["DEBUG_PAGE_VISIBLE"]:
             return abort(404)
-        if state["DEV_ENABLED"] and not is_maintenance_allowed(state):
-            return abort(404)
         debug_message = (request.args.get("msg", "") or "").strip()
         debug_actions_enabled = bool(state["DEBUG_ENABLED"])
         props = state["get_debug_server_properties_rows"]() if debug_actions_enabled else {}
         editor_path = props.get("path", "server.properties")
-        debug_rows = state["get_debug_env_rows"]() if debug_actions_enabled else dummy_debug_env_rows()
+        debug_rows = state["get_debug_env_rows"]() if debug_actions_enabled else []
         return render_template(
             "debug.html",
             current_page="debug",

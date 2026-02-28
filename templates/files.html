@@ -38,6 +38,26 @@
                         </div>
                     </div>
                     {% else %}
+                    {% if current_page == "minecraft_logs" %}
+                    <div class="log-view-controls">
+                        <div class="sort-row">
+                            <label for="file-sort" class="sort-label">Sort by</label>
+                            <select id="file-sort" class="sort-select">
+                                <option value="newest">Newest to oldest</option>
+                                <option value="oldest">Oldest to newest</option>
+                                <option value="size">Size</option>
+                                <option value="alpha">Alphabetical</option>
+                                <option value="reverse_alpha">Reverse alphabetical</option>
+                            </select>
+                        </div>
+                        <div class="log-view-toggles" role="group" aria-label="Log source views">
+                            <button class="nav-link log-source-toggle" type="button" data-log-source="minecraft">Minecraft Logs</button>
+                            <button class="nav-link log-source-toggle" type="button" data-log-source="backup">Backup Logs</button>
+                            <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb">Control Panel Activity</button>
+                            <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb_log">Control Panel Errors/System</button>
+                        </div>
+                    </div>
+                    {% else %}
                     <div class="sort-row">
                         <label for="file-sort" class="sort-label">Sort by</label>
                         <select id="file-sort" class="sort-select">
@@ -49,13 +69,14 @@
                         </select>
                     </div>
                     {% endif %}
+                    {% endif %}
                     </div>
                 </div>
                 <div id="download-error" class="download-error"></div>
                 {% if items %}
                 <ul class="list">
                     {% for item in items %}
-                    <li data-name="{{ item.name | lower }}" data-mtime="{{ item.mtime }}" data-size="{{ item.size_bytes }}">
+                    <li data-name="{{ item.name | lower }}" data-filename="{{ item.name }}" data-mtime="{{ item.mtime }}" data-size="{{ item.size_bytes }}">
                         {% if current_page == "backups" %}
                         <span class="file-name">{{ item.name }}</span>
                         <div class="file-actions">
@@ -105,7 +126,6 @@
                         </div>
                     </div>
                     <div id="backup-restore-controls" class="backup-restore-controls pane-editor" hidden>
-                        <input id="backup-restore-password" class="backup-restore-password ui-text-input" type="password" autocomplete="current-password" placeholder="Sudo password">
                         <div class="backup-restore-actions">
                             <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
                             <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>

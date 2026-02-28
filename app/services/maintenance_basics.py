@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from flask import jsonify, request
+from app.core import state_db as state_db_service
 
 _CLEANUP_SCHEMA_VERSION = 1
 _CLEANUP_SCOPE_CHOICES = {"backups", "stale_worlds"}
@@ -42,19 +43,14 @@ def _cleanup_data_dir(state):
     return Path(state["session_state"].session_file).parent
 
 
-def _cleanup_json_path(state):
-    """Handle cleanup json path."""
-    return _cleanup_data_dir(state) / "cleanup.json"
+def _cleanup_db_path(state):
+    """Return sqlite state-db path for structured maintenance records."""
+    return Path(state["APP_STATE_DB_PATH"])
 
 
 def _cleanup_non_normal_path(state):
     """Handle cleanup non normal path."""
     return _cleanup_data_dir(state) / "cleanup_non_normal.txt"
-
-
-def _cleanup_history_path(state):
-    """Handle cleanup history path."""
-    return _cleanup_data_dir(state) / "cleanup history.json"
 
 
 def _cleanup_log_path(state):
@@ -194,7 +190,7 @@ def _cleanup_get_scope_view(cfg, scope):
 
 
 def _cleanup_migrate_config_dict(state, loaded, default_cfg):
-    """Migrate older cleanup.json shapes into the current schema."""
+    """Migrate older cleanup config shapes into the current schema."""
     cfg = default_cfg
     loaded_rules = loaded.get("rules") if isinstance(loaded, dict) else None
     if isinstance(loaded_rules, dict):
@@ -330,21 +326,20 @@ def _cleanup_apply_scope_from_state(state, rules, scope=""):
 
 def _cleanup_load_config(state):
     """Handle cleanup load config."""
-    path = _cleanup_json_path(state)
     default = _cleanup_default_config()
-    if not path.exists():
-        return default
+    loaded = None
+    db_path = _cleanup_db_path(state)
     try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
+        loaded = state_db_service.load_cleanup_config(db_path)
     except Exception:
-        return default
+        loaded = None
     if not isinstance(loaded, dict):
         return default
     cfg = _cleanup_migrate_config_dict(state, loaded, default)
     try:
         # Persist migrated config once so future loads are clean and stable.
         if loaded != cfg:
-            _cleanup_atomic_write_json(path, cfg)
+            _cleanup_save_config(state, cfg)
     except Exception:
         pass
     cfg["rules"] = _cleanup_apply_scope_from_state(state, cfg.get("rules", {}))
@@ -353,6 +348,12 @@ def _cleanup_load_config(state):
         scoped_rules = _cleanup_apply_scope_from_state(state, scoped.get("rules", {}), scope=scope_name)
         scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
     return cfg
+
+
+def _cleanup_save_config(state, payload):
+    """Persist cleanup config to sqlite."""
+    db_path = _cleanup_db_path(state)
+    state_db_service.save_cleanup_config(db_path, payload)
 
 
 def _cleanup_load_non_normal(state):
@@ -390,11 +391,6 @@ def _cleanup_get_client_ip(state):
         if not client_ip:
             client_ip = (request.remote_addr or "").strip()
     return client_ip
-
-
-def _is_maintenance_allowed(state):
-    """Return whether is maintenance allowed."""
-    return True
 
 
 def _cleanup_log(state, *, what, why, trigger, result, details=""):
@@ -443,24 +439,20 @@ def _cleanup_mark_missed_run(state, reason, schedule_id="", scope=""):
 
 def _cleanup_load_history(state):
     """Handle cleanup load history."""
-    path = _cleanup_history_path(state)
     default = _cleanup_default_history()
-    if not path.exists():
-        return default
+    db_path = _cleanup_db_path(state)
     try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
+        runs = state_db_service.load_cleanup_history_runs(db_path, limit=500)
+        return {"runs": runs[-500:]}
     except Exception:
         return default
-    if not isinstance(loaded, dict):
-        return default
-    runs = loaded.get("runs")
-    if not isinstance(runs, list):
-        return default
-    normalized = []
-    for item in runs:
-        if isinstance(item, dict):
-            normalized.append(item)
-    return {"runs": normalized[-500:]}
+
+
+def _cleanup_save_history(state, payload):
+    """Persist cleanup history document to sqlite."""
+    db_path = _cleanup_db_path(state)
+    runs = payload.get("runs") if isinstance(payload, dict) else []
+    state_db_service.save_cleanup_history_runs(db_path, runs, max_rows=500)
 
 
 def _cleanup_append_history(
@@ -478,25 +470,21 @@ def _cleanup_append_history(
     scope="",
 ):
     """Append cleanup run history entry."""
-    payload = _cleanup_load_history(state)
-    runs = payload.setdefault("runs", [])
-    runs.append(
-        {
-            "at": _cleanup_now_iso(state),
-            "trigger": str(trigger),
-            "mode": str(mode),
-            "dry_run": bool(dry_run),
-            "deleted_count": int(deleted_count or 0),
-            "errors_count": int(errors_count or 0),
-            "requested_count": int(requested_count or 0),
-            "capped_count": int(capped_count or 0),
-            "result": str(result),
-            "details": str(details or ""),
-            "scope": _cleanup_normalize_scope(scope) if scope else "",
-        }
-    )
-    payload["runs"] = runs[-500:]
-    _cleanup_atomic_write_json(_cleanup_history_path(state), payload)
+    item = {
+        "at": _cleanup_now_iso(state),
+        "trigger": str(trigger),
+        "mode": str(mode),
+        "dry_run": bool(dry_run),
+        "deleted_count": int(deleted_count or 0),
+        "errors_count": int(errors_count or 0),
+        "requested_count": int(requested_count or 0),
+        "capped_count": int(capped_count or 0),
+        "result": str(result),
+        "details": str(details or ""),
+        "scope": _cleanup_normalize_scope(scope) if scope else "",
+    }
+    db_path = _cleanup_db_path(state)
+    state_db_service.append_cleanup_history_run(db_path, item, max_rows=500)
 
 
 def _cleanup_error(code, extra=None, status=400):
@@ -507,6 +495,3 @@ def _cleanup_error(code, extra=None, status=400):
     return jsonify(payload), status
 
 
-def is_maintenance_allowed(state):
-    """Public helper used by route modules."""
-    return _is_maintenance_allowed(state)

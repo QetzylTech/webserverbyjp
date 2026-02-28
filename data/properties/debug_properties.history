@@ -4,3 +4,5 @@
 {"ts": "2026-02-26T13:19:05.372677Z", "event": "restore_after_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T131311Z.bak"}
 {"ts": "2026-02-26T13:20:18.433987Z", "event": "snapshot_for_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T132018Z.bak"}
 {"ts": "2026-02-26T13:20:36.639095Z", "event": "restore_after_debug", "props_path": "/opt/Minecraft/server.properties", "backup_path": "/opt/Minecraft/webserverbyjp/data/properties/server.properties.20260226T132018Z.bak"}
+{"ts": "2026-02-28T16:55:48.275324Z", "event": "snapshot_for_debug", "props_path": "/home/marites/Minecraft/server.properties", "backup_path": "/home/marites/webserverbyjp/data/properties/server.properties.20260228T165548Z.bak"}
+{"ts": "2026-02-28T17:57:15.906451Z", "event": "restore_after_debug", "props_path": "/home/marites/Minecraft/server.properties", "backup_path": "/home/marites/webserverbyjp/data/properties/server.properties.20260228T165548Z.bak"}

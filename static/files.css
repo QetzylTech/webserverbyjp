@@ -122,6 +122,24 @@
     .backup-controls .sort-row {
         margin: 0;
     }
+    .log-view-controls {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-left: auto;
+    }
+    .log-view-toggles {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .log-source-toggle {
+        height: 40px;
+    }
     .filter-row {
         display: flex;
         flex-wrap: wrap;
@@ -166,6 +184,32 @@
         font-weight: 600;
         overflow-wrap: anywhere;
         word-break: break-word;
+    }
+    .list li.file-row-active {
+        background: rgba(30, 64, 175, 0.08);
+        box-shadow: inset 3px 0 0 #1e40af;
+    }
+    .list li.file-row-active-view {
+        background: rgba(22, 101, 52, 0.12);
+        box-shadow: inset 3px 0 0 #166534;
+    }
+    .list li.file-row-active-restore {
+        background: rgba(180, 83, 9, 0.14);
+        box-shadow: inset 3px 0 0 #b45309;
+    }
+    .list li.file-row-remote-restore {
+        box-shadow: inset 4px 0 0 #dc2626;
+    }
+    .restore-open-indicator {
+        margin: 0 0 8px 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #b91c1c;
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 800;
+        line-height: 1.35;
+        border: 1px solid #991b1b;
     }
     .file-actions {
         display: inline-flex;
@@ -312,11 +356,16 @@
         align-items: center;
         gap: 8px;
     }
+    body[data-page="crash_logs"] .file-viewer-actions,
+    body[data-page="minecraft_logs"] .file-viewer-actions {
+        margin-right: 12px;
+    }
     .backup-restore-controls {
         display: flex;
         flex-direction: row;
         align-items: center;
         gap: 8px;
+        justify-content: flex-end;
     }
     .backup-restore-controls[hidden] {
         display: none;
@@ -338,6 +387,7 @@
         gap: 8px;
         flex-wrap: nowrap;
         flex: 0 0 auto;
+        margin-left: auto;
     }
     .backup-restore-start,
     .backup-restore-cancel,
@@ -464,6 +514,26 @@
     html.theme-dark .file-link { color: #7aa2ff; }
     html.theme-dark .file-name {
         color: #e6edf3;
+    }
+    html.theme-dark .list li.file-row-active {
+        background: rgba(56, 189, 248, 0.18);
+        box-shadow: inset 3px 0 0 #38bdf8;
+    }
+    html.theme-dark .list li.file-row-active-view {
+        background: rgba(34, 197, 94, 0.2);
+        box-shadow: inset 3px 0 0 #22c55e;
+    }
+    html.theme-dark .list li.file-row-active-restore {
+        background: rgba(251, 146, 60, 0.2);
+        box-shadow: inset 3px 0 0 #fb923c;
+    }
+    html.theme-dark .list li.file-row-remote-restore {
+        box-shadow: inset 4px 0 0 #f87171;
+    }
+    html.theme-dark .restore-open-indicator {
+        background: #7f1d1d;
+        border-color: #ef4444;
+        color: #fecaca;
     }
 
     html.theme-dark .file-link:hover { color: #9db8ff; }

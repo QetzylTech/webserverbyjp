@@ -563,18 +563,19 @@ def get_service_status_display(ctx, service_status, players_online):
 
     # Active state: apply intent rules based on players and transient UI intent.
     if service_status == "active":
+        # Keep shutdown state visible as soon as shutdown is requested.
+        if intent == "shutting":
+            return "Shutting Down"
         players_is_integer = isinstance(players_online, str) and players_online.isdigit()
 
         # Rule 2: show Running when systemd is active and players is an integer.
         if players_is_integer:
-            # Once players become resolvable, startup/shutdown transient intent is done.
-            if intent in ("starting", "shutting"):
+            # Once players become resolvable, startup transient intent is done.
+            if intent == "starting":
                 ctx.set_service_status_intent(None)
             return "Running"
 
         # Rules 3 and 4: handle unknown player count with trigger intent.
-        if intent == "shutting":
-            return "Shutting Down"
         # Default unknown-on-active and explicit start intent both map to Starting.
         return "Starting"
 

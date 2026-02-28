@@ -63,11 +63,11 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_
     def get_device_name_map():
         return device_name_map_lookup(
             csv_path=_value("DEVICE_MAP_CSV_PATH"),
-            fallback_path=_value("DEVICE_FALLMAP_PATH"),
             cache_lock=_value("device_name_map_lock"),
             cache=_value("device_name_map_cache"),
             cache_mtime_ns=_value("device_name_map_mtime_ns_ref"),
             log_exception=_value("log_mcweb_exception"),
+            app_state_db_path=_value("APP_STATE_DB_PATH"),
         )
 
     return {

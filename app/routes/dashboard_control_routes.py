@@ -26,6 +26,13 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         service_name = state["SERVICE"]
 
         def _start_worker():
+            rcon_result = state["ensure_startup_rcon_settings"]()
+            if not rcon_result.get("ok"):
+                message = rcon_result.get("message", "Failed to enforce startup RCON settings.")
+                state["set_service_status_intent"](None)
+                state["invalidate_status_cache"]()
+                state["log_mcweb_action"]("start-worker", rejection_message=message)
+                return
             try:
                 result = subprocess.run(
                     ["sudo", "systemctl", "start", "--no-block", service_name],
@@ -51,8 +58,16 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 state["log_mcweb_action"]("start-worker", rejection_message=message)
                 return
             state["invalidate_status_cache"]()
+            return
+        try:
+            threading.Thread(target=_start_worker, daemon=True).start()
+        except Exception as exc:
+            state["set_service_status_intent"](None)
+            state["invalidate_status_cache"]()
+            state["log_mcweb_exception"]("start-thread", exc)
+            state["log_mcweb_action"]("start-worker", rejection_message="Failed to start service worker thread.")
+            return state["_start_failed_response"]("Failed to start service worker thread.")
 
-        threading.Thread(target=_start_worker, daemon=True).start()
         state["log_mcweb_action"]("start")
         return state["_ok_response"]()
 

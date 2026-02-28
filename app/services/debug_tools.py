@@ -1,6 +1,7 @@
 """Debug-mode tools and server.properties editing helpers."""
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import threading
@@ -175,12 +176,44 @@ class DebugTools:
             out.append(f"{target}{value}")
         return "\n".join(out) + "\n"
 
+    def ensure_startup_rcon_settings(self):
+        """Ensure startup RCON settings and rotate password for debug start."""
+        props = self.detect_server_properties_path()
+        if props is None:
+            return {"ok": False, "message": "server.properties not found."}
+        try:
+            text = props.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return {"ok": False, "message": "Failed to read server.properties."}
+
+        kv = self.parse_server_properties_kv(text)
+        port_value = str(kv.get("rcon.port", "") or "").strip()
+        if not port_value.isdigit():
+            port_value = "25575"
+        password_value = secrets.token_urlsafe(32)
+
+        next_text = text
+        next_text = self.update_property_text(next_text, "enable-rcon", "true")
+        next_text = self.update_property_text(next_text, "rcon.port", port_value)
+        next_text = self.update_property_text(next_text, "rcon.password", password_value)
+        try:
+            self._atomic_write_text(props, next_text)
+        except OSError:
+            return {"ok": False, "message": "Failed to write server.properties."}
+        try:
+            self.refresh_rcon_config()
+        except Exception:
+            pass
+        return {"ok": True, "path": str(props), "rcon_port": port_value}
+
     def prepare_debug_server_properties_bootup(self):
         """Runtime helper prepare_debug_server_properties_bootup."""
         props = self.detect_server_properties_path()
         if props is None:
+            event = "debug_boot_skip_missing_server_properties" if self.DEBUG_ENABLED else "normal_boot_skip_missing_server_properties"
+            self._record_debug_properties_history(event, props_path="<missing>")
             if self.DEBUG_ENABLED:
-                self.log_mcweb_log("debug-boot", rejection_message="server.properties not found; debug provisioning skipped.")
+                self.log_mcweb_log("debug-boot", command="server.properties not found; debug provisioning skipped.")
             return
 
         try:
@@ -188,8 +221,29 @@ class DebugTools:
             active_is_debug = self._is_debug_world_properties_text(text)
 
             if self.DEBUG_ENABLED:
+                # Always enforce forced debug keys, even when debug world is already active.
+                # This keeps RCON settings consistent across manual edits/restarts.
+                desired_text = text
+                for key, value in self.DEBUG_SERVER_PROPERTIES_FORCED_VALUES.items():
+                    desired_text = self.update_property_text(desired_text, key, value)
+                desired_text = self.update_property_text(desired_text, "motd", self.DEBUG_MOTD)
+
                 if active_is_debug:
-                    self.log_debug_page_action("debug-boot", command=f"kept active debug server.properties {props}")
+                    state = self._read_debug_properties_state()
+                    backup_hint = str(state.get("last_backup", "") or "").strip()
+                    if not backup_hint:
+                        # No known pre-debug snapshot: treat as first-time/debug-only install and continue.
+                        self._record_debug_properties_history(
+                            "debug_boot_no_previous_real_world",
+                            props_path=props,
+                            backup_path="",
+                        )
+                    if desired_text != text:
+                        self._atomic_write_text(props, desired_text)
+                        self.refresh_world_dir()
+                        self.log_debug_page_action("debug-boot", command=f"repaired active debug server.properties {props}")
+                    else:
+                        self.log_debug_page_action("debug-boot", command=f"kept active debug server.properties {props}")
                     return
                 backup_path = self._timestamped_properties_backup_path()
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,9 +254,7 @@ class DebugTools:
                     "saved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 })
                 self._record_debug_properties_history("snapshot_for_debug", props_path=props, backup_path=backup_path)
-                text = self.update_property_text(text, "level-name", self.DEBUG_WORLD_NAME)
-                text = self.update_property_text(text, "motd", self.DEBUG_MOTD)
-                self._atomic_write_text(props, text)
+                self._atomic_write_text(props, desired_text)
                 self.refresh_world_dir()
                 self.log_debug_page_action("debug-boot", command=f"prepared {props} from {backup_path}")
                 return
@@ -214,9 +266,15 @@ class DebugTools:
             if restore_path is None or not restore_path.exists():
                 restore_path = self._latest_server_properties_backup()
             if restore_path is None or not restore_path.exists():
+                # No previous real-world snapshot to restore; keep current properties and allow world generation.
+                self._record_debug_properties_history(
+                    "restore_after_debug_skipped_no_previous_real_world",
+                    props_path=props,
+                    backup_path="",
+                )
                 self.log_mcweb_log(
                     "debug-boot-restore",
-                    rejection_message="active debug server.properties detected but no backup found in data dir.",
+                    command="active debug server.properties detected but no real-world backup exists; restore skipped.",
                 )
                 return
             self._atomic_replace_file_from_source(restore_path, props)
@@ -525,6 +583,15 @@ class DebugTools:
         service_name = self.SERVICE
 
         def worker():
+            rcon_result = self.ensure_startup_rcon_settings()
+            if not rcon_result.get("ok"):
+                self.set_service_status_intent(None)
+                self.invalidate_status_cache()
+                self.log_debug_page_action(
+                    "debug-start-worker",
+                    rejection_message=rcon_result.get("message", "Failed to enforce startup RCON settings."),
+                )
+                return
             try:
                 result = subprocess.run(
                     ["sudo", "systemctl", "start", "--no-block", service_name],

@@ -1,6 +1,7 @@
 """Service control-plane operations extracted from mcweb."""
 from datetime import datetime
 from pathlib import Path
+import secrets
 import subprocess
 import tempfile
 import time
@@ -46,7 +47,20 @@ def get_sudo_password(ctx):
 
 
 def run_sudo(ctx, cmd):
-    """Run a privileged command (requires sudoers NOPASSWD configuration)."""
+    """Run command directly first; fallback to non-interactive sudo when needed."""
+    try:
+        direct = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        direct = None
+
+    if direct is not None and direct.returncode == 0:
+        return direct
+
+    # Fallback path for commands that still require elevated privileges.
     return subprocess.run(
         ["sudo", "-n"] + cmd,
         capture_output=True,
@@ -204,6 +218,13 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
             ctx.log_mcweb_action("backup-warning", command=f"trigger={trigger}", rejection_message=message[:700])
             return True
         err = ((direct_result.stderr or "") + "\n" + (direct_result.stdout or "")).strip()
+        if not err:
+            try:
+                tail_lines = Path(ctx.BACKUP_LOG_FILE).read_text(encoding="utf-8", errors="ignore").splitlines()
+                if tail_lines:
+                    err = " | ".join(tail_lines[-3:]).strip()
+            except Exception:
+                err = ""
         with backup_state.lock:
             backup_state.last_error = err[:700] if err else "Backup command returned non-zero exit status."
         return False
@@ -350,6 +371,41 @@ def _update_property_text(original_text, key, value):
     if not found:
         out.append(f"{target}{value}")
     return "\n".join(out) + "\n"
+
+
+def ensure_startup_rcon_settings(ctx):
+    """Ensure startup RCON settings are present and rotate password each start."""
+    props_path = _detect_server_properties_path(ctx)
+    if props_path is None:
+        return {"ok": False, "message": "server.properties not found."}
+    try:
+        original_text = props_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {"ok": False, "message": "Failed to read server.properties."}
+
+    kv = _parse_server_properties_kv(original_text)
+    port_value = str(kv.get("rcon.port", "") or "").strip()
+    if not port_value.isdigit():
+        port_value = "25575"
+
+    # Rotate password every app-triggered server start.
+    password_value = secrets.token_urlsafe(32)
+
+    updated = original_text
+    updated = _update_property_text(updated, "enable-rcon", "true")
+    updated = _update_property_text(updated, "rcon.port", port_value)
+    updated = _update_property_text(updated, "rcon.password", password_value)
+    try:
+        props_path.write_text(updated, encoding="utf-8")
+    except OSError:
+        return {"ok": False, "message": "Failed to write server.properties."}
+
+    try:
+        ctx._refresh_rcon_config()
+    except Exception:
+        pass
+
+    return {"ok": True, "path": str(props_path), "rcon_port": port_value}
 
 
 def _record_restore_history(ctx, backup_name, old_world_dir, archived_old_world_dir, new_world_dir):

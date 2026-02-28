@@ -15,6 +15,7 @@ Recommended location:
   mcweb.env
   doc/mcweb.env.sample
   scripts/backup.sh
+  data/app_state.sqlite3
   data/state.txt
   data/session.txt
   templates/
@@ -39,19 +40,28 @@ Important keys:
 - `MCWEB_ADMIN_PASSWORD_HASH`
 - `WEB_HOST`
 - `WEB_PORT`
-- `BACKUP_SCRIPT`
+- `MINECRAFT_ROOT_DIR`
 - `BACKUP_DIR`
-- `CRASH_REPORTS_DIR`
-- `MINECRAFT_LOGS_DIR`
-- `MCWEB_LOG_DIR`
-- `DATA_DIR`
-- `DOCS_DIR`
 - `RCON_HOST`
 - `RCON_PORT`
 - `DISPLAY_TZ`
 - backup/idle/metrics interval keys
-- `BACKUP_STATE_FILE`
 - `DEBUG` (controls debug page availability at app boot)
+
+Derived from `MINECRAFT_ROOT_DIR`:
+- world directory (from `server.properties` `level-name`, debug fallback `<MINECRAFT_ROOT_DIR>/config`)
+- crash reports directory (`<MINECRAFT_ROOT_DIR>/crash-reports`)
+- minecraft logs directory (`<MINECRAFT_ROOT_DIR>/logs`)
+
+Hardcoded relative to `<mcweb.py folder>` (not env-configurable):
+- backup script: `./scripts/backup.sh`
+- app logs directory: `./logs`
+- app data directory: `./data`
+- docs directory: `./doc`
+- backup state file: `./data/state.txt`
+
+SQLite state database path is fixed (not env-configurable):
+- `/opt/Minecraft/webserverbyjp/data/app_state.sqlite3` (or `<mcweb.py folder>/data/app_state.sqlite3`)
 
 Bootstrap tip:
 - copy `doc/mcweb.env.sample` to `mcweb.env` and then fill local values.
@@ -59,8 +69,8 @@ Bootstrap tip:
 3. Configure `server.properties`
 
 `mcweb.py` and `backup.sh` search for `server.properties` in this order:
-1) `/opt/Minecraft/server.properties`
-2) `/opt/Minecraft/server/server.properties`
+1) `<MINECRAFT_ROOT_DIR>/server.properties`
+2) `<MINECRAFT_ROOT_DIR>/server/server.properties`
 3) `<mcweb.py folder>/server.properties`
 4) `<parent of mcweb.py folder>/server.properties`
 
@@ -76,11 +86,11 @@ Notes:
 
 4. `backup.sh` behavior
 
-`scripts/backup.sh` reads tunables from `mcweb.env` (`BACKUP_DIR`, `AUTO_SNAPSHOT_DIR`, `BACKUP_STATE_FILE`, `RCON_HOST`, `RCON_PORT`, `DEBUG`).
+`scripts/backup.sh` reads tunables from `mcweb.env` (`MINECRAFT_ROOT_DIR`, `BACKUP_DIR`, `AUTO_SNAPSHOT_DIR`, `RCON_HOST`, `RCON_PORT`, `DEBUG`).
 
 World folder resolution:
 - when `DEBUG=false`: world folder is derived from `server.properties` `level-name`
-- when `DEBUG=true`: world folder is forced to `/opt/Minecraft/config`
+- when `DEBUG=true`: world folder is forced to `<MINECRAFT_ROOT_DIR>/config` (default `/opt/Minecraft/config`)
 
 Backup output is trigger-based:
 - auto interval backup: incremental snapshot directory
@@ -103,14 +113,12 @@ Make executable:
 
 Debug boot handling for `server.properties`:
 - when `DEBUG=true`:
-  - active `server.properties` is preserved as `server.properties.real` (same directory, if missing)
-  - active `server.properties` is regenerated from `.real`
+  - active `server.properties` is snapshotted to `<mcweb.py folder>/data/properties/server.properties.<timestamp>.bak`
   - forced values are applied:
     - `level-name=debug_world`
     - `motd=debugging in progress`
-- when `DEBUG=false` and `.real` exists:
-  - active file is restored from `.real`
-  - if active file still contains debug world/motd, it is archived to `data/server.properties.debug`
+- when `DEBUG=false` and active file is debug-provisioned:
+  - active file is restored from `data/properties/debug_properties.state` (`last_backup`) or latest `server.properties.*.bak`
 
 Debug action authentication:
 - debug `server.properties` Apply requires admin password validation
@@ -122,10 +130,16 @@ Debug action authentication:
 Runtime dependencies:
 - Python 3
 - Flask (`pip install flask`)
-- `mcrcon` (must be in PATH)
+- `mcrcon`
+git clone https://github.com/Tiiffi/mcrcon.git
+cd mcrcon
+make
+sudo mv mcrcon /usr/local/bin/
+mcrcon -H 127.0.0.1 -P 25575 -p password
 - `zip`
 - `rsync` (required for auto snapshots)
 - `sudo`, `systemd`
+- `nginx` (optional to use port 80 and redirect to 8080)
 
 Example:
 sudo apt update
@@ -169,7 +183,7 @@ For production, run `mcweb.py` with a process manager (systemd, supervisor, etc.
 If `mcweb.py` runs under systemd and uses `sudo` for service/backup actions, add a sudoers rule (via `visudo`) for the service account.
 
 Example:
-marites ALL=(root) NOPASSWD: /bin/systemctl start minecraft, /bin/systemctl stop minecraft, /bin/systemctl restart minecraft, /bin/systemctl status minecraft, /opt/Minecraft/webserverbyjp/scripts/backup.sh
+marites ALL=(root) NOPASSWD: /bin/systemctl start minecraft, /bin/systemctl start --no-block minecraft, /bin/systemctl stop minecraft, /bin/systemctl restart minecraft, /bin/systemctl status minecraft, /bin/systemctl is-active minecraft, /home/marites/webserverbyjp/scripts/backup.sh
 
 Notes:
 - Use absolute paths for every command.
@@ -215,9 +229,8 @@ Maintenance is scope-based and keeps separate rule/schedule/history metadata per
 - `backups`
 - `stale_worlds`
 
-Maintenance data files in `DATA_DIR`:
-- `cleanup.json` (rules/schedules/meta/scopes)
-- `cleanup history.json` (run history)
+Maintenance data in `<mcweb.py folder>/data`:
+- `app_state.sqlite3` (structured records: users, device map, cleanup config/history)
 - `cleanup_non_normal.txt` (missed-run tracking)
 - `logs/cleanup.log` (maintenance action logs)
 

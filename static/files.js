@@ -57,7 +57,8 @@
         const sortSelect = document.getElementById("file-sort");
         const backupSortSelect = document.getElementById("backup-sort");
         const backupFilterInputs = Array.from(document.querySelectorAll(".backup-filter"));
-        const fileList = document.querySelector(".list");
+        const logSourceToggles = Array.from(document.querySelectorAll(".log-source-toggle"));
+        let fileList = document.querySelector(".list");
         const listEmptyDynamic = document.getElementById("list-empty-dynamic");
         const passwordModal = document.getElementById("download-password-modal");
         const passwordTitle = document.getElementById("download-password-title");
@@ -76,7 +77,6 @@
         const fileViewerDownload = document.getElementById("file-viewer-download");
         const fileViewerClose = document.getElementById("file-viewer-close");
         const backupRestoreControls = document.getElementById("backup-restore-controls");
-        const backupRestorePassword = document.getElementById("backup-restore-password");
         const backupRestoreStart = document.getElementById("backup-restore-start");
         const backupRestoreCancel = document.getElementById("backup-restore-cancel");
         const backupRestoreRollback = document.getElementById("backup-restore-rollback");
@@ -92,8 +92,37 @@
         let restorePollTimer = null;
         let restorePollJobId = "";
         let restorePollSeq = 0;
+        let restorePaneAlertTimer = null;
+        let restorePaneStatePollTimer = null;
         let undoRestoreFilename = "";
+        let restoreServerIsOff = false;
+        let restoreUndoAllowedByState = false;
+        let activeViewedFilename = "";
+        let activeRestoreFilename = "";
+        let remoteRestoreActive = false;
+        let remoteRestoreFilename = "";
+        let remoteRestoreOpenedByName = "";
+        let restorePaneForcedByRemote = false;
+        let activeLogSource = "";
+        let currentLogFileSource = "";
         let viewerCloseTimer = null;
+        let fileListClickBound = false;
+        const restorePaneClientIdStorageKey = "mcweb.restorePaneClientId";
+
+        function getRestorePaneClientId() {
+            try {
+                const existing = String(window.localStorage.getItem(restorePaneClientIdStorageKey) || "").trim();
+                if (existing) return existing;
+            } catch (_) {}
+            const generated = (window.crypto && typeof window.crypto.randomUUID === "function")
+                ? window.crypto.randomUUID()
+                : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+            try {
+                window.localStorage.setItem(restorePaneClientIdStorageKey, generated);
+            } catch (_) {}
+            return generated;
+        }
+        const restorePaneClientId = getRestorePaneClientId();
 
         function setDownloadError(text) {
             if (!errorBox) return;
@@ -150,16 +179,154 @@
             backupRestoreControls.hidden = !visible;
         }
 
-        function getRestorePasswordSeed() {
-            if (!backupRestorePassword) return "";
-            return (backupRestorePassword.value || "").trim();
+        function normalizeFilename(value) {
+            return String(value || "").trim().toLowerCase();
         }
 
-        function openBackupRestorePane(filename) {
+        function applyActiveFileRowHighlight() {
+            if (!fileList) return;
+            const viewed = normalizeFilename(activeViewedFilename);
+            const restoring = normalizeFilename(activeRestoreFilename);
+            const remoteName = normalizeFilename(remoteRestoreFilename);
+            fileList.querySelectorAll("li").forEach((row) => {
+                const rowName = normalizeFilename(row.getAttribute("data-filename") || row.getAttribute("data-name") || "");
+                const isViewed = !!viewed && rowName === viewed;
+                const isRestoring = !!restoring && rowName === restoring;
+                row.classList.toggle("file-row-active", isViewed || isRestoring);
+                row.classList.toggle("file-row-active-view", isViewed);
+                row.classList.toggle("file-row-active-restore", isRestoring);
+                row.classList.toggle("file-row-remote-restore", remoteRestoreActive && !!remoteName && rowName === remoteName);
+
+                const existing = row.querySelector(".restore-open-indicator");
+                if (existing) existing.remove();
+                if (remoteRestoreActive && !!remoteName && rowName === remoteName) {
+                    const indicator = document.createElement("div");
+                    indicator.className = "restore-open-indicator";
+                    indicator.textContent = `Restore pane is currently open in ${(remoteRestoreOpenedByName || "unknown")}'s browser`;
+                    row.prepend(indicator);
+                }
+            });
+        }
+
+        function setActiveViewedFilename(filename) {
+            activeViewedFilename = filename || "";
+            applyActiveFileRowHighlight();
+        }
+
+        function setActiveRestoreFilename(filename) {
+            activeRestoreFilename = filename || "";
+            applyActiveFileRowHighlight();
+        }
+
+        function setActiveLogSource(source) {
+            activeLogSource = String(source || "").trim().toLowerCase();
+            logSourceToggles.forEach((btn) => {
+                const sourceKey = String(btn.getAttribute("data-log-source") || "").trim().toLowerCase();
+                const isActive = !!activeLogSource && sourceKey === activeLogSource;
+                btn.classList.toggle("active", isActive);
+                btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+            });
+        }
+
+        function ensureFileListElement() {
+            if (fileList) return fileList;
+            const panel = document.querySelector(".pane-primary");
+            if (!panel) return null;
+            const dynamicEmpty = document.getElementById("list-empty-dynamic");
+            const emptyBlock = panel.querySelector(".empty");
+            const list = document.createElement("ul");
+            list.className = "list";
+            if (dynamicEmpty && dynamicEmpty.parentElement === panel) {
+                panel.insertBefore(list, dynamicEmpty);
+            } else if (emptyBlock && emptyBlock.parentElement === panel) {
+                panel.insertBefore(list, emptyBlock);
+            } else {
+                panel.appendChild(list);
+            }
+            fileList = list;
+            watchVerticalScrollbarClass(fileList);
+            ensureFileListClickBinding();
+            return fileList;
+        }
+
+        function ensureFileListClickBinding() {
+            if (!fileList || fileListClickBound) return;
+            fileList.addEventListener("click", async (event) => {
+                const target = event.target;
+                if (!(target instanceof Element)) return;
+                const viewBtn = target.closest(".file-view-btn");
+                if (!viewBtn) return;
+                event.preventDefault();
+                setDownloadError("");
+                const url = viewBtn.getAttribute("data-view-url") || "";
+                const downloadUrl = viewBtn.getAttribute("data-download-url") || "";
+                const filename = viewBtn.getAttribute("data-filename") || "File Viewer";
+                if (!url) return;
+                await runFileView({ url, downloadUrl, filename });
+            });
+            fileListClickBound = true;
+        }
+
+        function isServerOffForRestore(metricsPayload) {
+            const runningStatus = String(metricsPayload?.service_running_status || "").trim().toLowerCase();
+            if (runningStatus === "inactive" || runningStatus === "failed") return true;
+            const displayStatus = String(metricsPayload?.service_status || "").trim().toLowerCase();
+            return displayStatus === "off";
+        }
+
+        function syncRestoreAvailabilityUi() {
+            if (pageId !== "backups") return;
+            const restoreDisabled = !restoreServerIsOff;
+            const blockedTitle = "Restore is only available when server status is Off.";
+            document.querySelectorAll(".file-restore-btn").forEach((btn) => {
+                btn.disabled = restoreDisabled;
+                btn.title = restoreDisabled ? blockedTitle : "";
+            });
+            if (backupRestoreStart) {
+                const hasSelection = !!selectedRestoreFilename;
+                backupRestoreStart.disabled = restoreDisabled || !hasSelection;
+                backupRestoreStart.title = restoreDisabled ? blockedTitle : "";
+            }
+            if (backupRestoreRollback) {
+                backupRestoreRollback.disabled = restoreDisabled || !restoreUndoAllowedByState;
+                backupRestoreRollback.title = restoreDisabled ? blockedTitle : "";
+            }
+        }
+
+        async function refreshRestoreAvailability() {
+            if (pageId !== "backups") return;
+            try {
+                const response = await fetch("/metrics", {
+                    method: "GET",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store",
+                });
+                if (!response.ok) {
+                    restoreServerIsOff = false;
+                    syncRestoreAvailabilityUi();
+                    return;
+                }
+                const payload = await response.json().catch(() => ({}));
+                restoreServerIsOff = isServerOffForRestore(payload);
+            } catch (_) {
+                restoreServerIsOff = false;
+            }
+            syncRestoreAvailabilityUi();
+        }
+
+        function openBackupRestorePane(filename, source = "local") {
             if (pageId !== "backups") return;
             selectedRestoreFilename = filename || "";
+            restorePaneForcedByRemote = source === "remote";
+            setActiveRestoreFilename(selectedRestoreFilename);
+            if (restorePaneForcedByRemote) {
+                stopRestorePaneAlertHeartbeat();
+            } else {
+                startRestorePaneAlertHeartbeat();
+            }
             openViewer();
             setBackupRestoreControlsVisible(true);
+            syncRestoreAvailabilityUi();
             if (fileViewerTitle) {
                 fileViewerTitle.textContent = selectedRestoreFilename
                     ? `Restore: ${selectedRestoreFilename}`
@@ -202,11 +369,9 @@
             if (pageId !== "backups") return;
             const running = !!(statusPayload && statusPayload.running);
             undoRestoreFilename = statusPayload ? (statusPayload.undo_filename || "") : "";
-            const canUndo = !running && !!undoRestoreFilename;
-            if (backupRestoreRollback) {
-                backupRestoreRollback.disabled = !canUndo;
-            }
-            setViewerDownloadMode("undo_restore", "Undo", canUndo, { filename: undoRestoreFilename });
+            restoreUndoAllowedByState = !running && !!undoRestoreFilename;
+            syncRestoreAvailabilityUi();
+            setViewerDownloadMode("undo_restore", "Undo", restoreServerIsOff && restoreUndoAllowedByState, { filename: undoRestoreFilename });
         }
 
         async function pollRestoreStatus() {
@@ -265,6 +430,7 @@
             if (pageId !== "backups") return;
             restorePollJobId = jobId || "";
             restorePollSeq = 0;
+            startRestorePaneAlertHeartbeat();
             ensureRestoreViewerOpen(title || "Restore Progress");
             if (fileViewerContent) fileViewerContent.innerHTML = "";
             applyRestoreUndoState({ running: true, undo_filename: "" });
@@ -272,6 +438,83 @@
             if (restorePollJobId) {
                 scheduleRestorePoll(200);
             }
+        }
+
+        async function sendRestorePaneOpenSignal() {
+            if (pageId !== "backups") return;
+            const filename = (selectedRestoreFilename || activeRestoreFilename || "").trim();
+            try {
+                await fetch("/maintenance/nav-alert/restore-pane-open", {
+                    method: "POST",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRF-Token": csrfToken || "",
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ filename, client_id: restorePaneClientId }),
+                    cache: "no-store",
+                    keepalive: true,
+                });
+            } catch (_) {
+                // Best-effort nav attention signal.
+            }
+        }
+
+        function stopRestorePaneAlertHeartbeat() {
+            if (!restorePaneAlertTimer) return;
+            window.clearInterval(restorePaneAlertTimer);
+            restorePaneAlertTimer = null;
+        }
+
+        function startRestorePaneAlertHeartbeat() {
+            if (pageId !== "backups") return;
+            sendRestorePaneOpenSignal();
+            if (restorePaneAlertTimer) return;
+            restorePaneAlertTimer = window.setInterval(sendRestorePaneOpenSignal, 8000);
+        }
+
+        function stopRestorePaneStatePolling() {
+            if (!restorePaneStatePollTimer) return;
+            window.clearInterval(restorePaneStatePollTimer);
+            restorePaneStatePollTimer = null;
+        }
+
+        async function refreshRestorePaneSharedState() {
+            if (pageId !== "backups") return;
+            try {
+                const response = await fetch("/maintenance/nav-alert/state", {
+                    method: "GET",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-MCWEB-Client-Id": restorePaneClientId,
+                    },
+                    cache: "no-store",
+                });
+                if (!response.ok) return;
+                const payload = await response.json().catch(() => ({}));
+                const active = !!payload.restore_pane_attention;
+                const openedBySelf = !!payload.restore_pane_opened_by_self;
+                const filename = String(payload.restore_pane_filename || "").trim();
+                const openerName = String(payload.restore_pane_opened_by_name || "").trim();
+                remoteRestoreActive = active && !!filename && !openedBySelf;
+                remoteRestoreFilename = remoteRestoreActive ? filename : "";
+                remoteRestoreOpenedByName = remoteRestoreActive ? (openerName || "unknown") : "";
+
+                if (!remoteRestoreActive && restorePaneForcedByRemote) {
+                    restorePaneForcedByRemote = false;
+                    closeViewer();
+                }
+                applyActiveFileRowHighlight();
+            } catch (_) {
+                // Best-effort shared state refresh.
+            }
+        }
+
+        function startRestorePaneStatePolling() {
+            if (pageId !== "backups") return;
+            refreshRestorePaneSharedState();
+            if (restorePaneStatePollTimer) return;
+            restorePaneStatePollTimer = window.setInterval(refreshRestorePaneSharedState, 5000);
         }
 
         function sortKeyForItem(item, mode) {
@@ -311,6 +554,86 @@
             if (!fileList) return;
             const items = Array.from(fileList.querySelectorAll("li"));
             sortItems(items, mode).forEach((item) => fileList.appendChild(item));
+        }
+
+        function buildLogFileItemRow(item, payload) {
+            const safeName = String(item?.name || "").trim();
+            if (!safeName) return "";
+            const nameHtml = escapeHtml(safeName);
+            const nameLowerHtml = escapeHtml(safeName.toLowerCase());
+            const source = encodeURIComponent(String(payload?.source || ""));
+            const encodedFile = encodeURIComponent(safeName);
+            const viewBase = String(payload?.view_base || "");
+            const downloadBase = String(payload?.download_base || "");
+            const viewUrl = viewBase ? `${viewBase}/${encodedFile}` : `/view-log-file/${source}/${encodedFile}`;
+            const downloadUrl = downloadBase ? `${downloadBase}/${encodedFile}` : `/download/log-files/${source}/${encodedFile}`;
+            const mtime = Number(item?.mtime || 0);
+            const sizeBytes = Number(item?.size_bytes || 0);
+            const modified = escapeHtml(String(item?.modified || ""));
+            const sizeText = escapeHtml(String(item?.size_text || ""));
+            return `
+<li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
+    <span class="file-name">${nameHtml}</span>
+    <div class="file-actions">
+        <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
+        <button
+            class="file-action-btn file-view-btn"
+            type="button"
+            data-view-url="${viewUrl}"
+            data-download-url="${downloadUrl}"
+            data-filename="${nameHtml}"
+        >View</button>
+    </div>
+    <span class="meta">${modified} | ${sizeText}</span>
+</li>`.trim();
+        }
+
+        function renderLogFileList(payload) {
+            const list = ensureFileListElement();
+            if (!list) return;
+            const items = Array.isArray(payload?.items) ? payload.items : [];
+            const rows = items.map((item) => buildLogFileItemRow(item, payload)).filter(Boolean);
+            list.innerHTML = rows.join("\n");
+            if (listEmptyDynamic) {
+                listEmptyDynamic.style.display = rows.length > 0 ? "none" : "block";
+            }
+            const emptyBlock = document.querySelector(".pane-primary .empty");
+            if (emptyBlock) {
+                emptyBlock.style.display = rows.length > 0 ? "none" : "block";
+            }
+            applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
+            setActiveViewedFilename("");
+            applyActiveFileRowHighlight();
+        }
+
+        async function loadLogFileSourceList(source) {
+            const sourceKey = String(source || "").trim().toLowerCase();
+            if (!sourceKey) return;
+            let response;
+            try {
+                response = await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
+                    method: "GET",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store",
+                });
+            } catch (_) {
+                setDownloadError("Failed to load log file list.");
+                return;
+            }
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (_) {
+                payload = null;
+            }
+            if (!response.ok || !payload || payload.ok === false) {
+                setDownloadError((payload && payload.message) ? payload.message : "Failed to load log file list.");
+                return;
+            }
+            setDownloadError("");
+            currentLogFileSource = String(payload.source || sourceKey);
+            setActiveLogSource(currentLogFileSource);
+            renderLogFileList(payload);
         }
 
         function backupCategoryFromName(name) {
@@ -415,7 +738,16 @@
             const finishClose = () => {
                 fileViewer.setAttribute("aria-hidden", "true");
                 if (pageId === "backups") {
+                    selectedRestoreFilename = "";
+                    restorePaneForcedByRemote = false;
                     setBackupRestoreControlsVisible(false);
+                    setActiveRestoreFilename("");
+                    stopRestorePaneAlertHeartbeat();
+                } else {
+                    setActiveViewedFilename("");
+                    if (pageId !== "minecraft_logs") {
+                        setActiveLogSource("");
+                    }
                 }
                 if (fileViewerResizer) {
                     fileViewerResizer.classList.remove("is-dragging");
@@ -770,6 +1102,10 @@
 
         async function runFileView(viewRequest) {
             if (!fileViewer || !fileViewerContent || !fileViewerTitle) return;
+            if (pageId !== "minecraft_logs") {
+                setActiveLogSource("");
+            }
+            setActiveViewedFilename(viewRequest.filename || "");
             fileViewerTitle.textContent = viewRequest.filename || "File Viewer";
             fileViewerContent.textContent = "Loading...";
             setViewerDownloadMode("download_viewed", "Download", false, {
@@ -804,12 +1140,54 @@
                 return;
             }
             fileViewerTitle.textContent = payload.filename || viewRequest.filename || "File Viewer";
+            setActiveViewedFilename(payload.filename || viewRequest.filename || "");
             fileViewerContent.innerHTML = formatViewerLogHtml(payload.content || "");
             fileViewerContent.scrollTop = 0;
             setViewerDownloadMode("download_viewed", "Download", true, {
                 downloadUrl: viewRequest.downloadUrl || "",
                 filename: payload.filename || viewRequest.filename || "",
             });
+        }
+
+        async function runLogSourceView(logRequest) {
+            if (!fileViewer || !fileViewerContent || !fileViewerTitle) return;
+            const source = String(logRequest?.source || "").trim();
+            const title = String(logRequest?.title || "Log Viewer").trim();
+            if (!source) return;
+            setActiveViewedFilename("");
+            setActiveLogSource(source);
+            fileViewerTitle.textContent = title;
+            fileViewerContent.textContent = "Loading...";
+            setViewerDownloadMode("", "Download", false, {});
+            openViewer();
+
+            let response;
+            try {
+                response = await fetch(`/log-text/${encodeURIComponent(source)}`, {
+                    method: "GET",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    cache: "no-store",
+                });
+            } catch (_) {
+                fileViewerContent.textContent = "Failed to load log source.";
+                return;
+            }
+
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (_) {
+                payload = null;
+            }
+            if (!response.ok || !payload) {
+                fileViewerContent.innerHTML = formatViewerLogHtml("Failed to load log source.");
+                return;
+            }
+            const logs = String(payload.logs || "(no logs)");
+            fileViewerContent.innerHTML = formatViewerLogHtml(logs);
+            fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
         }
 
         if (passwordCancel) {
@@ -868,11 +1246,14 @@
         if (backupRestoreStart) {
             backupRestoreStart.addEventListener("click", () => {
                 if (pageId !== "backups" || !selectedRestoreFilename) return;
+                if (!restoreServerIsOff) {
+                    setDownloadError("Restore is disabled while server is not Off.");
+                    return;
+                }
                 setDownloadError("");
                 openPasswordModal({
                     kind: "restore",
                     filename: selectedRestoreFilename,
-                    prefillPassword: getRestorePasswordSeed(),
                 });
             });
         }
@@ -884,10 +1265,13 @@
         if (backupRestoreRollback) {
             backupRestoreRollback.addEventListener("click", () => {
                 if (pageId !== "backups" || backupRestoreRollback.disabled) return;
+                if (!restoreServerIsOff) {
+                    setDownloadError("Rollback is disabled while server is not Off.");
+                    return;
+                }
                 setDownloadError("");
                 openPasswordModal({
                     kind: "undo_restore",
-                    prefillPassword: getRestorePasswordSeed(),
                 });
             });
         }
@@ -965,20 +1349,37 @@
 
         document.querySelectorAll(".file-restore-btn").forEach((btn) => {
             btn.addEventListener("click", () => {
+                if (!restoreServerIsOff) {
+                    setDownloadError("Restore is disabled while server is not Off.");
+                    return;
+                }
                 setDownloadError("");
                 const filename = btn.getAttribute("data-filename") || "";
                 if (!filename) return;
                 openBackupRestorePane(filename);
             });
         });
-        document.querySelectorAll(".file-view-btn").forEach((btn) => {
+        if (pageId === "backups") {
+            syncRestoreAvailabilityUi();
+            refreshRestoreAvailability();
+            startRestorePaneStatePolling();
+            window.setInterval(refreshRestoreAvailability, 5000);
+            window.addEventListener("beforeunload", stopRestorePaneStatePolling);
+        }
+        ensureFileListClickBinding();
+        logSourceToggles.forEach((btn) => {
             btn.addEventListener("click", async () => {
                 setDownloadError("");
-                const url = btn.getAttribute("data-view-url") || "";
-                const downloadUrl = btn.getAttribute("data-download-url") || "";
-                const filename = btn.getAttribute("data-filename") || "File Viewer";
-                if (!url) return;
-                await runFileView({ url, downloadUrl, filename });
+                const source = btn.getAttribute("data-log-source") || "";
+                if (!source) return;
+                await loadLogFileSourceList(source);
             });
         });
+        if (pageId === "minecraft_logs") {
+            currentLogFileSource = "minecraft";
+            setActiveLogSource("minecraft");
+            if (logSourceToggles.length > 0) {
+                loadLogFileSourceList(currentLogFileSource);
+            }
+        }
     })();

@@ -27,7 +27,7 @@
                             {% if debug_actions_enabled %}
                             <p class="debug-header-note">Debug mode is enabled at boot. Changes here are runtime-only and reset after app restart.</p>
                             {% else %}
-                            <p class="debug-header-note">Dummy mode: UI actions are interactive but disconnected from backend routes. Set both `MCWEB_PROFILE=debug` and `DEBUG=true` to enable real actions.</p>
+                            <p class="debug-header-note">Dummy mode: UI actions are interactive but disconnected from backend routes. Set `DEBUG=true` to enable real actions.</p>
                             {% endif %}
                         </div>
                         {% if debug_message %}

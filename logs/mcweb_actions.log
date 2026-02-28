@@ -259,3 +259,88 @@ Feb 27 07:31:12 <100.118.168.2> [mcweb/stop]
 Feb 27 15:14:14 <192.168.1.202> [mcweb/reject] /maintenance/api/manual-delete rejected: Security check failed (csrf_invalid).
 Feb 27 18:59:27 <100.118.168.2> [mcweb/start]
 Feb 27 22:05:03 <192.168.1.202> [mcweb/backup]
+Feb 28 21:56:59 <100.66.52.121> [mcweb/start]
+Feb 28 21:57:04 <100.66.52.121> [mcweb/start]
+Feb 28 21:57:11 <mcweb> [mcweb/start-worker] rejected: Failed to start service: timed out issuing non-blocking start.
+Feb 28 21:57:16 <mcweb> [mcweb/start-worker] rejected: Failed to start service: timed out issuing non-blocking start.
+Feb 28 23:04:10 <100.66.52.121> [mcweb/start]
+Feb 28 23:08:12 <100.66.52.121> [mcweb/start]
+Feb 28 23:08:14 <100.66.52.121> [mcweb/start]
+Feb 28 23:58:06 <100.66.52.121> [mcweb/backup] rejected: Backup failed: Backup command returned non-zero exit status.
+Feb 28 23:58:35 <100.66.52.121> [mcweb/start]
+Mar 01 00:27:12 <100.66.52.121> [mcweb/backup]
+Mar 01 00:56:11 <100.66.52.121> [mcweb/backup]
+Mar 01 00:58:04 <100.66.52.121> [mcweb/start]
+Mar 01 00:58:04 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 00:58:10 <100.66.52.121> [mcweb/start]
+Mar 01 00:58:10 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 00:59:58 <100.66.52.121> [mcweb/start]
+Mar 01 00:59:58 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:00:04 <100.66.52.121> [mcweb/reject] /start rejected: Security check failed (csrf_invalid).
+Mar 01 01:00:04 <100.66.52.121> [mcweb/reject] /ui-error-log rejected: Security check failed (csrf_invalid).
+Mar 01 01:00:07 <100.66.52.121> [mcweb/reject] /start rejected: Security check failed (csrf_invalid).
+Mar 01 01:00:07 <100.66.52.121> [mcweb/reject] /ui-error-log rejected: Security check failed (csrf_invalid).
+Mar 01 01:00:12 <100.66.52.121> [mcweb/start]
+Mar 01 01:00:12 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:00:13 <100.66.52.121> [mcweb/start]
+Mar 01 01:00:13 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:01:59 <100.66.52.121> [mcweb/start]
+Mar 01 01:01:59 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:06:58 <mcweb> [mcweb/auto-stop-crash] marker=Feb 28 17:06:33 serverb bash[2103]: [17:06:33] [Server thread/FATAL] [ne.mi.co.ForgeMod/]: Preparing crash report with UUID dafd4611-7536-4a35-9593-7ba0f920aaa2 grace=15s rejected: systemd stop did not reach inactive/failed within timeout.
+Mar 01 01:08:24 <100.66.52.121> [mcweb/start]
+Mar 01 01:08:24 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:11:17 <100.66.52.121> [mcweb/start]
+Mar 01 01:11:17 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:11:18 <100.66.52.121> [mcweb/start]
+Mar 01 01:11:18 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:11:19 <100.66.52.121> [mcweb/start]
+Mar 01 01:11:19 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:12:25 <100.66.52.121> [mcweb/start]
+Mar 01 01:12:25 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:14:35 <mcweb> [mcweb/auto-stop-crash] marker=Feb 28 17:14:10 serverb bash[1668]: [17:14:10] [Server thread/FATAL] [ne.mi.co.ForgeMod/]: Preparing crash report with UUID e008743e-667e-4449-85eb-d6afbe337a9b grace=15s rejected: systemd stop did not reach inactive/failed within timeout.
+Mar 01 01:16:35 <100.66.52.121> [mcweb/start]
+Mar 01 01:16:35 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:16:39 <100.66.52.121> [mcweb/start]
+Mar 01 01:16:39 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:17:03 <100.66.52.121> [mcweb/backup] rejected: Backup failed: [2026-02-28 17:17:03] backup run started | [2026-02-28 17:17:03] rcon.password missing in /home/marites/Minecraft/server.properties | [2026-02-28 17:17:03] backup aborted: RCON is required while service 'minecraft' is active (missing rcon.password).
+Mar 01 01:19:36 <100.66.52.121> [mcweb/stop] rejected: Password incorrect.
+Mar 01 01:20:42 <100.66.52.121> [mcweb/start]
+Mar 01 01:20:42 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:21:02 <100.66.52.121> [mcweb/start]
+Mar 01 01:21:02 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:21:11 <100.66.52.121> [mcweb/backup]
+Mar 01 01:23:16 <100.66.52.121> [mcweb/backup]
+Mar 01 01:23:30 <100.66.52.121> [mcweb/backup]
+Mar 01 01:23:43 <100.66.52.121> [mcweb/start]
+Mar 01 01:23:43 <mcweb> [mcweb/start-worker] rejected: Failed to start service: sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper sudo: a password is required
+Mar 01 01:26:07 <100.66.52.121> [mcweb/start]
+Mar 01 01:32:14 <100.66.52.121> [mcweb/stop] rejected: Password incorrect.
+Mar 01 01:32:25 <100.66.52.121> [mcweb/stop] rejected: Password incorrect.
+Mar 01 01:35:15 <100.66.52.121> [mcweb/stop]
+Mar 01 01:35:27 <100.66.52.121> [mcweb/backup] rejected: Backup failed: [2026-02-28 17:35:27] backup run started | [2026-02-28 17:35:27] rcon.password missing in /home/marites/Minecraft/server.properties | [2026-02-28 17:35:27] backup aborted: RCON is required while service 'minecraft' is active (missing rcon.password).
+Mar 01 01:37:05 <100.66.52.121> [mcweb/backup]
+Mar 01 01:46:38 <100.66.52.121> [mcweb/start]
+Mar 01 01:47:47 <100.66.52.121> [mcweb/backup]
+Mar 01 01:48:16 <100.66.52.121> [mcweb/backup]
+Mar 01 01:48:32 <100.66.52.121> [mcweb/submit] op SulOmteA
+Mar 01 01:51:51 <100.66.52.121> [mcweb/stop] rejected: Password incorrect.
+Mar 01 01:52:21 <100.66.52.121> [mcweb/stop]
+Mar 01 01:57:33 <100.66.52.121> [mcweb/start]
+Mar 01 02:02:22 <100.66.52.121> [mcweb/stop]
+Mar 01 02:08:47 <100.66.52.121> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip (started)
+Mar 01 02:08:47 <mcweb> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip rejected: Failed to create pre-restore snapshot. Restore cancelled. sudo: a password is required
+Mar 01 02:09:00 <100.66.52.121> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip (started)
+Mar 01 02:09:00 <mcweb> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip rejected: Failed to create pre-restore snapshot. Restore cancelled. sudo: a password is required
+Mar 01 02:12:54 <100.66.52.121> [mcweb/reject] /restore-backup rejected: Security check failed (csrf_invalid).
+Mar 01 02:13:02 <100.66.52.121> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip (started)
+Mar 01 02:37:46 <100.66.52.121> [mcweb/reject] /maintenance/nav-alert/restore-pane-open rejected: Security check failed (csrf_invalid).
+Mar 01 02:38:06 <100.66.52.121> [mcweb/reject] /maintenance/nav-alert/restore-pane-open rejected: Security check failed (csrf_invalid).
+Mar 01 02:55:56 <100.66.52.121> [mcweb/restore-backup] The_Server_2026-02-28_18-02-16_session_end.zip (started)
+Mar 01 03:00:29 <100.66.52.121> [mcweb/start]
+Mar 01 03:04:11 <100.66.52.121> [mcweb/backup] rejected: Backup failed: [2026-02-28 19:04:11] backup run started | [2026-02-28 19:04:11] rcon.password missing in /home/marites/Minecraft/server.properties | [2026-02-28 19:04:11] backup aborted: RCON is required while service 'minecraft' is active (missing rcon.password).
+Mar 01 03:05:08 <100.66.52.121> [mcweb/stop]
+Mar 01 03:11:24 <100.66.52.121> [mcweb/reject] /start rejected: Security check failed (csrf_invalid).
+Mar 01 03:11:24 <100.66.52.121> [mcweb/reject] /ui-error-log rejected: Security check failed (csrf_invalid).
+Mar 01 03:11:28 <100.66.52.121> [mcweb/start]
+Mar 01 03:13:51 <100.66.52.121> [mcweb/backup]
+Mar 01 03:20:54 <100.66.52.121> [mcweb/backup]

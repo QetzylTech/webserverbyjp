@@ -80,13 +80,19 @@ html.theme-dark {
 }
 
 .nav-link.nav-attention {
-    animation: navAttentionPulse 1.1s ease-in-out infinite;
+    animation: navAttentionPulse 0.45s ease-in-out infinite;
+    color: #ffffff !important;
+}
+
+.nav-link.active.nav-attention {
+    animation: navAttentionPulse 0.45s ease-in-out infinite;
+    color: #ffffff !important;
 }
 
 @keyframes navAttentionPulse {
-    0% { background: var(--ui-red); color: #fff; }
-    50% { background: var(--ui-red-hover); color: #fff; }
-    100% { background: var(--ui-red); color: #fff; }
+    0% { background: #7f1d1d; }
+    50% { background: var(--ui-red-hover); }
+    100% { background: #7f1d1d; }
 }
 
 html.theme-dark .nav-link:hover {
@@ -175,6 +181,20 @@ html.theme-dark .nav-separator {
     cursor: pointer;
     box-shadow: none;
     transition: transform 0.2s ease;
+}
+
+.nav-toggle.nav-attention {
+    animation: navToggleAttentionPulse 0.45s ease-in-out infinite;
+}
+
+@keyframes navToggleAttentionPulse {
+    0% { background: #7f1d1d; }
+    50% { background: var(--ui-red-hover); }
+    100% { background: #7f1d1d; }
+}
+
+.nav-toggle.nav-attention .nav-toggle-bar {
+    background: #ffffff;
 }
 
 .nav-backdrop {
@@ -453,7 +473,7 @@ button,
 .debug-pane-reset,
 .rule-toggle-btn.on,
 .maintenance-toggle-btn.active,
-.nav-link.active,
+.nav-link.active:not(.nav-attention),
 select,
 #log-source,
 .sort-select,
@@ -475,7 +495,7 @@ select.debug-props-input {
 .debug-pane-reset:hover,
 .rule-toggle-btn.on:hover,
 .maintenance-toggle-btn.active:hover,
-.nav-link.active:hover,
+.nav-link.active:not(.nav-attention):hover,
 select:hover,
 #log-source:hover,
 .sort-select:hover,

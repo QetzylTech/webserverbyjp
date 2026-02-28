@@ -11,7 +11,6 @@ from app.services.maintenance_basics import (
     _cleanup_data_dir,
     _cleanup_error,
     _cleanup_get_client_ip,
-    _cleanup_json_path,
     _cleanup_load_config,
     _cleanup_get_scope_view,
     _cleanup_normalize_scope,
@@ -19,6 +18,7 @@ from app.services.maintenance_basics import (
     _cleanup_log,
     _cleanup_non_normal_path,
     _cleanup_now_iso,
+    _cleanup_save_config,
 )
 from app.services.maintenance_candidates import _cleanup_active_world_path
 from app.services.maintenance_rules import (
@@ -177,7 +177,7 @@ def register_maintenance_routes(app, state):
         meta["schedule_version"] = int(meta.get("schedule_version", 0)) + 1
         meta["last_changed_by"] = _cleanup_get_client_ip(state)
         meta["last_changed_at"] = _cleanup_now_iso(state)
-        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+        _cleanup_save_config(state, full_cfg)
         _cleanup_log(
             state,
             what="save_rules",
@@ -215,7 +215,7 @@ def register_maintenance_routes(app, state):
         meta["schedule_version"] = int(meta.get("schedule_version", 0)) + 1
         meta["last_changed_by"] = _cleanup_get_client_ip(state)
         meta["last_changed_at"] = _cleanup_now_iso(state)
-        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+        _cleanup_save_config(state, full_cfg)
         _cleanup_log(
             state,
             what="save_schedules",
@@ -298,7 +298,7 @@ def register_maintenance_routes(app, state):
         meta["last_run_result"] = "ok" if not result["errors"] else "partial"
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
-        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+        _cleanup_save_config(state, full_cfg)
         _cleanup_append_history(
             state,
             trigger=f"manual_rule:{selected_rule or 'all'}",
@@ -382,7 +382,7 @@ def register_maintenance_routes(app, state):
         meta["last_run_result"] = "ok" if not result["errors"] else "partial"
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
-        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+        _cleanup_save_config(state, full_cfg)
         _cleanup_append_history(
             state,
             trigger="manual_selection",

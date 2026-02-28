@@ -9,6 +9,63 @@ from flask import Response, abort, jsonify, render_template, request, send_from_
 def register_file_routes(app, state):
     """Register file browsing, log streaming, and metrics routes."""
 
+    def _log_file_source_spec(source):
+        normalized = str(source or "").strip().lower()
+        log_dir = state["MCWEB_LOG_FILE"].parent
+        if normalized == "minecraft":
+            return {
+                "key": "minecraft",
+                "base_dir": state["MINECRAFT_LOGS_DIR"],
+                "patterns": ("*.log", "*.gz"),
+                "download_base": "/download/minecraft-logs",
+                "view_base": "/view-file/minecraft_logs",
+            }
+        if normalized == "backup":
+            return {
+                "key": "backup",
+                "base_dir": log_dir,
+                "patterns": ("backup.log*",),
+                "download_base": "/download/log-files/backup",
+                "view_base": "/view-log-file/backup",
+            }
+        if normalized == "mcweb":
+            return {
+                "key": "mcweb",
+                "base_dir": log_dir,
+                "patterns": ("mcweb_actions.log*",),
+                "download_base": "/download/log-files/mcweb",
+                "view_base": "/view-log-file/mcweb",
+            }
+        if normalized == "mcweb_log":
+            return {
+                "key": "mcweb_log",
+                "base_dir": log_dir,
+                "patterns": ("mcweb.log*",),
+                "download_base": "/download/log-files/mcweb_log",
+                "view_base": "/view-log-file/mcweb_log",
+            }
+        return None
+
+    def _log_file_items_from_spec(spec):
+        if not spec:
+            return []
+        merged_by_name = {}
+        for pattern in spec["patterns"]:
+            for item in state["_list_download_files"](spec["base_dir"], pattern, state["DISPLAY_TZ"]):
+                merged_by_name[item["name"]] = dict(item)
+        items = list(merged_by_name.values())
+        items.sort(key=lambda item: item.get("mtime", 0), reverse=True)
+        return items
+
+    def _resolve_log_file(source, filename):
+        spec = _log_file_source_spec(source)
+        if spec is None:
+            return None, None
+        safe_name = state["_safe_filename_in_dir"](spec["base_dir"], filename)
+        if safe_name is None:
+            return spec, None
+        return spec, safe_name
+
     # Route: /backups
     @app.route("/backups")
     def backups_page():
@@ -108,6 +165,38 @@ def register_file_routes(app, state):
             return abort(404)
         return send_from_directory(str(state["MINECRAFT_LOGS_DIR"]), safe_name, as_attachment=True)
 
+    # Route: /download/log-files/<source>/<path:filename>
+    @app.route("/download/log-files/<source>/<path:filename>")
+    def download_log_file(source, filename):
+        """Download one non-minecraft log file by source key."""
+        spec, safe_name = _resolve_log_file(source, filename)
+        if spec is None or safe_name is None:
+            return abort(404)
+        return send_from_directory(str(spec["base_dir"]), safe_name, as_attachment=True)
+
+    # Route: /log-files/<source>
+    @app.route("/log-files/<source>")
+    def list_log_files(source):
+        """Return file-list payload for one log source."""
+        state["ensure_file_page_cache_refresher_started"]()
+        state["_mark_file_page_client_active"]()
+        spec = _log_file_source_spec(source)
+        if spec is None:
+            return jsonify({"ok": False, "message": "Invalid log file source."}), 404
+        if spec["key"] == "minecraft":
+            items = state["get_cached_file_page_items"]("minecraft_logs")
+        else:
+            items = _log_file_items_from_spec(spec)
+        return jsonify(
+            {
+                "ok": True,
+                "source": spec["key"],
+                "items": items,
+                "download_base": spec["download_base"],
+                "view_base": spec["view_base"],
+            }
+        )
+
     # Route: /view-file/<source>/<path:filename>
     @app.route("/view-file/<source>/<path:filename>")
     def view_file(source, filename):
@@ -125,6 +214,58 @@ def register_file_routes(app, state):
             return jsonify({"ok": False, "message": "File not found."}), 404
 
         file_path = base_dir / safe_name
+        max_bytes = 2_000_000
+        try:
+            if safe_name.lower().endswith(".gz"):
+                # Stream-decompress and keep only a tail window for very large gzip logs.
+                tail_chunks = deque()
+                tail_len = 0
+                truncated = False
+                with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
+                    while True:
+                        chunk = f.read(64 * 1024)
+                        if not chunk:
+                            break
+                        tail_chunks.append(chunk)
+                        tail_len += len(chunk)
+                        while tail_len > max_bytes and tail_chunks:
+                            truncated = True
+                            overflow = tail_len - max_bytes
+                            head = tail_chunks[0]
+                            if len(head) <= overflow:
+                                tail_len -= len(head)
+                                tail_chunks.popleft()
+                            else:
+                                tail_chunks[0] = head[overflow:]
+                                tail_len -= overflow
+                text = "".join(tail_chunks)
+                if truncated:
+                    text = f"[truncated to last {max_bytes} characters]\n{text}"
+            else:
+                size = file_path.stat().st_size
+                if size > max_bytes:
+                    with file_path.open("rb") as f:
+                        f.seek(max(0, size - max_bytes))
+                        raw = f.read(max_bytes)
+                    text = "[truncated to last 2000000 bytes]\n" + raw.decode("utf-8", errors="ignore")
+                else:
+                    text = file_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return jsonify({"ok": False, "message": "Unable to read file."}), 500
+
+        return jsonify({"ok": True, "filename": safe_name, "content": text})
+
+    # Route: /view-log-file/<source>/<path:filename>
+    @app.route("/view-log-file/<source>/<path:filename>")
+    def view_log_file(source, filename):
+        """View one non-minecraft log file by source key."""
+        spec, safe_name = _resolve_log_file(source, filename)
+        if spec is None:
+            return jsonify({"ok": False, "message": "Invalid log file source."}), 404
+        if safe_name is None:
+            return jsonify({"ok": False, "message": "File not found."}), 404
+
+        file_path = spec["base_dir"] / safe_name
         max_bytes = 2_000_000
         try:
             if safe_name.lower().endswith(".gz"):

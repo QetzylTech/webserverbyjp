@@ -8,8 +8,6 @@ from app.services.maintenance_basics import (
     _cleanup_append_history,
     _safe_int,
     _cleanup_atomic_write_json,
-    _cleanup_history_path,
-    _cleanup_json_path,
     _cleanup_load_config,
     _cleanup_get_scope_view,
     _cleanup_load_history,
@@ -18,6 +16,8 @@ from app.services.maintenance_basics import (
     _cleanup_mark_missed_run,
     _cleanup_non_normal_path,
     _cleanup_now_iso,
+    _cleanup_save_config,
+    _cleanup_save_history,
     _cleanup_safe_used_percent,
 )
 from app.services.maintenance_rules import _cleanup_schedule_due_now
@@ -82,7 +82,7 @@ def _cleanup_scheduler_loop(state):
                                     result=meta["last_run_result"],
                                     details=f"deleted={result['deleted_count']};errors={len(result['errors'])}",
                                 )
-                                _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+                                _cleanup_save_config(state, full_cfg)
                             boot_event_done.add(scope)
                         elif event_name == "low_free_space":
                             used_percent, _, _ = _cleanup_safe_used_percent(state["BACKUP_DIR"])
@@ -122,7 +122,7 @@ def _cleanup_scheduler_loop(state):
                                         result=meta["last_run_result"],
                                         details=f"deleted={result['deleted_count']};errors={len(result['errors'])}",
                                     )
-                                    _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+                                    _cleanup_save_config(state, full_cfg)
                         continue
 
                     if schedule.get("mode") == "time" and _cleanup_schedule_due_now(schedule, now_local):
@@ -160,7 +160,7 @@ def _cleanup_scheduler_loop(state):
                                 result=meta["last_run_result"],
                                 details=f"deleted={result['deleted_count']};errors={len(result['errors'])}",
                             )
-                        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+                        _cleanup_save_config(state, full_cfg)
         except Exception:
             _cleanup_mark_missed_run(state, "scheduler_exception")
         time.sleep(30)
@@ -172,9 +172,9 @@ def _cleanup_start_scheduler_once(state):
         if _cleanup_scheduler_started:
             return
         cfg = _cleanup_load_config(state)
-        _cleanup_atomic_write_json(_cleanup_json_path(state), cfg)
+        _cleanup_save_config(state, cfg)
         _cleanup_atomic_write_json(_cleanup_non_normal_path(state), _cleanup_load_non_normal(state))
-        _cleanup_atomic_write_json(_cleanup_history_path(state), _cleanup_load_history(state))
+        _cleanup_save_history(state, _cleanup_load_history(state))
         thread = threading.Thread(target=_cleanup_scheduler_loop, args=(state,), daemon=True, name="cleanup-scheduler")
         thread.start()
         _cleanup_scheduler_started = True
@@ -210,7 +210,7 @@ def _cleanup_run_event_if_enabled(state, event_name):
             result=meta["last_run_result"],
             scope=scope,
         )
-        _cleanup_atomic_write_json(_cleanup_json_path(state), full_cfg)
+        _cleanup_save_config(state, full_cfg)
         _cleanup_log(
             state,
             what="event_run",

@@ -23,10 +23,9 @@ def build_request_bindings(
     initialize_session_tracking,
     status_debug_note,
     low_storage_error_message,
-    users_file,
-    users_file_lock,
     display_tz,
     get_device_name_map,
+    app_state_db_path,
 ):
         # Return request-scoped callables with explicit runtime dependencies.
 
@@ -73,10 +72,9 @@ def build_request_bindings(
     def record_successful_password_ip(client_ip=None):
         return record_password_ip(
             request=request,
-            users_file=users_file,
-            users_file_lock=users_file_lock,
             display_tz=display_tz,
             device_name_lookup=get_device_name_map,
+            app_state_db_path=app_state_db_path,
             client_ip=client_ip,
         )
 

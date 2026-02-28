@@ -291,6 +291,22 @@ def _build_output_items(candidates, reasons_map, deleted_paths):
     return output_items
 
 
+def _build_deleted_output_items(rows):
+    """Build compact deleted-item rows for completion summaries."""
+    deleted_items = []
+    for row in rows:
+        deleted_items.append(
+            {
+                "name": row["name"],
+                "path": row["path"],
+                "category": row["category"],
+                "size": row["size"],
+                "mtime": row["mtime"],
+            }
+        )
+    return deleted_items
+
+
 def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
     """Handle cleanup evaluate."""
     selected_paths = set(selected_paths or [])
@@ -353,6 +369,7 @@ def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_cha
         "capped_delete_count": len(capped_targets),
         "deleted_count": len(deleted),
         "deleted_bytes": sum(int(row["size"]) for row in deleted),
+        "deleted_items": _build_deleted_output_items(deleted),
         "errors": errors,
         "items": output_items,
         "selected_ineligible": selected_ineligible,

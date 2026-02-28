@@ -10,10 +10,13 @@ from pathlib import Path
 import threading
 import re
 import json
+import os
+import time
 from collections import deque
 from zoneinfo import ZoneInfo
 from app.core.config import apply_default_flask_config, resolve_secret_key
 from app.core.device_map import get_device_name_map as _device_name_map_lookup
+from app.core import state_db as state_db_service
 from app.core.filesystem_utils import (
     list_download_files as _list_download_files,
     read_recent_file_lines as _read_recent_file_lines,
@@ -68,32 +71,42 @@ apply_default_flask_config(app)
 FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
 SERVICE = _cfg_str("SERVICE", "minecraft")
 ADMIN_PASSWORD_HASH = _cfg_str("MCWEB_ADMIN_PASSWORD_HASH", "")
-BACKUP_SCRIPT = _cfg_path("BACKUP_SCRIPT", APP_DIR / "scripts" / "backup.sh")
+BACKUP_SCRIPT = APP_DIR / "scripts" / "backup.sh"
 BACKUP_DIR = _cfg_path("BACKUP_DIR", Path("/home/marites/backups"))
-WORLD_DIR = Path("/opt/Minecraft/config")
-CRASH_REPORTS_DIR = _cfg_path("CRASH_REPORTS_DIR", APP_DIR.parent / "crash-reports")
-MINECRAFT_LOGS_DIR = _cfg_path("MINECRAFT_LOGS_DIR", APP_DIR.parent / "logs")
-MCWEB_LOG_DIR = _cfg_path("MCWEB_LOG_DIR", APP_DIR / "logs")
+MINECRAFT_ROOT_DIR = _cfg_path("MINECRAFT_ROOT_DIR", Path("/opt/Minecraft"))
+WORLD_DIR = MINECRAFT_ROOT_DIR / "config"
+CRASH_REPORTS_DIR = MINECRAFT_ROOT_DIR / "crash-reports"
+MINECRAFT_LOGS_DIR = MINECRAFT_ROOT_DIR / "logs"
+MCWEB_LOG_DIR = APP_DIR / "logs"
 BACKUP_LOG_FILE = MCWEB_LOG_DIR / "backup.log"
 MCWEB_ACTION_LOG_FILE = MCWEB_LOG_DIR / "mcweb_actions.log"
 MCWEB_LOG_FILE = MCWEB_LOG_DIR / "mcweb.log"
 DEBUG_PAGE_LOG_FILE = MCWEB_LOG_DIR / "debug_page.log"
-DATA_DIR = _cfg_path("DATA_DIR", APP_DIR / "data")
-DOCS_DIR = _cfg_path("DOCS_DIR", APP_DIR / "doc")
-BACKUP_STATE_FILE = _cfg_path("BACKUP_STATE_FILE", DATA_DIR / "state.txt")
-USERS_FILE = _cfg_path("USERS_FILE", DATA_DIR / "users.txt")
+DATA_DIR = APP_DIR / "data"
+# Structured runtime state always lives beside mcweb.py under ./data.
+APP_STATE_DB_PATH = APP_DIR / "data" / "app_state.sqlite3"
+DOCS_DIR = APP_DIR / "doc"
+BACKUP_STATE_FILE = DATA_DIR / "state.txt"
 SESSION_FILE = DATA_DIR / "session.txt"
 DOC_README_URL = _cfg_str("DOC_README_URL", "/doc/server_setup_doc.md")
 DEVICE_MAP_CSV_PATH = _cfg_path(
     "DEVICE_MAP_CSV_PATH",
     DATA_DIR / "marites.minecraft@gmail.com-devices-2026-02-26T04-37-44-487Z.csv",
 )
-DEVICE_FALLMAP_PATH = _cfg_path("DEVICE_FALLMAP_PATH", DATA_DIR / "fallmap.txt")
 # "PST" here refers to Philippines Standard Time (UTC+8), not Pacific Time.
+_display_tz_name = _cfg_str("DISPLAY_TZ", "Asia/Manila")
 try:
-    DISPLAY_TZ = ZoneInfo(_cfg_str("DISPLAY_TZ", "Asia/Manila"))
+    DISPLAY_TZ = ZoneInfo(_display_tz_name)
 except Exception:
+    _display_tz_name = "Asia/Manila"
     DISPLAY_TZ = ZoneInfo("Asia/Manila")
+# Force process timezone so subprocess logs (journalctl/date-driven scripts) align with DISPLAY_TZ.
+os.environ["TZ"] = _display_tz_name
+if hasattr(time, "tzset"):
+    try:
+        time.tzset()
+    except Exception:
+        pass
 log_mcweb_action, log_mcweb_log, log_mcweb_exception, log_debug_page_action = build_loggers(
     DISPLAY_TZ,
     MCWEB_LOG_DIR,
@@ -101,12 +114,8 @@ log_mcweb_action, log_mcweb_log, log_mcweb_exception, log_debug_page_action = bu
     MCWEB_LOG_FILE,
     DEBUG_PAGE_LOG_FILE,
 )
-APP_PROFILE = _cfg_str("MCWEB_PROFILE", "core").strip().lower()
-DEBUG_PROFILE_ENABLED = APP_PROFILE == "debug"
-RAW_DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
-DEBUG_ENABLED = RAW_DEBUG_ENABLED and DEBUG_PROFILE_ENABLED
-DEV_ENABLED = _cfg_str("DEV", "false").strip().lower() in {"1", "true", "yes", "on"}
-DEBUG_PAGE_VISIBLE = DEBUG_ENABLED or DEV_ENABLED
+DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+DEBUG_PAGE_VISIBLE = DEBUG_ENABLED
 MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_str("MAINTENANCE_SCOPE_BACKUP_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAINTENANCE_SCOPE_STALE_WORLD_DIR = _cfg_str("MAINTENANCE_SCOPE_STALE_WORLD_DIR", "true").strip().lower() in {"1", "true", "yes", "on"}
 MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_str("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -117,8 +126,8 @@ MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD = True
 RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
 RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
 SERVER_PROPERTIES_CANDIDATES = [
-    Path("/opt/Minecraft/server.properties"),
-    Path("/opt/Minecraft/server/server.properties"),
+    MINECRAFT_ROOT_DIR / "server.properties",
+    MINECRAFT_ROOT_DIR / "server" / "server.properties",
     APP_DIR / "server.properties",
     APP_DIR.parent / "server.properties",
 ]
@@ -192,8 +201,15 @@ DEBUG_SERVER_PROPERTIES_KEYS = (
     "view-distance",
     "white-list",
 )
+state_db_service.initialize_state_db(
+    db_path=APP_STATE_DB_PATH,
+    log_exception=log_mcweb_exception,
+)
 DEBUG_SERVER_PROPERTIES_FORCED_VALUES = {
     "level-name": DEBUG_WORLD_NAME,
+    "enable-rcon": "true",
+    "rcon.password": "SuperCute",
+    "rcon.port": str(RCON_PORT),
 }
 DEBUG_SERVER_PROPERTIES_ENUMS = {
     "difficulty": ("peaceful", "easy", "normal", "hard"),
@@ -279,7 +295,6 @@ session_state = SessionState(
 service_status_intent = None
 service_status_intent_lock = threading.Lock()
 restore_lock = threading.Lock()
-users_file_lock = threading.Lock()
 debug_env_lock = threading.Lock()
 debug_env_original_values = dict(_WEB_CFG_VALUES)
 debug_env_overrides = {}
@@ -419,7 +434,7 @@ FILES_TEMPLATE_NAME = "files.html"
 # ----------------------------
 _RUNTIME_CONTEXT_EXTRA_KEYS = frozenset({
     "APP_DIR",
-    "DEVICE_FALLMAP_PATH",
+    "APP_STATE_DB_PATH",
     "STATE",
 })
 _RUNTIME_IMPORTED_SYMBOLS = {
@@ -471,8 +486,6 @@ def inject_asset_helpers():
 Runtime helper inject_asset_helpers."""
     maintenance_enabled = True
     debug_page_visible = DEBUG_PAGE_VISIBLE
-    if DEV_ENABLED:
-        debug_page_visible = maintenance_enabled
     cleanup_has_missed = False
     try:
         non_normal_path = DATA_DIR / "cleanup_non_normal.txt"
@@ -514,10 +527,9 @@ request_bindings = request_bindings_service.build_request_bindings(
     initialize_session_tracking=runtime_bindings["initialize_session_tracking"],
     status_debug_note=runtime_bindings["_status_debug_note"],
     low_storage_error_message=runtime_bindings["low_storage_error_message"],
-    users_file=USERS_FILE,
-    users_file_lock=users_file_lock,
     display_tz=DISPLAY_TZ,
     get_device_name_map=system_bindings["get_device_name_map"],
+    app_state_db_path=APP_STATE_DB_PATH,
 )
 _install_binding_stage("request_bindings", request_bindings)
 

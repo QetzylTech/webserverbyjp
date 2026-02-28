@@ -167,6 +167,20 @@
     </div>
 </div>
 
+<div id="maintenance-complete-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="maintenance-complete-title">
+        <h3 id="maintenance-complete-title" class="modal-title">Cleanup Completed</h3>
+        <p id="maintenance-complete-summary" class="modal-text"></p>
+        <h4 class="modal-subtitle">Deleted Files</h4>
+        <ul id="maintenance-complete-files" class="modal-list"></ul>
+        <h4 class="modal-subtitle">Errors / Issues</h4>
+        <ul id="maintenance-complete-issues" class="modal-list"></ul>
+        <div class="modal-actions">
+            <button id="maintenance-complete-ok" class="btn-backup" type="button">OK</button>
+        </div>
+    </div>
+</div>
+
 <div id="maintenance-ack-suggest-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="maintenance-ack-suggest-title">
         <h3 id="maintenance-ack-suggest-title" class="modal-title">Missed Runs Acknowledged</h3>
