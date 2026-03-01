@@ -346,19 +346,19 @@ article {
   appearance: none;
   margin-left: auto;
   border: 0;
-  background: #1e40af;
+  background: var(--ui-blue);
   color: #ffffff;
   border-radius: 8px;
   min-height: 30px;
   padding: 0.2rem 0.8rem;
-  font-size: 0.78rem;
+  font-size: 0.95rem;
   font-weight: 700;
-  line-height: 1;
+  line-height: normal;
   cursor: pointer;
 }
 
 .code-copy:hover {
-  background: #1b3a9a;
+  background: var(--ui-blue-hover);
 }
 
 .code-copy:active {
@@ -814,21 +814,12 @@ article {
   }
 
   .code-header {
-    background: #ffffff;
+    background: #1f2733;
     border: 1px solid #0d1117;
   }
 
   .code-lang {
-    color: #9fb0c6;
-  }
-
-  .code-copy {
-    background: #2563eb;
     color: #e6edf3;
-  }
-
-  .code-copy:hover {
-    background: #1d4ed8;
   }
 
   #content blockquote {
@@ -929,4 +920,36 @@ article {
     color: #9db8ff;
   }
 
+}
+
+html.theme-dark body {
+  background-color: #0d1117;
+  color: #e6edf3;
+}
+
+html.theme-dark main,
+html.theme-dark .toc-sidebar {
+  background: #161b22;
+}
+
+html.theme-dark #content code {
+  background-color: #161b22;
+  color: #79c0ff;
+}
+
+html.theme-dark #content pre code {
+  color: #e6edf3;
+}
+
+html.theme-dark .code-block {
+  background: #0d1117;
+}
+
+html.theme-dark .code-header {
+  background: #1f2733;
+  border: 1px solid #0d1117;
+}
+
+html.theme-dark .code-lang {
+  color: #e6edf3;
 }
