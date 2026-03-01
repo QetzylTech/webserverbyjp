@@ -194,6 +194,17 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
                 text=True,
                 timeout=600,
             )
+        except OSError as exc:
+            # Missing/non-executable backup script should return a handled backup error,
+            # not bubble up as a generic internal_error.
+            message = f"Backup script execution failed: {exc}"
+            with backup_state.lock:
+                backup_state.last_error = message[:700]
+            try:
+                ctx.log_mcweb_exception("run_backup_script", exc)
+            except Exception:
+                pass
+            return False
         except subprocess.TimeoutExpired:
             message = "Backup timed out after 600s."
             with backup_state.lock:
