@@ -3,9 +3,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Debug</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='home.css', v=static_version('home.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='debug.css', v=static_version('debug.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard_home.css', v=static_version('dashboard_home.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='debug_page.css', v=static_version('debug_page.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
 </head>
 <body data-page="debug">
@@ -18,7 +17,7 @@
                     <section class="debug-panel debug-header-panel pane-primary">
                         <div class="debug-header-top">
                             <div class="debug-header-main title title-row">
-                                <h1 class="debug-header-title">Debug</h1>
+                                <h1 class="debug-header-title pane-title">Debug</h1>
                                 <div class="debug-header-editor-actions">
                                     <button class="debug-open-editor" id="open-props-editor" type="button">Edit server.properties</button>
                                     <button class="debug-open-explorer btn-backup" id="open-file-explorer" type="button">Env Value Editor</button>
@@ -59,7 +58,7 @@
                     </section>
                     <section class="debug-panel debug-explorer-panel pane-primary">
                         <div class="debug-explorer-header">
-                            <h2 class="debug-explorer-title">Read-only File Explorer</h2>
+                            <h2 class="debug-explorer-title pane-title">Read-only File Explorer</h2>
                         </div>
                         <div class="debug-explorer-controls">
                             <div id="debug-explorer-view-switch" class="debug-explorer-view-toggle" data-mode="list" role="group" aria-label="Explorer view mode">
@@ -78,7 +77,7 @@
                 <div id="debug-viewer-resizer" class="debug-viewer-resizer" aria-hidden="true"></div>
                 <aside id="debug-viewer" class="debug-viewer pane-editor" aria-hidden="true">
                     <div class="debug-viewer-header">
-                        <h2 id="debug-viewer-title" class="debug-viewer-title">server.properties editor</h2>
+                        <h2 id="debug-viewer-title" class="debug-viewer-title pane-title">server.properties editor</h2>
                         <div class="debug-pane-actions">
                             <input id="debug-viewer-password" class="debug-pane-password ui-text-input" type="password" autocomplete="current-password" placeholder="Sudo password" {% if debug_actions_enabled %}required{% endif %}>
                             <button id="debug-viewer-apply" class="debug-pane-apply" type="button">Apply</button>
@@ -92,7 +91,7 @@
                 </aside>
                 <aside id="debug-explorer-drawer" class="debug-explorer-drawer pane-editor" aria-hidden="true">
                     <div class="debug-explorer-header">
-                        <h2 class="debug-explorer-title">Env Value Editor</h2>
+                        <h2 class="debug-explorer-title pane-title">Env Value Editor</h2>
                         <div class="debug-pane-actions">
                             <input class="debug-pane-password ui-text-input" type="password" name="sudo_password" form="debug-env-form" autocomplete="current-password" placeholder="Sudo password" {% if debug_actions_enabled %}required{% endif %}>
                             <button class="debug-pane-apply" type="submit" name="action" value="apply" form="debug-env-form">Apply</button>
@@ -149,6 +148,6 @@ window.__MCWEB_DEBUG_CONFIG = {
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
-<script src="{{ url_for('static', filename='debug.js', v=static_version('debug.js')) }}"></script>
+<script src="{{ url_for('static', filename='debug_page.js', v=static_version('debug_page.js')) }}"></script>
 </body>
 </html>

@@ -329,183 +329,190 @@ Common, observed problems and their usual causes.
 - Make your own batch files so you don't have to open the terminal and type commands each time you start the server. Forge does this for you, but you can still edit the run.bat or run.sh files.
 - I suggest to run both the VPN and the Minecraft server as daemons in Ubuntu Server
 
-##  4 Advanced Ubuntu Server Setup
+## 4 Advanced Ubuntu Server Setup
 ### 4.1 Automatic Boot Using Systemd Service
--This guide explains how to move a modded Minecraft server to `/opt/minecraft` and configure it to start automatically at boot using `systemd`.
-#### 1. Move Server Files to `/opt`
-Create the target directory:
-```
-sudo mkdir -p /opt/minecraft
-```
-Move your existing server files:
-```
-sudo mv /home/marites/Minecraft/* /opt/minecraft/
-```
-#### 2. Set Ownership to the Service User
-Assuming you created a user named `server`:
-```
-sudo chown -R server:server /opt/minecraft
-```
-Verify ownership:
-```
-ls -ld /opt/minecraft
-```
-The owner and group should both be `server`.
-#### 3. Make `run.sh` Executable
-```
-cd /opt/minecraft
-chmod +x run.sh
-```
-Ensure `run.sh` launches the server directly (no `screen`, no interactive prompts).
-#### 4. Create the systemd Service File
-Create the service definition:
-```
-sudo nano /etc/systemd/system/minecraft.service
-```
-Paste the following:
-```
-[Unit]
-Description=Modded Minecraft Server
-After=network.target
+This guide explains how to move a modded Minecraft server to `/opt/minecraft` and configure it to start automatically at boot using `systemd`.
 
-[Service]
-User=server
-WorkingDirectory=/opt/minecraft
-ExecStart=/bin/bash /opt/minecraft/run.sh
-Restart=always
-RestartSec=10
+Steps:
+1. Move Server Files to `/opt`
+    Create the target directory:
+    ```shell
+    sudo mkdir -p /opt/minecraft
+    ```
+    Move your existing server files:
+    ```shell
+    sudo mv /home/marites/Minecraft/* /opt/minecraft/
+    ```
+2. Set Ownership to the Service User
+    Assuming you created a user named `server`:
+    ```shell
+    sudo chown -R server:server /opt/minecraft
+    ```
+    Verify ownership:
+    ```shell
+    ls -ld /opt/minecraft
+    ```
+    The owner and group should both be `server`.
+3. Make `run.sh` Executable
+    ```shell
+    cd /opt/minecraft
+    chmod +x run.sh
+    ```
+    Ensure `run.sh` launches the server directly (no `screen`, no interactive prompts).
+4. Create the systemd Service File
+    Create the service definition:
+    ```shell
+    sudo nano /etc/systemd/system/minecraft.service
+    ```
+    Paste the following:
+    ```ini
+    [Unit]
+    Description=Modded Minecraft Server
+    After=network.target
 
-[Install]
-WantedBy=multi-user.target
-```
-Save and exit.
-#### 5. Reload systemd
-```
-sudo systemctl daemon-reload
-```
-#### 6. Enable Automatic Startup
-```
-sudo systemctl enable minecraft
-```
-This ensures the server starts automatically at boot.
-#### 7. Start the Server Now
-```
-sudo systemctl start minecraft
-```
-#### 8. Check Status
-```
-sudo systemctl status minecraft
-```
-If the service is active (running), it is working correctly.
-To view live logs:
-```
-sudo journalctl -u minecraft -f
-```
-#### 9. Test Boot Persistence
-Reboot the machine:
-```
-sudo reboot
-```
-After the system comes back online:
-```
-sudo systemctl status minecraft
-```
-If it is running, the setup is complete.
-#### Notes
-* Ensure Java is installed system-wide:
-  ```
-  java -version
-  ```
-* If needed, verify Java works for the `server` user:
-  ```
-  sudo -u server java -version
-  ```
-* The service will automatically restart if it crashes due to `Restart=always`.
+    [Service]
+    User=server
+    WorkingDirectory=/opt/minecraft
+    ExecStart=/bin/bash /opt/minecraft/run.sh
+    Restart=always
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    Save and exit.
+5. Reload systemd
+    ```shell
+    sudo systemctl daemon-reload
+    ```
+6. Enable Automatic Startup
+    ```shell
+    sudo systemctl enable minecraft
+    ```
+    This ensures the server starts automatically at boot.
+7. Start the Server Now
+    ```shell
+    sudo systemctl start minecraft
+    ```
+8. Check Status
+    ```shell
+    sudo systemctl status minecraft
+    ```
+    If the service is active (running), it is working correctly.
+    To view live logs:
+    ```shell
+    sudo journalctl -u minecraft -f
+    ```
+9. Test Boot Persistence
+    Reboot the machine:
+    ```shell
+    sudo reboot
+    ```
+    After the system comes back online:
+    ```shell
+    sudo systemctl status minecraft
+    ```
+    If it is running, the setup is complete.
+
+Notes:
+- Ensure Java is installed system-wide:
+    ```shell
+    java -version
+    ```
+- If needed, verify Java works for the `server` user:
+    ```shell
+    sudo -u server java -version
+    ```
+- The service will automatically restart if it crashes due to `Restart=always`.
+
 The server is now managed by the operating system and will run in the background without requiring login or manual execution.
+
 ### 4.2 Live Backup Guide
--This guide explains how to safely back up a running Minecraft server’s world files as zip archives without shutting down the server. Backups are stored in `/home/marites/backups/` and can be automated.
-#### 1. Install Required Tools
-Make sure `zip` and `mcrcon` are installed:
-```bash
-sudo apt update
-sudo apt install zip mcrcon
-````
-#### 2. Enable RCON in Minecraft
-Edit `server.properties` and set:
-```
-enable-rcon=true
-rcon.password=YourStrongPasswordHere
-rcon.port=25575
-```
-Restart the server for changes to take effect.
-#### 3. Create Backup Script
-Create the backup script:
-```bash
-sudo nano /opt/minecraft/backup.sh
-```
-Paste the following (update the RCON password and directories):
-```bash
-#!/bin/bash
+This guide explains how to safely back up a running Minecraft server's world files as zip archives without shutting down the server. Backups are stored in `/home/marites/backups/` and can be automated.
 
-RCON_PASS="<YourStrongPasswordHere>"
-WORLD_DIR="/opt/Minecraft/The Server"
-BACKUP_DIR="/home/marites/backups"
-DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+Steps:
+1. Install Required Tools
+    Make sure `zip` and `mcrcon` are installed:
+    ```bash
+    sudo apt update
+    sudo apt install zip mcrcon
+    ```
+2. Enable RCON in Minecraft
+    Edit `server.properties` and set:
+    ```ini
+    enable-rcon=true
+    rcon.password=YourStrongPasswordHere
+    rcon.port=25575
+    ```
+    Restart the server for changes to take effect.
+3. Create Backup Script
+    Create the backup script:
+    ```bash
+    sudo nano /opt/minecraft/backup.sh
+    ```
+    Paste the following (update the RCON password and directories):
+    ```bash
+    #!/bin/bash
 
-mkdir -p "$BACKUP_DIR"
+    RCON_PASS="<YourStrongPasswordHere>"
+    WORLD_DIR="/opt/Minecraft/The Server"
+    BACKUP_DIR="/home/marites/backups"
+    DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
-# Notify players that backup is starting
-mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup starting! Server may lag for a few seconds."
+    mkdir -p "$BACKUP_DIR"
 
-# Force world save and disable writes
-mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-all"
-mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-off"
+    # Notify players that backup is starting
+    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup starting! Server may lag for a few seconds."
 
-# Give disk a moment to flush
-sleep 5
+    # Force world save and disable writes
+    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-all"
+    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-off"
 
-# Create zip backup
-if zip -r "$BACKUP_DIR/world_$DATE.zip" "$WORLD_DIR"; then
-    # Backup succeeded
-    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup completed successfully! Saved to $BACKUP_DIR/world_$DATE.zip"
-else
-    # Backup failed
-    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup failed! Check server logs."
-fi
+    # Give disk a moment to flush
+    sleep 5
 
-# Re-enable saving
-mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-on"
-```
-Make it executable:
-```bash
-chmod +x /opt/minecraft/backup.sh
-```
-#### 4. Test the Script
-Run manually:
-```bash
-/opt/minecraft/backup.sh
-```
-Check `/home/marites/backups/` for the new zip file.
-#### 5. Automate Backups with Cron
-Edit root’s crontab:
-```bash
-sudo crontab -e
-```
-Add the following to run backups at midnight and noon every day:
-```
-0 0,12 * * * /opt/minecraft/backup.sh >> /var/log/minecraft-backup.log 2>&1
-```
-This also logs output to `/var/log/minecraft-backup.log`.
-#### 6. Notes
-* `save-all` flushes all world data to disk.
-* `save-off` prevents world changes during the copy.
-* `save-on` resumes automatic saving.
-* Ensure the server’s timezone is correct:
+    # Create zip backup
+    if zip -r "$BACKUP_DIR/world_$DATE.zip" "$WORLD_DIR"; then
+        # Backup succeeded
+        mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup completed successfully! Saved to $BACKUP_DIR/world_$DATE.zip"
+    else
+        # Backup failed
+        mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "say Backup failed! Check server logs."
+    fi
 
-```bash
-timedatectl
-```
-* Your backup script can be combined with another script to copy zip files to a remote server.
+    # Re-enable saving
+    mcrcon -H 127.0.0.1 -P 25575 -p "$RCON_PASS" "save-on"
+    ```
+    Make it executable:
+    ```bash
+    chmod +x /opt/minecraft/backup.sh
+    ```
+4. Test the Script
+    Run manually:
+    ```bash
+    /opt/minecraft/backup.sh
+    ```
+    Check `/home/marites/backups/` for the new zip file.
+5. Automate Backups with Cron
+    Edit root's crontab:
+    ```bash
+    sudo crontab -e
+    ```
+    Add the following to run backups at midnight and noon every day:
+    ```cron
+    0 0,12 * * * /opt/minecraft/backup.sh >> /var/log/minecraft-backup.log 2>&1
+    ```
+    This also logs output to `/var/log/minecraft-backup.log`.
+
+Notes:
+- `save-all` flushes all world data to disk.
+- `save-off` prevents world changes during the copy.
+- `save-on` resumes automatic saving.
+- Ensure the server's timezone is correct:
+    ```bash
+    timedatectl
+    ```
+- Your backup script can be combined with another script to copy zip files to a remote server.
 
 
 

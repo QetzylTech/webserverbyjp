@@ -5,11 +5,11 @@
 </button>
 <div id="nav-backdrop" class="nav-backdrop" aria-hidden="true"></div>
 <nav id="side-nav" class="sidebar" aria-labelledby="sidebar-title">
-    <h2 id="sidebar-title" class="sidebar-title">Navigation</h2>
-    <a class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
-    <a id="nav-backups-link" class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backups</a>
+    <h2 id="sidebar-title" class="sidebar-title pane-title">Navigation</h2>
+    <a id="nav-home-link" class="nav-link {% if current_page == 'home' %}active{% endif %}" href="/">Home</a>
+    <a id="nav-backups-link" class="nav-link {% if current_page == 'backups' %}active{% endif %}" href="/backups">Backup &amp; Restore</a>
     {% if maintenance_enabled %}
-    <a id="nav-maintenance-link" class="nav-link {% if current_page == 'maintenance' %}active{% endif %}{% if cleanup_has_missed and current_page != 'maintenance' %} nav-attention{% endif %}" href="/maintenance">Maintenance</a>
+    <a id="nav-maintenance-link" class="nav-link {% if current_page == 'maintenance' %}active{% endif %}{% if cleanup_has_missed and current_page != 'maintenance' %} nav-attention{% endif %}" href="/maintenance">Cleanup</a>
     {% endif %}
     <hr class="nav-separator">
     <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
@@ -23,4 +23,4 @@
     <a class="nav-link {% if current_page == 'debug' %}active{% endif %}" href="/debug">Debug</a>
     {% endif %}
 </nav>
-<script src="{{ url_for('static', filename='nav_alerts.js', v=static_version('nav_alerts.js')) }}"></script>
+<script src="{{ url_for('static', filename='nav_attention_poll.js', v=static_version('nav_attention_poll.js')) }}"></script>

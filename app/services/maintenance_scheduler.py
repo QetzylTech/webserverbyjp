@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.services.maintenance_basics import (
+from app.services.maintenance_state_store import (
     _cleanup_append_history,
     _safe_int,
     _cleanup_atomic_write_json,
@@ -20,8 +20,8 @@ from app.services.maintenance_basics import (
     _cleanup_save_history,
     _cleanup_safe_used_percent,
 )
-from app.services.maintenance_rules import _cleanup_schedule_due_now
-from app.services.maintenance_runtime import _cleanup_run_with_lock
+from app.services.maintenance_policy import _cleanup_schedule_due_now
+from app.services.maintenance_engine import _cleanup_run_with_lock
 
 _cleanup_scheduler_start_lock = threading.Lock()
 _cleanup_scheduler_started = False

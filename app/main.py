@@ -16,7 +16,7 @@ from collections import deque
 from zoneinfo import ZoneInfo
 from app.core.config import apply_default_flask_config, resolve_secret_key
 from app.core.device_map import get_device_name_map as _device_name_map_lookup
-from app.core import state_db as state_db_service
+from app.core import state_store as state_store_service
 from app.core.filesystem_utils import (
     list_download_files as _list_download_files,
     read_recent_file_lines as _read_recent_file_lines,
@@ -25,7 +25,7 @@ from app.core.filesystem_utils import (
 )
 from app.core.logging_setup import build_loggers
 from app.core.web_config import WebConfig
-from app.services import control_plane as control_plane_service
+from app.services import service_ops as service_ops
 from app.services import bootstrap as bootstrap_service
 from app.services import app_lifecycle as app_lifecycle_service
 from app.services import dashboard_runtime as dashboard_runtime_service
@@ -37,6 +37,7 @@ from app.services import runtime_bindings as runtime_bindings_service
 from app.services import session_store as session_store_service
 from app.services import session_watchers as session_watchers_service
 from app.services import state_builder as state_builder_service
+from app.services import runtime_wiring as runtime_wiring_service
 from app.services import status_cache as status_cache_service
 from app.services import system_bindings as system_bindings_service
 from app.services.system_metrics import (
@@ -85,6 +86,7 @@ DEBUG_PAGE_LOG_FILE = MCWEB_LOG_DIR / "debug_page.log"
 DATA_DIR = APP_DIR / "data"
 # Structured runtime state always lives beside mcweb.py under ./data.
 APP_STATE_DB_PATH = APP_DIR / "data" / "app_state.sqlite3"
+LEGACY_APP_STATE_DB_PATH = APP_DIR / "app_state.sqlite3"
 DOCS_DIR = APP_DIR / "doc"
 BACKUP_STATE_FILE = DATA_DIR / "state.txt"
 SESSION_FILE = DATA_DIR / "session.txt"
@@ -201,7 +203,12 @@ DEBUG_SERVER_PROPERTIES_KEYS = (
     "view-distance",
     "white-list",
 )
-state_db_service.initialize_state_db(
+state_store_service.migrate_state_db_to_data_dir(
+    db_path=APP_STATE_DB_PATH,
+    legacy_paths=(LEGACY_APP_STATE_DB_PATH,),
+    log_exception=log_mcweb_exception,
+)
+state_store_service.initialize_state_db(
     db_path=APP_STATE_DB_PATH,
     log_exception=log_mcweb_exception,
 )
@@ -401,7 +408,6 @@ restore_status = {
     "seq": 0,
     "events": [],
     "result": None,
-    "undo_filename": "",
 }
 backup_warning_lock = threading.Lock()
 backup_warning_seq = 0
@@ -429,9 +435,6 @@ log_stream_states = {
 HTML_TEMPLATE_NAME = "home.html"
 FILES_TEMPLATE_NAME = "files.html"
 
-# ----------------------------
-# System and privilege helpers
-# ----------------------------
 _RUNTIME_CONTEXT_EXTRA_KEYS = frozenset({
     "APP_DIR",
     "APP_STATE_DB_PATH",
@@ -459,25 +462,32 @@ def _build_runtime_context(namespace):
 
 
 RUNTIME_CONTEXT = _build_runtime_context(locals())
-world_bindings = world_bindings_service.build_world_bindings(RUNTIME_CONTEXT)
-_binding_stage_exports = set()
-_binding_stage_values = {}
-
-
-def _install_binding_stage(stage_name, mapping):
-    """Install one binding stage and fail fast on duplicate exported keys."""
-    duplicates = sorted(set(mapping.keys()) & _binding_stage_exports)
-    if duplicates:
-        raise KeyError(
-            f"Duplicate binding keys in stage '{stage_name}': {', '.join(duplicates)}"
-        )
-    _binding_stage_exports.update(mapping.keys())
-    _binding_stage_values.update(mapping)
-
-
-_install_binding_stage("world_bindings", world_bindings)
-world_bindings["_refresh_world_dir_from_server_properties"]()
-_static_asset_version_fn = world_bindings["_static_asset_version"]
+_runtime_bundle = runtime_wiring_service.create_runtime(
+    app=app,
+    namespace=locals(),
+    required_state_key_set=REQUIRED_STATE_KEY_SET,
+    runtime_context_extra_keys=_RUNTIME_CONTEXT_EXTRA_KEYS,
+    runtime_imported_symbols=_RUNTIME_IMPORTED_SYMBOLS,
+    world_bindings_service=world_bindings_service,
+    system_bindings_service=system_bindings_service,
+    runtime_bindings_service=runtime_bindings_service,
+    request_bindings_service=request_bindings_service,
+    debug_bindings_service=debug_bindings_service,
+    debug_tools_service=debug_tools_service,
+    state_builder_service=state_builder_service,
+    app_lifecycle_service=app_lifecycle_service,
+    session_store_service=session_store_service,
+    minecraft_runtime_service=minecraft_runtime_service,
+    session_watchers_service=session_watchers_service,
+    control_plane_service=service_ops,
+    dashboard_runtime_service=dashboard_runtime_service,
+    status_cache_service=status_cache_service,
+    register_routes=register_routes,
+)
+RUNTIME_CONTEXT = _runtime_bundle["runtime_context"]
+STATE = _runtime_bundle["state"]
+_static_asset_version_fn = _runtime_bundle["static_asset_version_fn"]
+run_server = _runtime_bundle["run_server"]
 
 
 @app.context_processor
@@ -501,129 +511,6 @@ Runtime helper inject_asset_helpers."""
         "maintenance_enabled": maintenance_enabled,
         "cleanup_has_missed": cleanup_has_missed,
     }
-
-
-system_bindings = system_bindings_service.build_system_bindings(
-    RUNTIME_CONTEXT,
-    status_cache_service=status_cache_service,
-    dashboard_runtime_service=dashboard_runtime_service,
-    device_name_map_lookup=_device_name_map_lookup,
-)
-_install_binding_stage("system_bindings", system_bindings)
-
-runtime_bindings = runtime_bindings_service.build_runtime_bindings(
-    RUNTIME_CONTEXT,
-    dashboard_runtime_service=dashboard_runtime_service,
-    control_plane_service=control_plane_service,
-    session_store_service=session_store_service,
-    minecraft_runtime_service=minecraft_runtime_service,
-    session_watchers_service=session_watchers_service,
-)
-_install_binding_stage("runtime_bindings", runtime_bindings)
-
-request_bindings = request_bindings_service.build_request_bindings(
-    session_store_service=session_store_service,
-    session_state=session_state,
-    initialize_session_tracking=runtime_bindings["initialize_session_tracking"],
-    status_debug_note=runtime_bindings["_status_debug_note"],
-    low_storage_error_message=runtime_bindings["low_storage_error_message"],
-    display_tz=DISPLAY_TZ,
-    get_device_name_map=system_bindings["get_device_name_map"],
-    app_state_db_path=APP_STATE_DB_PATH,
-)
-_install_binding_stage("request_bindings", request_bindings)
-
-debug_bindings = debug_bindings_service.build_debug_bindings(
-    debug_tools_service=debug_tools_service,
-    debug_enabled=DEBUG_ENABLED,
-    debug_world_name=DEBUG_WORLD_NAME,
-    debug_motd=DEBUG_MOTD,
-    data_dir=DATA_DIR,
-    app_dir=APP_DIR,
-    service=SERVICE,
-    backup_script=BACKUP_SCRIPT,
-    backup_log_file=BACKUP_LOG_FILE,
-    mcweb_action_log_file=MCWEB_ACTION_LOG_FILE,
-    backup_state_file=BACKUP_STATE_FILE,
-    session_file=SESSION_FILE,
-    server_properties_candidates=SERVER_PROPERTIES_CANDIDATES,
-    debug_server_properties_keys=DEBUG_SERVER_PROPERTIES_KEYS,
-    debug_server_properties_forced_values=DEBUG_SERVER_PROPERTIES_FORCED_VALUES,
-    debug_server_properties_int_keys=DEBUG_SERVER_PROPERTIES_INT_KEYS,
-    debug_server_properties_bool_keys=DEBUG_SERVER_PROPERTIES_BOOL_KEYS,
-    debug_server_properties_enums=DEBUG_SERVER_PROPERTIES_ENUMS,
-    debug_env_lock=debug_env_lock,
-    debug_env_original_values=debug_env_original_values,
-    debug_env_overrides=debug_env_overrides,
-    backup_state=backup_state,
-    app=app,
-    namespace=RUNTIME_CONTEXT,
-    log_mcweb_log=log_mcweb_log,
-    log_mcweb_exception=log_mcweb_exception,
-    log_debug_page_action=log_debug_page_action,
-    refresh_world_dir=world_bindings["_refresh_world_dir_from_server_properties"],
-    refresh_rcon_config=runtime_bindings["_refresh_rcon_config"],
-    invalidate_status_cache=system_bindings["invalidate_status_cache"],
-    set_service_status_intent=runtime_bindings["set_service_status_intent"],
-    write_session_start_time=runtime_bindings["write_session_start_time"],
-    validate_sudo_password=runtime_bindings["validate_sudo_password"],
-    record_successful_password_ip=request_bindings["record_successful_password_ip"],
-    graceful_stop_minecraft=runtime_bindings["graceful_stop_minecraft"],
-    clear_session_start_time=runtime_bindings["clear_session_start_time"],
-    reset_backup_schedule_state=runtime_bindings["reset_backup_schedule_state"],
-    run_backup_script=runtime_bindings["run_backup_script"],
-)
-_install_binding_stage("debug_bindings", debug_bindings)
-
-
-def _binding(key):
-    """Fetch a staged binding value and fail fast with context if missing."""
-    if key not in _binding_stage_values:
-        raise KeyError(f"Missing staged binding key: {key}")
-    return _binding_stage_values[key]
-
-
-# Apply all staged bindings at once to avoid fragile step-by-step global mutation.
-RUNTIME_CONTEXT.update(_binding_stage_values)
-app_lifecycle_service.install_flask_hooks(
-    app,
-    ensure_session_tracking_initialized=_binding("ensure_session_tracking_initialized"),
-    ensure_metrics_collector_started=_binding("ensure_metrics_collector_started"),
-    ensure_csrf_token=_binding("_ensure_csrf_token"),
-    is_csrf_valid=_binding("_is_csrf_valid"),
-    csrf_rejected_response=_binding("_csrf_rejected_response"),
-    log_mcweb_action=log_mcweb_action,
-    log_mcweb_exception=log_mcweb_exception,
-)
-
-# ----------------------------
-# Flask routes
-# ----------------------------
-state_builder_service.assert_required_keys_present(RUNTIME_CONTEXT)
-STATE = state_builder_service.build_app_state(RUNTIME_CONTEXT)
-RUNTIME_CONTEXT["STATE"] = STATE
-register_routes(app, STATE)
-
-run_server = app_lifecycle_service.build_run_server(
-    bootstrap_service=bootstrap_service,
-    app=app,
-    cfg_get_str=_cfg_str,
-    cfg_get_int=_cfg_int,
-    log_mcweb_log=log_mcweb_log,
-    log_mcweb_exception=log_mcweb_exception,
-    is_backup_running=_binding("is_backup_running"),
-    load_backup_log_cache_from_disk=_binding("_load_backup_log_cache_from_disk"),
-    prepare_debug_server_properties_bootup=_binding("prepare_debug_server_properties_bootup"),
-    log_mcweb_boot_diagnostics=_binding("log_mcweb_boot_diagnostics"),
-    load_minecraft_log_cache_from_journal=_binding("_load_minecraft_log_cache_from_journal"),
-    load_mcweb_log_cache_from_disk=_binding("_load_mcweb_log_cache_from_disk"),
-    ensure_session_tracking_initialized=_binding("ensure_session_tracking_initialized"),
-    ensure_metrics_collector_started=_binding("ensure_metrics_collector_started"),
-    collect_and_publish_metrics=_binding("_collect_and_publish_metrics"),
-    start_idle_player_watcher=_binding("start_idle_player_watcher"),
-    start_backup_session_watcher=_binding("start_backup_session_watcher"),
-    start_storage_safety_watcher=_binding("start_storage_safety_watcher"),
-)
 
 
 if __name__ == "__main__":

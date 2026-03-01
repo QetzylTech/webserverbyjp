@@ -92,7 +92,7 @@
         <div class="code-block">
           <div class="code-header">
             <span class="code-lang">${label}</span>
-            <button class="code-copy" type="button" aria-label="Copy code">Copy</button>
+            <button class="code-copy" type="button" aria-label="Copy code">Copy code</button>
           </div>
           <pre><code class="hljs language-${normalized}">${highlightCode(normalized, token.text)}</code></pre>
         </div>
@@ -263,11 +263,12 @@
       'a', 'article', 'blockquote', 'br', 'code', 'del', 'div', 'em',
       'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'li', 'ol',
       'p', 'pre', 'section', 'span', 'strong', 'table', 'tbody', 'td',
+      'button',
       'th', 'thead', 'tr', 'ul'
     ]);
     const SANITIZE_DROP_WITH_CONTENT = new Set([
       'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta',
-      'base', 'form', 'input', 'button', 'textarea', 'select', 'option'
+      'base', 'form', 'input', 'textarea', 'select', 'option'
     ]);
     const SANITIZE_GLOBAL_ATTRS = new Set(['class', 'id', 'aria-label', 'role']);
     const SANITIZE_ATTRS_BY_TAG = {
@@ -275,6 +276,7 @@
       img: new Set(['src', 'alt', 'title', 'width', 'height', 'loading', 'decoding']),
       th: new Set(['colspan', 'rowspan']),
       td: new Set(['colspan', 'rowspan']),
+      button: new Set(['type', 'disabled', 'title']),
       code: new Set(['class']),
       pre: new Set(['class']),
       div: new Set(['class', 'id']),

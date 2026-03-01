@@ -75,8 +75,8 @@ def register_file_routes(app, state):
         return render_template(
             state["FILES_TEMPLATE_NAME"],
             current_page="backups",
-            page_title="Backups",
-            panel_title="Backups",
+            page_title="Backup & Restore",
+            panel_title="Backup & Restore",
             panel_hint="Latest to oldest from /home/marites/backups",
             items=state["get_cached_file_page_items"]("backups"),
             download_base="/download/backups",

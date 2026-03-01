@@ -111,12 +111,6 @@ def register_routes(app, state):
         )
         return ("", 204)
 
-    # Route: /files
-    @app.route("/files")
-    def files_page():
-        """Runtime helper files_page."""
-        return redirect("/backups")
-
     # Route: /favicon.ico
     @app.route("/favicon.ico")
     def favicon():
@@ -203,6 +197,13 @@ def register_routes(app, state):
         device_map = state["get_device_name_map"]()
         opener_name = str(device_map.get(opener_ip, "") or "").strip()
         opener_identity = opener_name or opener_ip or "unknown"
+        metrics = state["get_cached_dashboard_metrics"]()
+        service_status = str(metrics.get("service_status", "") or "").strip().lower()
+        home_attention = "none"
+        if service_status == "crashed":
+            home_attention = "red"
+        elif service_status in {"starting", "shutting down"}:
+            home_attention = "yellow"
         return jsonify(
             {
                 "ok": True,
@@ -211,6 +212,7 @@ def register_routes(app, state):
                 "restore_pane_opened_by_name": opener_identity,
                 "restore_pane_opened_by_ip": opener_ip or "unknown",
                 "restore_pane_opened_by_self": opened_by_self,
+                "home_attention": home_attention,
             }
         )
 

@@ -4,7 +4,7 @@ import copy
 from flask import jsonify, render_template, request
 
 from app.services.maintenance_scheduler import start_cleanup_scheduler_once
-from app.services.maintenance_basics import (
+from app.services.maintenance_state_store import (
     _cleanup_append_history,
     _cleanup_apply_scope_from_state,
     _cleanup_atomic_write_json,
@@ -20,12 +20,11 @@ from app.services.maintenance_basics import (
     _cleanup_now_iso,
     _cleanup_save_config,
 )
-from app.services.maintenance_candidates import _cleanup_active_world_path
-from app.services.maintenance_rules import (
+from app.services.maintenance_candidate_scan import _cleanup_active_world_path
+from app.services.maintenance_policy import (
     _cleanup_validate_rules,
-    _cleanup_validate_schedules,
 )
-from app.services.maintenance_runtime import (
+from app.services.maintenance_engine import (
     _cleanup_evaluate,
     _cleanup_run_with_lock,
     _cleanup_state_snapshot,
@@ -188,53 +187,6 @@ def register_maintenance_routes(app, state):
         )
         preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
         return jsonify({"ok": True, "config": cfg, "preview": preview, "scope": scope})
-
-    # Route: /maintenance/api/save-schedules
-    @app.route("/maintenance/api/save-schedules", methods=["POST"])
-    def maintenance_api_save_schedules():
-        """Handle maintenance api save schedules."""
-        payload = request.get_json(silent=True) or {}
-        scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
-        ok_pw, err = _require_password(
-            payload,
-            what="save_schedules",
-            why="manual_save",
-            trigger="manual",
-            scope=scope,
-        )
-        if not ok_pw:
-            return err
-        ok, parsed = _cleanup_validate_schedules(payload.get("schedules", []))
-        if not ok:
-            code = "schedule_conflict" if "conflict" in str(parsed).lower() else "validation_failure"
-            return _cleanup_error(code, parsed, status=400)
-        full_cfg = _cleanup_load_config(state)
-        cfg = _cleanup_get_scope_view(full_cfg, scope)
-        cfg["schedules"] = parsed
-        meta = cfg.setdefault("meta", {})
-        meta["schedule_version"] = int(meta.get("schedule_version", 0)) + 1
-        meta["last_changed_by"] = _cleanup_get_client_ip(state)
-        meta["last_changed_at"] = _cleanup_now_iso(state)
-        _cleanup_save_config(state, full_cfg)
-        _cleanup_log(
-            state,
-            what="save_schedules",
-            why="manual_save",
-            trigger="manual",
-            result="ok",
-            details=f"scope={scope};schedule_version={meta['schedule_version']}",
-        )
-        return jsonify({"ok": True, "config": cfg, "scope": scope})
-
-    # Route: /maintenance/api/test-rules
-    @app.route("/maintenance/api/test-rules", methods=["POST"])
-    def maintenance_api_test_rules():
-        """Handle maintenance api test rules."""
-        scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
-        full_cfg = _cleanup_load_config(state)
-        cfg = _cleanup_get_scope_view(full_cfg, scope)
-        preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="tester")
-        return jsonify({"ok": True, "preview": preview, "scope": scope})
 
     # Route: /maintenance/api/run-rules
     @app.route("/maintenance/api/run-rules", methods=["POST"])

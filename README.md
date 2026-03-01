@@ -259,8 +259,6 @@ History and audit UI:
 
 14. TODO
 
-- [ ] Add automatic retention/cleanup for old restored world directories (using `data/old_world.txt` for visibility and safe pruning)
-- [ ] Add UI surfacing for explicit debug-stop auth failures (`Password incorrect`) instead of generic stop failure
+
 - [ ] Add integration tests for debug auth gates (`/debug/server-properties`, `/debug/env`, `/debug/stop`)
 - [ ] Add end-to-end tests for low-storage startup block and emergency shutdown path
-- [ ] Add restore dry-run validation mode to inspect zip structure and target paths before applying

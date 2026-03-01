@@ -225,7 +225,6 @@ _STATE_BINDING_KEYS = (
     "restore_world_backup",
     "start_restore_job",
     "get_restore_status",
-    "start_undo_restore_job",
     "append_restore_event",
     "run_backup_script",
     "set_backup_warning",

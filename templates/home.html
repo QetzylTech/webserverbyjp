@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Minecraft Control</title>
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
-<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='home.css', v=static_version('home.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard_home.css', v=static_version('dashboard_home.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
 </head>
 <body>
@@ -18,7 +17,7 @@
     <section class="header">
         <div class="title">
             <div class="title-row">
-                <h1 id="control-panel-title">{% if world_name %}{{ world_name }} Control Panel{% else %}Control Panel{% endif %}</h1>
+                <h1 id="control-panel-title" class="pane-title">{% if world_name %}{{ world_name }} Control Panel{% else %}Control Panel{% endif %}</h1>
                 <div class="actions">
                     <span class="server-time">Server time: <strong id="server-time">{{ server_time }}</strong></span>
                     <div class="action-buttons">
@@ -122,6 +121,16 @@
         </div>
     </div>
 </div>
+<!-- Generic success modal for completed user actions. -->
+<div id="success-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="success-modal-title">
+        <h3 id="success-modal-title" class="modal-title">Action Completed</h3>
+        <p id="success-modal-text" class="modal-text"></p>
+        <div class="modal-actions">
+            <button id="success-modal-ok" type="button">OK</button>
+        </div>
+    </div>
+</div>
 <!-- General error modal (ajax/network/runtime failures). -->
 <div id="error-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
@@ -143,6 +152,7 @@
 };
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
-<script src="{{ url_for('static', filename='home.js', v=static_version('home.js')) }}"></script>
+<script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='dashboard_home_page.js', v=static_version('dashboard_home_page.js')) }}"></script>
 </body>
 </html>

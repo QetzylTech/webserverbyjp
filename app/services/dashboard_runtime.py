@@ -2,6 +2,8 @@
 import subprocess
 import threading
 import time
+from pathlib import Path
+from app.core import state_store as state_store_service
 
 
 def _is_rcon_noise_line(line):
@@ -184,6 +186,14 @@ def refresh_file_page_items(ctx, cache_key):
         items.sort(key=lambda item: item["mtime"], reverse=True)
     else:
         return []
+    try:
+        state_store_service.replace_file_records_snapshot(
+            Path(ctx.APP_STATE_DB_PATH),
+            source_key=cache_key,
+            items=items,
+        )
+    except Exception as exc:
+        ctx.log_mcweb_exception(f"file_records_sync/{cache_key}", exc)
     set_file_page_items(ctx, cache_key, items)
     return items
 

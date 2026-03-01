@@ -344,3 +344,11 @@ Mar 01 03:11:24 <100.66.52.121> [mcweb/reject] /ui-error-log rejected: Security 
 Mar 01 03:11:28 <100.66.52.121> [mcweb/start]
 Mar 01 03:13:51 <100.66.52.121> [mcweb/backup]
 Mar 01 03:20:54 <100.66.52.121> [mcweb/backup]
+Mar 01 12:11:35 <172.31.16.1> [mcweb/reject] /maintenance/nav-alert/restore-pane-open rejected: Security check failed (csrf_invalid).
+Mar 01 12:11:35 <172.31.16.1> [mcweb/reject] /maintenance/nav-alert/restore-pane-open rejected: Security check failed (csrf_invalid).
+Mar 01 12:21:21 <172.31.16.1> [mcweb/start]
+Mar 01 12:26:34 <172.31.16.1> [mcweb/backup]
+Mar 01 12:41:38 <172.31.16.1> [mcweb/restore-backup] The_Server_2026-03-01_02-13-02_2026-03-01_02-55-56_2026-03-01_12-26-28_manual.zip (started)
+Mar 01 13:09:48 <172.31.16.1> [mcweb/start]
+Mar 01 13:10:10 <172.31.16.1> [mcweb/backup]
+Mar 01 13:13:10 <172.31.16.1> [mcweb/stop]

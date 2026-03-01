@@ -94,12 +94,13 @@ main {
   border-radius: var(--radius);
   box-shadow: none;
   transition: margin-left 220ms ease, margin-right 220ms ease;
-  min-height: calc(100vh - var(--sticky-height));
+  height: calc(100dvh - 24px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  overflow: visible;
   overflow-x: hidden;
+  overflow-y: auto;
   line-height: 1.6;
 }
 
@@ -114,10 +115,6 @@ main {
     --canvas-padding: 1rem;
     --toc-top: 0px;
     --sticky-offset: 12px;
-  }
-
-  main {
-    margin-top: 12px;
   }
 
   #stickyMenuLabel {
@@ -282,26 +279,27 @@ article {
   border-radius: var(--radius);
   padding: 0.2em 0.4em;
   margin: 0;
-  font-size: 0.875em;
+  font-size: 1em;
   color: #0f172a;
 }
 
 #content pre {
   background-color: transparent;
   border-radius: var(--radius);
-  padding: 1.5rem;
+  padding: 0.75rem;
   overflow-x: auto;
-  margin-bottom: 1em;
+  margin: 0.5em 0;
   line-height: 1.45;
 }
 
 #content pre code {
   background-color: transparent;
   border: 0;
+  border-radius: 0;
   margin: 0;
   padding: 0;
   color: var(--text);
-  font-size: 0.875em;
+  font-size: 1em;
 }
 
 .hljs {
@@ -318,23 +316,23 @@ article {
 }
 
 .code-block {
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius);
-  margin-bottom: 1em;
+  margin-bottom: 0.5em;
   overflow: hidden;
-  background: var(--surface);
+  background: #eef2ff;
   width: 100%;
-  max-width: min(50vw, 80ch);
 }
 
 .code-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.35rem 0.7rem;
-  background: #eef2ff;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.75rem;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: #ffffff;
+  border: 1px solid #eef2ff;
+  font-size: 1rem;
   letter-spacing: 0.02em;
 }
 
@@ -346,17 +344,21 @@ article {
 
 .code-copy {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius);
-  padding: 0 0.7rem;
-  font-size: 0.75rem;
+  margin-left: auto;
+  border: 0;
+  background: #1e40af;
+  color: #ffffff;
+  border-radius: 8px;
+  min-height: 30px;
+  padding: 0.2rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
 }
 
 .code-copy:hover {
-  background: #eef2ff;
+  background: #1b3a9a;
 }
 
 .code-copy:active {
@@ -365,9 +367,9 @@ article {
 
 .code-block pre {
   margin: 0;
-  padding: 1rem;
+  padding: 0.75rem;
   background: transparent;
-  border-radius: var(--radius);
+  border-radius: 0;
 }
 /* Blockquotes */
 #content blockquote {
@@ -808,13 +810,12 @@ article {
   }
 
   .code-block {
-    border-color: #334155;
-    background: #161b22;
+    background: #0d1117;
   }
 
   .code-header {
-    background: #1f2733;
-    border-bottom-color: #334155;
+    background: #ffffff;
+    border: 1px solid #0d1117;
   }
 
   .code-lang {
@@ -822,13 +823,12 @@ article {
   }
 
   .code-copy {
-    border-color: #334155;
-    background: #1f2733;
+    background: #2563eb;
     color: #e6edf3;
   }
 
   .code-copy:hover {
-    background: #161b22;
+    background: #1d4ed8;
   }
 
   #content blockquote {

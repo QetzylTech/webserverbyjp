@@ -1,7 +1,7 @@
 """Device name mapping helpers."""
 import csv
 
-from app.core import state_db as state_db_service
+from app.core import state_store as state_store_service
 
 
 def get_device_name_map(csv_path, cache_lock, cache, cache_mtime_ns, log_exception, app_state_db_path=None):
@@ -42,7 +42,7 @@ def get_device_name_map(csv_path, cache_lock, cache, cache_mtime_ns, log_excepti
     fallmap = {}
     if app_state_db_path:
         try:
-            fallmap = state_db_service.load_fallmap(app_state_db_path)
+            fallmap = state_store_service.load_fallmap(app_state_db_path)
         except Exception as exc:
             log_exception("device_name_map_load/fallmap_db", exc)
             fallmap = {}

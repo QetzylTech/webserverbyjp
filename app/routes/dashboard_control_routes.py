@@ -142,29 +142,6 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         payload = state["get_restore_status"](since_seq=since, job_id=job_id)
         return jsonify(payload)
 
-    # Route: /undo-restore
-    @app.route("/undo-restore", methods=["POST"])
-    def undo_restore():
-        """Runtime helper undo_restore."""
-        sudo_password = request.form.get("sudo_password", "")
-        if not state["validate_sudo_password"](sudo_password):
-            state["log_mcweb_action"]("undo-restore", rejection_message="Password incorrect.")
-            return state["_password_rejected_response"]()
-        state["record_successful_password_ip"]()
-
-        result = state["start_undo_restore_job"]()
-        if not result.get("ok"):
-            message = result.get("message", "Undo restore failed to start.")
-            state["log_mcweb_action"]("undo-restore", rejection_message=message)
-            return jsonify({"ok": False, "error": "undo_restore_failed", "message": message}), 409
-
-        state["log_mcweb_action"]("undo-restore", command="started")
-        return jsonify({
-            "ok": True,
-            "message": "Undo restore started.",
-            "job_id": result.get("job_id", ""),
-        })
-
     # Route: /rcon
     @app.route("/rcon", methods=["POST"])
     def rcon():

@@ -177,9 +177,6 @@ def build_runtime_bindings(
     def get_restore_status(since_seq=0, job_id=None):
         return control_plane_service.get_restore_status(_state(), since_seq=since_seq, job_id=job_id)
 
-    def start_undo_restore_job():
-        return control_plane_service.start_undo_restore_job(_state())
-
     def format_backup_time(timestamp):
         return control_plane_service.format_backup_time(_state(), timestamp)
 
@@ -321,7 +318,6 @@ def build_runtime_bindings(
         "append_restore_event": append_restore_event,
         "start_restore_job": start_restore_job,
         "get_restore_status": get_restore_status,
-        "start_undo_restore_job": start_undo_restore_job,
         "format_backup_time": format_backup_time,
         "get_server_time_text": get_server_time_text,
         "get_latest_backup_zip_timestamp": get_latest_backup_zip_timestamp,

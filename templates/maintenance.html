@@ -2,12 +2,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Maintenance</title>
+<title>Cleanup</title>
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
-<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='maintenance.css', v=static_version('maintenance.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='maintenance_page.css', v=static_version('maintenance_page.css')) }}">
 </head>
 <body data-page="maintenance">
 <div class="layout">
@@ -17,7 +16,7 @@
             <section class="panel maintenance-panel pane-primary maintenance-top-header">
                 <div class="maintenance-title-wrap title">
                     <div class="maintenance-title-row title-row">
-                        <h1>Maintenance</h1>
+                        <h1 class="pane-title">Cleanup</h1>
                         <div class="maintenance-header-actions">
                             <div class="maintenance-scope-toggle" role="group" aria-label="Cleanup scope">
                                 <button id="maint-scope-backups" class="nav-link maintenance-header-btn" type="button">Backups</button>
@@ -62,7 +61,7 @@
 
             <section class="panel maintenance-panel pane-primary maintenance-left-pane">
                 <div class="maintenance-pane-head">
-                    <h2>File and Cleanup Eligibility List</h2>
+                    <h2 class="pane-title">File and Cleanup Eligibility List</h2>
                 </div>
                 <div class="maintenance-left-content">
                     <div class="maintenance-file-list">
@@ -77,7 +76,7 @@
 
                 <div class="maintenance-pane-head">
                     <div class="maintenance-pane-title-row">
-                        <h2 id="maintenance-action-title">Cleanup Rules</h2>
+                        <h2 id="maintenance-action-title" class="pane-title">Cleanup Rules</h2>
                     </div>
                     <div class="maintenance-pane-head-actions">
                         <div id="history-view-toggle" class="maintenance-scope-toggle" role="group" aria-label="History view" hidden>
@@ -196,6 +195,7 @@
 
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='maintenance_bootstrap.js', v=static_version('maintenance_bootstrap.js')) }}"></script>
-<script src="{{ url_for('static', filename='maintenance.js', v=static_version('maintenance.js')) }}"></script>
+<script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='maintenance_page.js', v=static_version('maintenance_page.js')) }}"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 """User login registry helpers."""
 from datetime import datetime
 
-from app.core import state_db as state_db_service
+from app.core import state_store as state_store_service
 
 
 def get_client_ip(request):
@@ -27,7 +27,7 @@ def record_successful_password_ip(
     device_map = device_name_lookup() or {}
     device_name = (device_map.get(ip, "") or "").strip() or "unmapped-device"
     try:
-        state_db_service.upsert_user_record(
+        state_store_service.upsert_user_record(
             app_state_db_path,
             ip=ip,
             timestamp=timestamp,

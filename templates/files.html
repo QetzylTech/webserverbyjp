@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ page_title }}</title>
 <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
-<link rel="stylesheet" href="{{ url_for('static', filename='nav.css', v=static_version('nav.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='files.css', v=static_version('files.css')) }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
 </head>
 <body data-page="{{ current_page }}">
@@ -17,7 +16,7 @@
                 <section class="panel pane-primary" aria-labelledby="file-panel-title">
                 <div class="title">
                     <div class="title-row">
-                        <h1 id="file-panel-title">{{ panel_title }}</h1>
+                        <h1 id="file-panel-title" class="pane-title">{{ panel_title }}</h1>
                     {% if current_page == "backups" %}
                     <div class="backup-controls">
                         <div class="filter-row">
@@ -117,7 +116,7 @@
                 <div id="file-viewer-resizer" class="file-viewer-resizer" aria-hidden="true"></div>
                 <aside id="file-viewer" class="file-viewer pane-editor" aria-hidden="true">
                     <div class="file-viewer-header">
-                        <h2 id="file-viewer-title" class="file-viewer-title">File Viewer</h2>
+                        <h2 id="file-viewer-title" class="file-viewer-title pane-title">File Viewer</h2>
                         <div class="file-viewer-actions">
                             {% if current_page != "backups" %}
                             <button id="file-viewer-download" class="file-viewer-download" type="button" disabled>Download</button>
@@ -129,7 +128,6 @@
                         <div class="backup-restore-actions">
                             <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
                             <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
-                            <button id="backup-restore-rollback" class="backup-restore-rollback" type="button" disabled>Rollback</button>
                         </div>
                     </div>
                     <pre id="file-viewer-content" class="file-viewer-content"></pre>
@@ -158,6 +156,24 @@
             </div>
         </div>
     </div>
+    <div id="success-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="success-modal-title">
+            <h3 id="success-modal-title" class="modal-title">Action Completed</h3>
+            <p id="success-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="success-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+    <div id="error-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
+            <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
+            <p id="error-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="error-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
 <script>
     window.__MCWEB_FILES_CONFIG = {
         csrfToken: {{ csrf_token | tojson }},
@@ -166,6 +182,7 @@
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
-<script src="{{ url_for('static', filename='files.js', v=static_version('files.js')) }}"></script>
+<script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='file_browser_page.js', v=static_version('file_browser_page.js')) }}"></script>
 </body>
 </html>
