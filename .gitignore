@@ -41,11 +41,16 @@ logs/
 *.err
 *.pid
 
-# Local secrets and environment files
+# Local runtime/server state and sensitive data
+data/
+data.old/
 mcweb.env
 *.env
 *.env.local
 .envrc
+**/server.properties
+**/server.properties.real
+**/server.properties.debug
 
 # IDE and editor settings
 .vscode/
@@ -58,12 +63,6 @@ mcweb.env
 .DS_Store
 Thumbs.db
 Desktop.ini
-
-# Local runtime/server state and sensitive data
-**/server.properties
-**/server.properties.real
-**/server.properties.debug
-data/**
 
 # Local scratch/work directories
 .tmp/

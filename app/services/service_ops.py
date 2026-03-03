@@ -5,7 +5,16 @@ from pathlib import Path
 import subprocess
 import time
 from werkzeug.security import check_password_hash
-from app.services.restore_workflow_helpers import ensure_startup_rcon_settings
+from app.services.restore_workflow_helpers import (
+    ensure_startup_rcon_settings,
+    run_sudo,
+    stop_service_systemd,
+    ensure_session_file,
+    write_session_start_time,
+    clear_session_start_time,
+    is_backup_running,
+    reset_backup_schedule_state,
+)
 from app.services.restore_workflow import (
     restore_world_backup,
     append_restore_event,
@@ -15,6 +24,8 @@ from app.services.restore_workflow import (
 
 __all__ = [
     "ensure_startup_rcon_settings",
+    "run_sudo",
+    "write_session_start_time",
     "restore_world_backup",
     "append_restore_event",
     "start_restore_job",
@@ -34,31 +45,6 @@ def get_service_status_intent(ctx):
         return ctx.service_status_intent
 
 
-def stop_service_systemd(ctx):
-    """Stop the systemd service and wait briefly for an off-state."""
-    try:
-        run_sudo(ctx, ["systemctl", "stop", ctx.SERVICE])
-        ctx.invalidate_status_cache()
-    except Exception as exc:
-        ctx.log_mcweb_exception("stop_service_systemd", exc)
-
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if ctx.get_status() in ctx.OFF_STATES:
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def run_sudo(ctx, cmd):
-    """Run command via non-interactive sudo."""
-    return subprocess.run(
-        ["sudo", "-n"] + cmd,
-        capture_output=True,
-        text=True,
-    )
-
-
 def validate_sudo_password(ctx, sudo_password):
     """Validate user-supplied password against configured admin hash."""
     expected_hash = (getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
@@ -68,17 +54,6 @@ def validate_sudo_password(ctx, sudo_password):
     try:
         return bool(check_password_hash(expected_hash, candidate))
     except ValueError:
-        return False
-
-
-def ensure_session_file(ctx):
-    """Ensure the session tracking file exists and is writable."""
-    try:
-        session_file = ctx.session_state.session_file
-        session_file.parent.mkdir(parents=True, exist_ok=True)
-        session_file.touch(exist_ok=True)
-        return True
-    except OSError:
         return False
 
 
@@ -101,29 +76,6 @@ def read_session_start_time(ctx):
     if ts > 1_000_000_000_000:
         ts = ts / 1000.0
     return ts
-
-
-def write_session_start_time(ctx, timestamp=None):
-    """Write session start epoch seconds and return the stored value."""
-    if not ensure_session_file(ctx):
-        return None
-    ts = time.time() if timestamp is None else float(timestamp)
-    try:
-        ctx.session_state.session_file.write_text(f"{ts:.6f}\n", encoding="utf-8")
-    except OSError:
-        return None
-    return ts
-
-
-def clear_session_start_time(ctx):
-    """Clear the session tracking file."""
-    if not ensure_session_file(ctx):
-        return False
-    try:
-        ctx.session_state.session_file.write_text("", encoding="utf-8")
-    except OSError:
-        return False
-    return True
 
 
 def get_session_start_time(ctx, service_status=None):
@@ -313,19 +265,3 @@ def get_backup_status(ctx):
     if is_backup_running(ctx):
         return "Running", "stat-green"
     return "Idle", "stat-yellow"
-
-
-def is_backup_running(ctx):
-    """Return whether backup script reports active run via state file."""
-    try:
-        ctx.BACKUP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        raw = ctx.BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
-    except OSError:
-        return False
-    return raw == "true"
-
-
-def reset_backup_schedule_state(ctx):
-    """Reset periodic backup run counter for current session."""
-    with ctx.backup_state.lock:
-        ctx.backup_state.periodic_runs = 0

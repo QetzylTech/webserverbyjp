@@ -34,6 +34,7 @@ from app.core.web_config import WebConfig
 from app.services import service_ops as service_ops
 from app.services import data_bootstrap as data_bootstrap_service
 from app.services import setup_service as setup_service
+from app.services import setup_orchestration as setup_orchestration_service
 from app.services import bootstrap as bootstrap_service
 from app.services import app_lifecycle as app_lifecycle_service
 from app.services import dashboard_runtime as dashboard_runtime_service
@@ -193,49 +194,18 @@ def _setup_defaults():
 
 
 def _save_setup_values(values):
-    def _to_bool(value):
-        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    for key in ("SERVICE", "DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR"):
-        if not str(values.get(key, "")).strip():
-            return False, f"{key} is required.", {key: "This field is required."}
-    try:
-        ZoneInfo(str(values.get("DISPLAY_TZ", "")).strip())
-    except Exception:
-        return False, "DISPLAY_TZ is invalid.", {"DISPLAY_TZ": "DISPLAY_TZ is invalid."}
-    try:
-        if _to_bool(values.get("CREATE_BACKUP_DIR")):
-            Path(str(values.get("BACKUP_DIR", "")).strip()).mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-    runtime_errors = setup_service.validate_runtime_locations(values)
-    if runtime_errors:
-        if "SERVICE" in runtime_errors:
-            return False, "service not found.", runtime_errors
-        if "MINECRAFT_ROOT_DIR" in runtime_errors:
-            return False, runtime_errors["MINECRAFT_ROOT_DIR"], runtime_errors
-        if "BACKUP_DIR" in runtime_errors:
-            return False, runtime_errors["BACKUP_DIR"], runtime_errors
-        return False, "Setup validation failed.", runtime_errors
-    try:
-        normalized = dict(values)
-        normalized["MCWEB_SECRET_KEY"] = secrets.token_hex(32)
-        setup_service.write_env_file(WEB_CONF_PATH, normalized)
-        setup_service.archive_data_residuals(DATA_DIR)
-        data_bootstrap_service.ensure_data_bootstrap(
-            data_dir=DATA_DIR,
-            app_state_db_path=APP_STATE_DB_PATH,
-            log_mcweb_log=log_mcweb_log,
-            log_mcweb_exception=log_mcweb_exception,
-        )
-        SETUP_REQUIRED_STATE["required"] = False
-        SETUP_REQUIRED_STATE["reasons"] = []
-        _trigger_process_reload()
-        return True, "", {}
-    except Exception as exc:
-        log_mcweb_exception("setup/save", exc)
-        return False, "Failed to save setup values.", {}
+    return setup_orchestration_service.save_setup_values(
+        values,
+        setup_service=setup_service,
+        data_bootstrap_service=data_bootstrap_service,
+        web_conf_path=WEB_CONF_PATH,
+        data_dir=DATA_DIR,
+        app_state_db_path=APP_STATE_DB_PATH,
+        setup_required_state=SETUP_REQUIRED_STATE,
+        trigger_process_reload=_trigger_process_reload,
+        log_mcweb_log=log_mcweb_log,
+        log_mcweb_exception=log_mcweb_exception,
+    )
 
 
 register_setup_routes(
