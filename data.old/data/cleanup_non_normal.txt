@@ -1,5 +1,0 @@
-{
-  "last_ack_at": "",
-  "last_ack_by": "",
-  "missed_runs": []
-}
