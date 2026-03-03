@@ -4,20 +4,17 @@ from datetime import datetime
 from pathlib import Path
 import re
 import secrets
-import subprocess
 import time
 import uuid
 
 from app.core import state_store as state_store_service
+from app.platform import get_calls
 
+_calls = get_calls()
 
 def run_sudo(ctx, cmd):
     """Run command via non-interactive sudo."""
-    return subprocess.run(
-        ["sudo", "-n"] + cmd,
-        capture_output=True,
-        text=True,
-    )
+    return _calls.run_elevated(cmd)
 
 
 def stop_service_systemd(ctx):

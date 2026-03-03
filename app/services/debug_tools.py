@@ -8,6 +8,9 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from app.platform import get_calls
+
+_calls = get_calls()
 
 
 class DebugTools:
@@ -593,12 +596,7 @@ class DebugTools:
                 )
                 return
             try:
-                result = subprocess.run(
-                    ["sudo", "systemctl", "start", "--no-block", service_name],
-                    capture_output=True,
-                    text=True,
-                    timeout=12,
-                )
+                result = _calls.service_start_no_block(service_name, timeout=12)
             except subprocess.TimeoutExpired:
                 self.set_service_status_intent(None)
                 self.invalidate_status_cache()

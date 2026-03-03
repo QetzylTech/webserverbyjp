@@ -5,11 +5,14 @@ from __future__ import annotations
 import getpass
 import os
 import secrets
-import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from app.platform import get_calls
+
+_calls = get_calls()
 
 
 ENV_DEFAULTS = {
@@ -150,12 +153,7 @@ def validate_runtime_locations(values):
 
     # Service must exist in systemd.
     try:
-        probe = subprocess.run(
-            ["systemctl", "show", service_name, "--property=LoadState", "--value"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+        probe = _calls.service_show_load_state(service_name, timeout=5)
         load_state = str(probe.stdout or "").strip().lower()
         if probe.returncode != 0 or load_state in {"", "not-found", "error"}:
             errors["SERVICE"] = "service not found."
@@ -179,12 +177,7 @@ def validate_service_name(service_name):
     if not name:
         return "service not found."
     try:
-        probe = subprocess.run(
-            ["systemctl", "show", name, "--property=LoadState", "--value"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+        probe = _calls.service_show_load_state(name, timeout=5)
         load_state = str(probe.stdout or "").strip().lower()
         if probe.returncode != 0 or load_state in {"", "not-found", "error"}:
             return "service not found."

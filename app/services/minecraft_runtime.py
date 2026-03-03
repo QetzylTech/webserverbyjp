@@ -3,6 +3,9 @@ import subprocess
 import threading
 import time
 import re
+from app.platform import get_calls
+
+_calls = get_calls()
 
 
 def is_rcon_noise_line(line):
@@ -365,12 +368,7 @@ def run_mcrcon(ctx, command, timeout=4):
     if not enabled or not password:
         raise RuntimeError("RCON is disabled: rcon.password not found in server.properties")
     try:
-        return subprocess.run(
-            ["mcrcon", "-H", ctx.RCON_HOST, "-P", str(port), "-p", password, command],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        return _calls.run_mcrcon(ctx.RCON_HOST, port, password, command, timeout=timeout)
     except Exception as exc:
         ctx.log_mcweb_exception("_run_mcrcon", exc)
         raise RuntimeError("mcrcon invocation failed") from exc

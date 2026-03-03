@@ -3,6 +3,9 @@ import subprocess
 import threading
 
 from flask import jsonify, request
+from app.platform import get_calls
+
+_calls = get_calls()
 
 
 def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
@@ -34,12 +37,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 state["log_mcweb_action"]("start-worker", rejection_message=message)
                 return
             try:
-                result = subprocess.run(
-                    ["sudo", "systemctl", "start", "--no-block", service_name],
-                    capture_output=True,
-                    text=True,
-                    timeout=12,
-                )
+                result = _calls.service_start_no_block(service_name, timeout=12)
             except subprocess.TimeoutExpired:
                 state["set_service_status_intent"](None)
                 state["invalidate_status_cache"]()

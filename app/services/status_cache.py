@@ -1,6 +1,9 @@
 """Service status cache helpers."""
 import subprocess
 import time
+from app.platform import get_calls
+
+_calls = get_calls()
 
 
 def get_status(
@@ -26,12 +29,7 @@ def get_status(
             return cached
 
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
+        result = _calls.service_is_active(service, timeout=timeout_seconds)
         status = result.stdout.strip() or "unknown"
     except subprocess.TimeoutExpired:
         log_action(
