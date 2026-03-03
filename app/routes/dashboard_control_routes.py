@@ -1,11 +1,7 @@
 """Control action route registration for the MC web dashboard."""
-import subprocess
 import threading
 
 from flask import jsonify, request
-from app.platform import get_calls
-
-_calls = get_calls()
 
 
 def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
@@ -26,37 +22,15 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             return state["_session_write_failed_response"]()
         state["reset_backup_schedule_state"]()
 
-        service_name = state["SERVICE"]
-
         def _start_worker():
-            rcon_result = state["ensure_startup_rcon_settings"]()
-            if not rcon_result.get("ok"):
-                message = rcon_result.get("message", "Failed to enforce startup RCON settings.")
+            result = state["start_service_non_blocking"](timeout=12)
+            if not result.get("ok"):
+                message = result.get("message", "Failed to start service.")
                 state["set_service_status_intent"](None)
                 state["invalidate_status_cache"]()
                 state["log_mcweb_action"]("start-worker", rejection_message=message)
                 return
-            try:
-                result = _calls.service_start_no_block(service_name, timeout=12)
-            except subprocess.TimeoutExpired:
-                state["set_service_status_intent"](None)
-                state["invalidate_status_cache"]()
-                state["log_mcweb_action"](
-                    "start-worker",
-                    rejection_message="Failed to start service: timed out issuing non-blocking start.",
-                )
-                return
-            if result.returncode != 0:
-                detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
-                message = "Failed to start service."
-                if detail:
-                    message = f"Failed to start service: {detail[:400]}"
-                state["set_service_status_intent"](None)
-                state["invalidate_status_cache"]()
-                state["log_mcweb_action"]("start-worker", rejection_message=message)
-                return
-            state["invalidate_status_cache"]()
-            return
+
         try:
             threading.Thread(target=_start_worker, daemon=True).start()
         except Exception as exc:

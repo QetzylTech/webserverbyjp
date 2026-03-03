@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 from werkzeug.security import check_password_hash
+from app.platform import get_calls
 from app.services.restore_workflow_helpers import (
     ensure_startup_rcon_settings,
     run_sudo,
@@ -22,8 +23,11 @@ from app.services.restore_workflow import (
     get_restore_status,
 )
 
+_calls = get_calls()
+
 __all__ = [
     "ensure_startup_rcon_settings",
+    "start_service_non_blocking",
     "run_sudo",
     "write_session_start_time",
     "restore_world_backup",
@@ -97,6 +101,31 @@ def get_session_duration_text(ctx):
     minutes = (elapsed % 3600) // 60
     seconds = elapsed % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def start_service_non_blocking(ctx, timeout=12):
+    """Validate startup prerequisites and issue non-blocking service start."""
+    rcon_result = ensure_startup_rcon_settings(ctx)
+    if not rcon_result.get("ok"):
+        return {
+            "ok": False,
+            "message": rcon_result.get("message", "Failed to enforce startup RCON settings."),
+        }
+    try:
+        result = _calls.service_start_no_block(ctx.SERVICE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "message": "Failed to start service: timed out issuing non-blocking start.",
+        }
+    if result.returncode != 0:
+        detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
+        message = "Failed to start service."
+        if detail:
+            message = f"Failed to start service: {detail[:400]}"
+        return {"ok": False, "message": message}
+    ctx.invalidate_status_cache()
+    return {"ok": True, "message": ""}
 
 
 def graceful_stop_minecraft(ctx, trigger="session_end"):

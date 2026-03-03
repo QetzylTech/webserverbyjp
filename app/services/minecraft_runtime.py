@@ -8,6 +8,17 @@ from app.platform import get_calls
 _calls = get_calls()
 
 
+def _file_source_settings(source, context, path, text_limit):
+    """Build normalized settings payload for file-backed log sources."""
+    return {
+        "source": source,
+        "type": "file",
+        "context": context,
+        "path": path,
+        "text_limit": text_limit,
+    }
+
+
 def is_rcon_noise_line(line):
     """Return whether a minecraft log line is known RCON startup/shutdown noise."""
     lower = (line or "").lower()
@@ -39,29 +50,27 @@ def log_source_settings(ctx, source):
             "unit": ctx.SERVICE,
             "text_limit": ctx.MINECRAFT_LOG_TEXT_LIMIT,
         }
-    if normalized == "backup":
-        return {
-            "source": normalized,
-            "type": "file",
-            "context": "backup_log_stream",
-            "path": ctx.BACKUP_LOG_FILE,
-            "text_limit": ctx.BACKUP_LOG_TEXT_LIMIT,
-        }
-    if normalized == "mcweb_log":
-        return {
-            "source": normalized,
-            "type": "file",
-            "context": "mcweb_log_stream",
-            "path": ctx.MCWEB_LOG_FILE,
-            "text_limit": ctx.MCWEB_LOG_TEXT_LIMIT,
-        }
-    return {
-        "source": normalized,
-        "type": "file",
-        "context": "mcweb_action_log_stream",
-        "path": ctx.MCWEB_ACTION_LOG_FILE,
-        "text_limit": ctx.MCWEB_ACTION_LOG_TEXT_LIMIT,
+    file_sources = {
+        "backup": _file_source_settings(
+            normalized,
+            "backup_log_stream",
+            ctx.BACKUP_LOG_FILE,
+            ctx.BACKUP_LOG_TEXT_LIMIT,
+        ),
+        "mcweb_log": _file_source_settings(
+            normalized,
+            "mcweb_log_stream",
+            ctx.MCWEB_LOG_FILE,
+            ctx.MCWEB_LOG_TEXT_LIMIT,
+        ),
+        "mcweb": _file_source_settings(
+            normalized,
+            "mcweb_action_log_stream",
+            ctx.MCWEB_ACTION_LOG_FILE,
+            ctx.MCWEB_ACTION_LOG_TEXT_LIMIT,
+        ),
     }
+    return file_sources.get(normalized)
 
 
 def get_log_source_text(ctx, source):
@@ -70,15 +79,19 @@ def get_log_source_text(ctx, source):
     if settings is None:
         return None
     normalized = settings["source"]
-    if normalized == "minecraft":
-        return ctx._get_cached_minecraft_log_text()
-    if normalized == "backup":
-        return ctx._get_cached_backup_log_text()
+    cached_getters = {
+        "minecraft": ctx._get_cached_minecraft_log_text,
+        "backup": ctx._get_cached_backup_log_text,
+        "mcweb": ctx._get_cached_mcweb_log_text,
+    }
+    getter = cached_getters.get(normalized)
+    if getter is not None:
+        return getter()
     if normalized == "mcweb_log":
         path = settings["path"]
         lines = ctx._read_recent_file_lines(path, settings["text_limit"])
         return "\n".join(lines).strip() or "(no logs)"
-    return ctx._get_cached_mcweb_log_text()
+    return None
 
 
 def publish_log_stream_line(ctx, source, line):
@@ -93,12 +106,14 @@ def publish_log_stream_line(ctx, source, line):
         state["seq"] += 1
         state["events"].append((state["seq"], line))
         state["cond"].notify_all()
-    if normalized == "minecraft":
-        ctx._append_minecraft_log_cache_line(line)
-    elif normalized == "backup":
-        ctx._append_backup_log_cache_line(line)
-    elif normalized == "mcweb":
-        ctx._append_mcweb_log_cache_line(line)
+    appenders = {
+        "minecraft": ctx._append_minecraft_log_cache_line,
+        "backup": ctx._append_backup_log_cache_line,
+        "mcweb": ctx._append_mcweb_log_cache_line,
+    }
+    appender = appenders.get(normalized)
+    if appender is not None:
+        appender(line)
 
 
 def line_matches_crash_marker(ctx, line):

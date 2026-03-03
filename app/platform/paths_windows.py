@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from pathlib import PureWindowsPath
 
@@ -35,7 +34,3 @@ def is_valid_env_path(path_text):
         return True
     except Exception:
         return False
-
-
-def normalize_for_host(path_text):
-    return os.path.normpath(str(path_text or "").strip())

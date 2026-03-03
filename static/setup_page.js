@@ -38,37 +38,38 @@ document.addEventListener("DOMContentLoaded", () => {
     const waitingStepIndex = pathOnlyMode ? 1 : 5;
     const successStepIndex = pathOnlyMode ? 2 : 6;
 
+    const text = (node) => String(node?.value || "").trim();
+    const fieldInputMap = {
+        display_tz: tzInput,
+        minecraft_root_dir: rootInput,
+        backup_dir: backupInput,
+        admin_password: pwd,
+        admin_password_confirm: pwdConfirm,
+        service: rootInput,
+    };
+
+    function normalizeFieldKey(fieldKey) {
+        return String(fieldKey || "").toLowerCase();
+    }
+
+    function errorFieldKey(fieldKey) {
+        const key = normalizeFieldKey(fieldKey);
+        return key === "service" ? "minecraft_root_dir" : key;
+    }
+
     function setFieldError(fieldKey, message) {
-        const key = String(fieldKey || "").toLowerCase();
-        const errorKey = key === "service" ? "minecraft_root_dir" : key;
-        const map = {
-            display_tz: tzInput,
-            minecraft_root_dir: rootInput,
-            backup_dir: backupInput,
-            admin_password: pwd,
-            admin_password_confirm: pwdConfirm,
-            service: rootInput,
-        };
-        const input = map[key];
+        const key = normalizeFieldKey(fieldKey);
+        const input = fieldInputMap[key];
         if (input) input.classList.add("field-invalid");
-        const errorNode = document.getElementById(`error-${errorKey}`);
+        const errorNode = document.getElementById(`error-${errorFieldKey(key)}`);
         if (errorNode) errorNode.textContent = message || "";
     }
 
     function clearFieldError(fieldKey) {
-        const key = String(fieldKey || "").toLowerCase();
-        const errorKey = key === "service" ? "minecraft_root_dir" : key;
-        const map = {
-            display_tz: tzInput,
-            minecraft_root_dir: rootInput,
-            backup_dir: backupInput,
-            admin_password: pwd,
-            admin_password_confirm: pwdConfirm,
-            service: rootInput,
-        };
-        const input = map[key];
+        const key = normalizeFieldKey(fieldKey);
+        const input = fieldInputMap[key];
         if (input) input.classList.remove("field-invalid");
-        const errorNode = document.getElementById(`error-${errorKey}`);
+        const errorNode = document.getElementById(`error-${errorFieldKey(key)}`);
         if (errorNode) errorNode.textContent = "";
     }
 
@@ -81,6 +82,12 @@ document.addEventListener("DOMContentLoaded", () => {
             "admin_password_confirm",
             "service",
         ].forEach(clearFieldError);
+    }
+
+    function requireValue(node, fieldKey) {
+        if (text(node)) return true;
+        setFieldError(fieldKey, "This field is required.");
+        return false;
     }
 
     function setCreateOptionVisible(fieldKey, visible) {
@@ -164,18 +171,12 @@ document.addEventListener("DOMContentLoaded", () => {
         clearKnownErrors();
 
         if (pathOnlyMode && stepIndex === 0) {
-            const root = String(rootInput?.value || "").trim();
-            const backup = String(backupInput?.value || "").trim();
-            if (!root) {
-                setFieldError("minecraft_root_dir", "This field is required.");
-                return false;
-            }
-            if (!backup) {
-                setFieldError("backup_dir", "This field is required.");
-                return false;
-            }
+            if (!requireValue(rootInput, "minecraft_root_dir")) return false;
+            if (!requireValue(backupInput, "backup_dir")) return false;
+            const root = text(rootInput);
+            const backup = text(backupInput);
             const rootOk = await validateStepServer("root", {
-                SERVICE: String(serviceInput?.value || "minecraft").trim() || "minecraft",
+                SERVICE: text(serviceInput) || "minecraft",
                 MINECRAFT_ROOT_DIR: root,
             });
             if (!rootOk) return false;
@@ -188,37 +189,28 @@ document.addEventListener("DOMContentLoaded", () => {
             return true;
         }
         if (stepIndex === 1) {
-            if (!String(tzInput?.value || "").trim()) {
-                setFieldError("display_tz", "This field is required.");
-                return false;
-            }
-            return validateStepServer("timezone", { DISPLAY_TZ: String(tzInput.value || "").trim() });
+            if (!requireValue(tzInput, "display_tz")) return false;
+            return validateStepServer("timezone", { DISPLAY_TZ: text(tzInput) });
         }
         if (stepIndex === 2) {
-            const root = String(rootInput?.value || "").trim();
-            if (!root) {
-                setFieldError("minecraft_root_dir", "This field is required.");
-                return false;
-            }
+            if (!requireValue(rootInput, "minecraft_root_dir")) return false;
+            const root = text(rootInput);
             return validateStepServer("root", {
-                SERVICE: String(serviceInput?.value || "minecraft").trim() || "minecraft",
+                SERVICE: text(serviceInput) || "minecraft",
                 MINECRAFT_ROOT_DIR: root,
             });
         }
         if (stepIndex === 3) {
-            const backup = String(backupInput?.value || "").trim();
-            if (!backup) {
-                setFieldError("backup_dir", "This field is required.");
-                return false;
-            }
+            if (!requireValue(backupInput, "backup_dir")) return false;
+            const backup = text(backupInput);
             return validateStepServer("backup", {
                 BACKUP_DIR: backup,
                 CREATE_BACKUP_DIR: Boolean(createBackupInput?.checked),
             });
         }
         if (stepIndex === 4) {
-            const password = String(pwd?.value || "").trim();
-            const confirm = String(pwdConfirm?.value || "").trim();
+            const password = text(pwd);
+            const confirm = text(pwdConfirm);
             let ok = true;
             if (!password) {
                 setFieldError("admin_password", "This field is required.");

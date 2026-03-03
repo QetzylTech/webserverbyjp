@@ -159,6 +159,9 @@ def build_runtime_bindings(
     def ensure_startup_rcon_settings():
         return control_plane_service.ensure_startup_rcon_settings(_state())
 
+    def start_service_non_blocking(timeout=12):
+        return control_plane_service.start_service_non_blocking(_state(), timeout=timeout)
+
     def run_backup_script(count_skip_as_success=True, trigger="manual"):
         return control_plane_service.run_backup_script(_state(), count_skip_as_success, trigger)
 
@@ -309,6 +312,7 @@ def build_runtime_bindings(
         "graceful_stop_minecraft": graceful_stop_minecraft,
         "stop_server_automatically": stop_server_automatically,
         "ensure_startup_rcon_settings": ensure_startup_rcon_settings,
+        "start_service_non_blocking": start_service_non_blocking,
         "run_backup_script": run_backup_script,
         "restore_world_backup": restore_world_backup,
         "append_restore_event": append_restore_event,

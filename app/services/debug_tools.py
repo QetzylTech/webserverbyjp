@@ -3,14 +3,10 @@ import json
 import os
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from app.platform import get_calls
-
-_calls = get_calls()
 
 
 class DebugTools:
@@ -49,6 +45,7 @@ class DebugTools:
         invalidate_status_cache,
         set_service_status_intent,
         write_session_start_time,
+        start_service_non_blocking,
         validate_sudo_password,
         record_successful_password_ip,
         graceful_stop_minecraft,
@@ -56,7 +53,7 @@ class DebugTools:
         reset_backup_schedule_state,
         run_backup_script,
     ):
-                # Dunder method __init__.
+        """Store debug/runtime dependencies and mutable references used by debug routes."""
         self.DEBUG_ENABLED = debug_enabled
         self.DEBUG_WORLD_NAME = debug_world_name
         self.DEBUG_MOTD = debug_motd
@@ -88,6 +85,7 @@ class DebugTools:
         self.invalidate_status_cache = invalidate_status_cache
         self.set_service_status_intent = set_service_status_intent
         self.write_session_start_time = write_session_start_time
+        self.start_service_non_blocking = start_service_non_blocking
         self.validate_sudo_password = validate_sudo_password
         self.record_successful_password_ip = record_successful_password_ip
         self.graceful_stop_minecraft = graceful_stop_minecraft
@@ -96,23 +94,27 @@ class DebugTools:
         self.run_backup_script = run_backup_script
 
     def detect_server_properties_path(self):
-        """Runtime helper detect_server_properties_path."""
+        """Return the first existing server.properties path from configured candidates."""
         for path in self.SERVER_PROPERTIES_CANDIDATES:
             if path.exists():
                 return path
         return None
 
     def _debug_properties_state_path(self):
+        """Return path to persisted debug server.properties snapshot metadata."""
         return self.DATA_DIR / "properties" / "debug_properties.state"
 
     def _debug_properties_history_path(self):
+        """Return append-only history log path for debug properties events."""
         return self.DATA_DIR / "properties" / "debug_properties.history"
 
     def _timestamped_properties_backup_path(self):
+        """Return a UTC timestamped backup path for server.properties snapshots."""
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return self.DATA_DIR / "properties" / f"server.properties.{stamp}.bak"
 
     def _record_debug_properties_history(self, event, *, props_path, backup_path=""):
+        """Append one structured history row for debug properties lifecycle events."""
         self._debug_properties_history_path().parent.mkdir(parents=True, exist_ok=True)
         row = {
             "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -125,6 +127,7 @@ class DebugTools:
             fh.write(line)
 
     def _read_debug_properties_state(self):
+        """Read persisted debug properties state map; return empty dict on parse/read failure."""
         path = self._debug_properties_state_path()
         if not path.exists():
             return {}
@@ -137,6 +140,7 @@ class DebugTools:
         return data
 
     def _write_debug_properties_state(self, payload):
+        """Persist debug properties state map using atomic write+replace semantics."""
         self._debug_properties_state_path().parent.mkdir(parents=True, exist_ok=True)
         path = self._debug_properties_state_path()
         tmp = path.with_name(f"{path.name}.tmp")
@@ -144,27 +148,31 @@ class DebugTools:
         os.replace(tmp, path)
 
     def _latest_server_properties_backup(self):
+        """Return most recent timestamped server.properties backup path, if any."""
         backups = sorted((self.DATA_DIR / "properties").glob("server.properties.*.bak"))
         if not backups:
             return None
         return backups[-1]
 
     def _is_debug_world_properties_text(self, text):
+        """Return whether parsed properties target the configured debug world name."""
         kv = self.parse_server_properties_kv(text)
         return kv.get("level-name", "").strip() == self.DEBUG_WORLD_NAME
 
     def _atomic_replace_file_from_source(self, source, destination):
+        """Atomically replace destination by copying source into a temp file first."""
         tmp = destination.with_name(f"{destination.name}.tmp")
         shutil.copyfile(source, tmp)
         os.replace(tmp, destination)
 
     def _atomic_write_text(self, destination, text):
+        """Atomically write text to destination using temp file + replace."""
         tmp = destination.with_name(f"{destination.name}.tmp")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, destination)
 
     def update_property_text(self, original_text, key, value):
-        """Runtime helper update_property_text."""
+        """Update or append a key=value line inside server.properties text."""
         lines = original_text.splitlines()
         target = f"{key}="
         found = False
@@ -210,7 +218,7 @@ class DebugTools:
         return {"ok": True, "path": str(props), "rcon_port": port_value}
 
     def prepare_debug_server_properties_bootup(self):
-        """Runtime helper prepare_debug_server_properties_bootup."""
+        """Provision or restore server.properties at boot based on debug mode state."""
         props = self.detect_server_properties_path()
         if props is None:
             event = "debug_boot_skip_missing_server_properties" if self.DEBUG_ENABLED else "normal_boot_skip_missing_server_properties"
@@ -288,7 +296,7 @@ class DebugTools:
             self.log_mcweb_exception("debug_boot_server_properties", exc)
 
     def parse_server_properties_kv(self, text):
-        """Runtime helper parse_server_properties_kv."""
+        """Parse server.properties text into a key/value dict."""
         kv = {}
         for raw in text.splitlines():
             line = raw.strip()
@@ -299,7 +307,7 @@ class DebugTools:
         return kv
 
     def typed_server_property_value(self, key, raw_value):
-        """Runtime helper typed_server_property_value."""
+        """Validate and normalize one editable server.properties value by key schema."""
         value = str(raw_value if raw_value is not None else "").strip()
         if key in self.DEBUG_SERVER_PROPERTIES_BOOL_KEYS:
             lowered = value.lower()
@@ -324,7 +332,7 @@ class DebugTools:
         return value
 
     def rewrite_server_properties_text(self, original_text, updated_values):
-        """Runtime helper rewrite_server_properties_text."""
+        """Rewrite properties text with provided updates while preserving non-key lines."""
         lines = original_text.splitlines()
         seen = set()
         out = []
@@ -349,7 +357,7 @@ class DebugTools:
         return text
 
     def get_debug_server_properties_rows(self):
-        """Runtime helper get_debug_server_properties_rows."""
+        """Return schema-aware rows for rendering debug server.properties editor UI."""
         props = self.detect_server_properties_path()
         if props is None:
             return {"ok": False, "message": "server.properties not found."}
@@ -382,7 +390,7 @@ class DebugTools:
         return {"ok": True, "path": str(props), "rows": rows}
 
     def set_debug_server_properties_values(self, values):
-        """Runtime helper set_debug_server_properties_values."""
+        """Validate and persist editable server.properties fields from debug UI input."""
         props = self.detect_server_properties_path()
         if props is None:
             return {"ok": False, "message": "server.properties not found."}
@@ -413,11 +421,11 @@ class DebugTools:
             return {"ok": False, "message": "Failed to write server.properties."}
 
     def debug_explorer_roots(self):
-        """Runtime helper debug_explorer_roots."""
+        """Return allowed root directories for debug file explorer browsing."""
         return {"minecraft": Path("/opt/Minecraft")}
 
     def resolve_debug_explorer_target(self, root_key, rel_path):
-        """Runtime helper resolve_debug_explorer_target."""
+        """Resolve and validate explorer target path while preventing root escape."""
         roots = self.debug_explorer_roots()
         root = roots.get((root_key or "").strip())
         if root is None:
@@ -439,7 +447,7 @@ class DebugTools:
         return root_resolved, target, ""
 
     def debug_explorer_list(self, root_key, rel_path=""):
-        """Runtime helper debug_explorer_list."""
+        """List sanitized directory entries for debug explorer under approved roots."""
         root_resolved, target, err = self.resolve_debug_explorer_target(root_key, rel_path)
         if err:
             return {"ok": False, "message": err}
@@ -477,7 +485,7 @@ class DebugTools:
         }
 
     def log_mcweb_boot_diagnostics(self):
-        """Runtime helper log_mcweb_boot_diagnostics."""
+        """Write one boot diagnostics summary row for debug/troubleshooting."""
         try:
             server_props = self.detect_server_properties_path()
             _, rcon_port, rcon_enabled = self.refresh_rcon_config()
@@ -496,11 +504,11 @@ class DebugTools:
             self.log_mcweb_exception("boot_diagnostics", exc)
 
     def normalize_debug_value(self, raw):
-        """Runtime helper normalize_debug_value."""
+        """Normalize debug override input into a trimmed string representation."""
         return str(raw if raw is not None else "").strip()
 
     def resolve_debug_typed_value(self, name, raw_value):
-        """Runtime helper resolve_debug_typed_value."""
+        """Cast debug override string to type matching current runtime namespace value."""
         current = self.namespace.get(name)
         text = self.normalize_debug_value(raw_value)
         if isinstance(current, Path):
@@ -519,7 +527,7 @@ class DebugTools:
         return text
 
     def apply_single_debug_override(self, key, raw_value):
-        """Runtime helper apply_single_debug_override."""
+        """Apply one debug override into runtime namespace/state and secret key config."""
         value = self.normalize_debug_value(raw_value)
         with self.debug_env_lock:
             self.debug_env_overrides[key] = value
@@ -538,12 +546,12 @@ class DebugTools:
                 pass
 
     def reset_single_debug_override(self, key):
-        """Runtime helper reset_single_debug_override."""
+        """Reset one debug override back to original loaded configuration value."""
         original = self.debug_env_original_values.get(key, "")
         self.apply_single_debug_override(key, original)
 
     def reset_all_debug_overrides(self):
-        """Runtime helper reset_all_debug_overrides."""
+        """Reset and clear all active debug env overrides."""
         with self.debug_env_lock:
             keys = list(self.debug_env_overrides.keys())
         for key in keys:
@@ -552,7 +560,7 @@ class DebugTools:
             self.debug_env_overrides.clear()
 
     def apply_debug_env_overrides(self, values):
-        """Runtime helper apply_debug_env_overrides."""
+        """Apply many debug env overrides and collect per-key conversion errors."""
         errors = []
         for key, raw in values.items():
             try:
@@ -562,7 +570,7 @@ class DebugTools:
         return errors
 
     def get_debug_env_rows(self):
-        """Runtime helper get_debug_env_rows."""
+        """Return merged original/effective debug env rows for UI rendering."""
         with self.debug_env_lock:
             overrides = dict(self.debug_env_overrides)
         rows = []
@@ -577,41 +585,18 @@ class DebugTools:
         return rows
 
     def debug_start_service(self):
-        """Runtime helper debug_start_service."""
+        """Trigger non-blocking debug service start and update transient status intent."""
         self.set_service_status_intent("starting")
         self.invalidate_status_cache()
         if self.write_session_start_time() is None:
             return False
 
-        service_name = self.SERVICE
-
         def worker():
-            rcon_result = self.ensure_startup_rcon_settings()
-            if not rcon_result.get("ok"):
+            result = self.start_service_non_blocking(timeout=12)
+            if not result.get("ok"):
                 self.set_service_status_intent(None)
                 self.invalidate_status_cache()
-                self.log_debug_page_action(
-                    "debug-start-worker",
-                    rejection_message=rcon_result.get("message", "Failed to enforce startup RCON settings."),
-                )
-                return
-            try:
-                result = _calls.service_start_no_block(service_name, timeout=12)
-            except subprocess.TimeoutExpired:
-                self.set_service_status_intent(None)
-                self.invalidate_status_cache()
-                self.log_debug_page_action(
-                    "debug-start-worker",
-                    rejection_message="Failed to start service: timed out issuing non-blocking start.",
-                )
-                return
-            if result.returncode != 0:
-                self.set_service_status_intent(None)
-                self.invalidate_status_cache()
-                detail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()
-                message = "Failed to start service."
-                if detail:
-                    message = f"Failed to start service: {detail[:400]}"
+                message = result.get("message", "Failed to start service.")
                 self.log_debug_page_action("debug-start-worker", rejection_message=message)
                 return
             self.invalidate_status_cache()
@@ -620,7 +605,7 @@ class DebugTools:
         return True
 
     def debug_stop_service(self, sudo_password):
-        """Runtime helper debug_stop_service."""
+        """Validate password then stop service gracefully and reset session/backup state."""
         if not self.validate_sudo_password(sudo_password):
             return False, "Password incorrect."
         self.record_successful_password_ip()
@@ -631,11 +616,11 @@ class DebugTools:
         return True, ""
 
     def debug_run_backup(self, trigger="manual"):
-        """Runtime helper debug_run_backup."""
+        """Run backup immediately from debug controls."""
         return self.run_backup_script(trigger=trigger)
 
     def debug_schedule_backup(self, minutes, trigger="manual"):
-        """Runtime helper debug_schedule_backup."""
+        """Schedule delayed backup execution in a background worker thread."""
         try:
             delay_minutes = int(minutes)
         except (TypeError, ValueError):
@@ -644,7 +629,7 @@ class DebugTools:
             return False, "Minutes must be greater than zero."
 
         def worker():
-            """Runtime helper worker."""
+            """Sleep requested delay then run backup and log completion/error result."""
             time.sleep(delay_minutes * 60)
             ok = self.run_backup_script(trigger=trigger)
             if ok:

@@ -239,6 +239,7 @@ _STATE_BINDING_KEYS = (
     "slow_metrics_lock",
     "stop_server_automatically",
     "ensure_startup_rcon_settings",
+    "start_service_non_blocking",
     "storage_emergency_active",
     "storage_emergency_lock",
     "is_storage_low",

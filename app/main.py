@@ -17,12 +17,6 @@ import time
 from collections import deque
 from zoneinfo import ZoneInfo
 from app.core.config import apply_default_flask_config, resolve_secret_key
-from app.core.debug_server_properties import (
-    DEBUG_SERVER_PROPERTIES_BOOL_KEYS,
-    DEBUG_SERVER_PROPERTIES_ENUMS,
-    DEBUG_SERVER_PROPERTIES_INT_KEYS,
-    DEBUG_SERVER_PROPERTIES_KEYS,
-)
 from app.core.filesystem_utils import (
     list_download_files as _list_download_files,
     read_recent_file_lines as _read_recent_file_lines,
@@ -76,6 +70,12 @@ _cfg_float = _WEB_CFG.get_float
 _cfg_path = _WEB_CFG.get_path
 STATE = None
 _paths = get_paths()
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _cfg_bool(name, default="false"):
+    """Parse common truthy/falsey string config values into bool."""
+    return _cfg_str(name, default).strip().lower() in _TRUE_VALUES
 
 _setup_status = setup_service.assess_setup_requirement(WEB_CONF_PATH, _WEB_CFG_VALUES)
 SETUP_REQUIRED_STATE = {
@@ -169,11 +169,11 @@ def _setup_route_guard():
         return redirect("/setup")
     if path == "/setup" or path.startswith("/setup"):
         return abort(404)
-DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+DEBUG_ENABLED = _cfg_bool("DEBUG", "false")
 DEBUG_PAGE_VISIBLE = DEBUG_ENABLED
-MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_str("MAINTENANCE_SCOPE_BACKUP_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
-MAINTENANCE_SCOPE_STALE_WORLD_DIR = _cfg_str("MAINTENANCE_SCOPE_STALE_WORLD_DIR", "true").strip().lower() in {"1", "true", "yes", "on"}
-MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_str("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
+MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_bool("MAINTENANCE_SCOPE_BACKUP_ZIP", "true")
+MAINTENANCE_SCOPE_STALE_WORLD_DIR = _cfg_bool("MAINTENANCE_SCOPE_STALE_WORLD_DIR", "true")
+MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_bool("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "true")
 # Hard safety guards are intentionally fixed and not env-configurable.
 MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N = 1
 MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP = True
