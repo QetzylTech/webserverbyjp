@@ -381,7 +381,7 @@ def register_maintenance_routes(app, state):
         missed = data.get("missed_runs")
         if not isinstance(missed, list):
             missed = []
-        # Remove current-scope events and unknown-scope events (legacy/global).
+        # Remove current-scope events and unknown-scope events.
         data["missed_runs"] = [item for item in missed if (_entry_scope(item) not in {"", scope})]
         data["last_ack_at"] = _cleanup_now_iso(state)
         data["last_ack_by"] = _cleanup_get_client_ip(state)

@@ -62,7 +62,7 @@ def get_ram_usage():
 
 
 def get_cpu_frequency():
-    """Return average CPU frequency, preferring cpufreq then cpuinfo fallback."""
+    """Return average CPU frequency from cpufreq."""
     freq_paths = sorted(Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq"))
     freqs_khz = []
     for path in freq_paths:
@@ -75,18 +75,6 @@ def get_cpu_frequency():
     if freqs_khz:
         avg_ghz = (sum(freqs_khz) / len(freqs_khz)) / 1_000_000
         return f"{avg_ghz:.2f} GHz"
-
-    try:
-        with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
-            mhz_values = []
-            for line in f:
-                if line.lower().startswith("cpu mhz"):
-                    mhz_values.append(float(line.split(":", 1)[1].strip()))
-        if mhz_values:
-            avg_ghz = (sum(mhz_values) / len(mhz_values)) / 1000
-            return f"{avg_ghz:.2f} GHz"
-    except OSError:
-        pass
 
     return "unknown"
 

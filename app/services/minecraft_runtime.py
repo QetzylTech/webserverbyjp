@@ -2,7 +2,6 @@
 import subprocess
 import threading
 import time
-import shutil
 import re
 
 
@@ -295,18 +294,6 @@ def is_rcon_startup_ready(ctx, service_status=None):
     return ready
 
 
-def candidate_mcrcon_bins():
-    """Return preferred list of mcrcon binary candidates."""
-    candidates = []
-    found = shutil.which("mcrcon")
-    if found:
-        candidates.append(found)
-    for path in ("/usr/bin/mcrcon", "/usr/local/bin/mcrcon", "/opt/mcrcon/mcrcon"):
-        if path not in candidates:
-            candidates.append(path)
-    return candidates
-
-
 def clean_rcon_output(text):
     """Strip ANSI and section-format control codes from RCON output."""
     cleaned = text or ""
@@ -373,36 +360,20 @@ def is_rcon_enabled(ctx):
 
 
 def run_mcrcon(ctx, command, timeout=4):
-    """Execute an RCON command, trying compatible mcrcon argv variants."""
+    """Execute an RCON command via mcrcon."""
     password, port, enabled = refresh_rcon_config(ctx)
     if not enabled or not password:
         raise RuntimeError("RCON is disabled: rcon.password not found in server.properties")
-
-    last_result = None
-    for bin_path in candidate_mcrcon_bins():
-        candidates = [
-            [bin_path, "-H", ctx.RCON_HOST, "-P", str(port), "-p", password, command],
-            [bin_path, "-H", ctx.RCON_HOST, "-p", password, command],
-            [bin_path, "-p", password, command],
-        ]
-        for argv in candidates:
-            try:
-                result = subprocess.run(
-                    argv,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-                last_result = result
-                if result.returncode == 0:
-                    return result
-            except Exception as exc:
-                ctx.log_mcweb_exception("_run_mcrcon_candidate", exc)
-                continue
-
-    if last_result is not None:
-        return last_result
-    raise RuntimeError("mcrcon invocation failed")
+    try:
+        return subprocess.run(
+            ["mcrcon", "-H", ctx.RCON_HOST, "-P", str(port), "-p", password, command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        ctx.log_mcweb_exception("_run_mcrcon", exc)
+        raise RuntimeError("mcrcon invocation failed") from exc
 
 
 def parse_players_online(output):
@@ -465,7 +436,7 @@ def probe_tick_rate(ctx):
 
 
 def probe_minecraft_runtime_metrics(ctx, force=False):
-    """Probe and cache players/tick metrics with startup-safe fallbacks."""
+    """Probe and cache players/tick metrics."""
     service_status = ctx.get_status()
     if service_status != "active":
         with ctx.mc_query_lock:
@@ -478,35 +449,23 @@ def probe_minecraft_runtime_metrics(ctx, force=False):
 
     now = time.time()
     startup_ready = is_rcon_startup_ready(ctx, service_status=service_status)
-    use_startup_fallback_probe = False
     if not startup_ready:
-        session_started_at = ctx.read_session_start_time()
-        startup_elapsed = None
-        if session_started_at is not None:
-            startup_elapsed = max(0.0, now - session_started_at)
-        if startup_elapsed is not None and startup_elapsed >= ctx.RCON_STARTUP_FALLBACK_AFTER_SECONDS:
-            use_startup_fallback_probe = True
-        else:
-            with ctx.mc_query_lock:
-                ctx.mc_cached_players_online = "unknown"
-                ctx.mc_cached_tick_rate = "--"
-            return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
+        with ctx.mc_query_lock:
+            ctx.mc_cached_players_online = "unknown"
+            ctx.mc_cached_tick_rate = "--"
+        return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
 
     # Shared cache lock prevents frequent concurrent probe storms.
     with ctx.mc_query_lock:
         probe_interval = ctx.MC_QUERY_INTERVAL_SECONDS
-        if use_startup_fallback_probe:
-            probe_interval = max(ctx.MC_QUERY_INTERVAL_SECONDS, ctx.RCON_STARTUP_FALLBACK_INTERVAL_SECONDS)
         if not force and (now - ctx.mc_last_query_at) < probe_interval:
             return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
 
     players_online = "unknown"
     tick_rate = "--"
-    list_probe_ok = False
     try:
         list_result = run_mcrcon(ctx, "list", timeout=8)
         if list_result.returncode == 0:
-            list_probe_ok = True
             parsed = parse_players_online((list_result.stdout or "") + (list_result.stderr or ""))
             if parsed is not None:
                 players_online = parsed
@@ -518,10 +477,6 @@ def probe_minecraft_runtime_metrics(ctx, force=False):
             tick_rate = tick_rate_val
     except Exception as exc:
         ctx.log_mcweb_exception("_probe_minecraft_runtime_metrics/tps", exc)
-
-    if use_startup_fallback_probe and (list_probe_ok or tick_rate != "--"):
-        with ctx.rcon_startup_lock:
-            ctx.rcon_startup_ready = True
 
     with ctx.mc_query_lock:
         ctx.mc_cached_players_online = players_online

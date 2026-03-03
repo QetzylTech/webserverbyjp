@@ -63,17 +63,12 @@ Desktop.ini
 **/server.properties
 **/server.properties.real
 **/server.properties.debug
-
-data/users.txt
-data/session.txt
-data/state.txt
-data/*devices*.csv
-data/cleanup.json
-data/cleanup history.json
-data/cleanup_non_normal.txt
-data/properties/*.bak
+data/**
 
 # Local scratch/work directories
 .tmp/
 tmp/
 temp/
+
+# Local rules list
+rules_list.txt

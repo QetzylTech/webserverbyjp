@@ -91,3 +91,4 @@
 2026-03-01T13:14:53+08:00 | what=manual_delete | why=manual_selection | trigger=manual_selection | result=ok | details=scope=backups;deleted=2;errors=0
 2026-03-01T13:15:03+08:00 | what=manual_delete | why=manual_selection | trigger=manual_selection | result=ok | details=scope=backups;deleted=1;errors=0
 2026-03-01T13:15:09+08:00 | what=manual_delete | why=manual_selection | trigger=manual_selection | result=ok | details=scope=backups;deleted=1;errors=0
+2026-03-03T10:23:26+08:00 | what=ack_non_normal | why=manual_ack | trigger=manual | result=ok | details=scope=backups

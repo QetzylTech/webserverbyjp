@@ -395,7 +395,7 @@
             });
             renderActiveLog();
         } catch (_) {
-            // Keep IP redaction fallback labels even when map fetch fails.
+            // Keep current labels when map fetch fails.
         }
     }
 

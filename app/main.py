@@ -5,18 +5,24 @@ This app provides:
 - Live server and Minecraft stats
 - Systemd log viewer
 - Automatic idle shutdown and session-based backup scheduling"""
-from flask import Flask
+from flask import Flask, abort, redirect, request
 from pathlib import Path
 import threading
 import re
 import json
 import os
+import secrets
+import sys
 import time
 from collections import deque
 from zoneinfo import ZoneInfo
 from app.core.config import apply_default_flask_config, resolve_secret_key
-from app.core.device_map import get_device_name_map as _device_name_map_lookup
-from app.core import state_store as state_store_service
+from app.core.debug_server_properties import (
+    DEBUG_SERVER_PROPERTIES_BOOL_KEYS,
+    DEBUG_SERVER_PROPERTIES_ENUMS,
+    DEBUG_SERVER_PROPERTIES_INT_KEYS,
+    DEBUG_SERVER_PROPERTIES_KEYS,
+)
 from app.core.filesystem_utils import (
     list_download_files as _list_download_files,
     read_recent_file_lines as _read_recent_file_lines,
@@ -26,6 +32,8 @@ from app.core.filesystem_utils import (
 from app.core.logging_setup import build_loggers
 from app.core.web_config import WebConfig
 from app.services import service_ops as service_ops
+from app.services import data_bootstrap as data_bootstrap_service
+from app.services import setup_service as setup_service
 from app.services import bootstrap as bootstrap_service
 from app.services import app_lifecycle as app_lifecycle_service
 from app.services import dashboard_runtime as dashboard_runtime_service
@@ -48,6 +56,7 @@ from app.services.system_metrics import (
 )
 from app.services import world_bindings as world_bindings_service
 from app.routes.dashboard_routes import register_routes
+from app.routes.setup_routes import register_setup_routes
 from app.state import BackupState, SessionState, REQUIRED_STATE_KEY_SET
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -65,7 +74,15 @@ _cfg_float = _WEB_CFG.get_float
 _cfg_path = _WEB_CFG.get_path
 STATE = None
 
-app.config["SECRET_KEY"] = resolve_secret_key(_cfg_str, "MCWEB_SECRET_KEY", "FLASK_SECRET_KEY")
+_setup_status = setup_service.assess_setup_requirement(WEB_CONF_PATH, _WEB_CFG_VALUES)
+SETUP_REQUIRED_STATE = {
+    "required": bool(_setup_status.get("required")),
+    "reasons": list(_setup_status.get("reasons", [])),
+}
+if SETUP_REQUIRED_STATE["required"]:
+    app.config["SECRET_KEY"] = secrets.token_hex(32)
+else:
+    app.config["SECRET_KEY"] = resolve_secret_key(_cfg_str, "MCWEB_SECRET_KEY")
 apply_default_flask_config(app)
 
 # Core service and application settings.
@@ -86,7 +103,6 @@ DEBUG_PAGE_LOG_FILE = MCWEB_LOG_DIR / "debug_page.log"
 DATA_DIR = APP_DIR / "data"
 # Structured runtime state always lives beside mcweb.py under ./data.
 APP_STATE_DB_PATH = APP_DIR / "data" / "app_state.sqlite3"
-LEGACY_APP_STATE_DB_PATH = APP_DIR / "app_state.sqlite3"
 DOCS_DIR = APP_DIR / "doc"
 BACKUP_STATE_FILE = DATA_DIR / "state.txt"
 SESSION_FILE = DATA_DIR / "session.txt"
@@ -116,6 +132,39 @@ log_mcweb_action, log_mcweb_log, log_mcweb_exception, log_debug_page_action = bu
     MCWEB_LOG_FILE,
     DEBUG_PAGE_LOG_FILE,
 )
+
+
+def _setup_required():
+    return bool(SETUP_REQUIRED_STATE.get("required"))
+
+
+def _setup_reasons():
+    return list(SETUP_REQUIRED_STATE.get("reasons", []))
+
+
+def _trigger_process_reload():
+    def _reload():
+        time.sleep(0.35)
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as exc:
+            log_mcweb_exception("setup/reload", exc)
+
+    threading.Thread(target=_reload, daemon=True, name="mcweb-setup-reload").start()
+
+
+@app.before_request
+def _setup_route_guard():
+    setup_mode = _setup_required()
+    path = request.path or ""
+    if setup_mode:
+        if path == "/setup" or path.startswith("/setup") or path.startswith("/static/"):
+            return None
+        if path == "/favicon.ico":
+            return None
+        return redirect("/setup")
+    if path == "/setup" or path.startswith("/setup"):
+        return abort(404)
 DEBUG_ENABLED = _cfg_str("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
 DEBUG_PAGE_VISIBLE = DEBUG_ENABLED
 MAINTENANCE_SCOPE_BACKUP_ZIP = _cfg_str("MAINTENANCE_SCOPE_BACKUP_ZIP", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -125,8 +174,8 @@ MAINTENANCE_SCOPE_OLD_WORLD_ZIP = _cfg_str("MAINTENANCE_SCOPE_OLD_WORLD_ZIP", "t
 MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N = 1
 MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP = True
 MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD = True
-RCON_HOST = _cfg_str("RCON_HOST", "127.0.0.1")
-RCON_PORT = _cfg_int("RCON_PORT", 25575, minimum=1)
+RCON_HOST = "127.0.0.1"
+RCON_PORT = 25575
 SERVER_PROPERTIES_CANDIDATES = [
     MINECRAFT_ROOT_DIR / "server.properties",
     MINECRAFT_ROOT_DIR / "server" / "server.properties",
@@ -135,146 +184,73 @@ SERVER_PROPERTIES_CANDIDATES = [
 ]
 DEBUG_WORLD_NAME = "debug_world"
 DEBUG_MOTD = "debugging in progress"
-DEBUG_SERVER_PROPERTIES_KEYS = (
-    "accepts-transfers",
-    "allow-flight",
-    "allow-nether",
-    "broadcast-console-to-ops",
-    "broadcast-rcon-to-ops",
-    "bug-report-link",
-    "difficulty",
-    "enable-command-block",
-    "enable-jmx-monitoring",
-    "enable-query",
-    "enable-rcon",
-    "enable-status",
-    "enforce-secure-profile",
-    "enforce-whitelist",
-    "entity-broadcast-range-percentage",
-    "force-gamemode",
-    "function-permission-level",
-    "gamemode",
-    "generate-structures",
-    "generator-settings",
-    "hardcore",
-    "hide-online-players",
-    "initial-disabled-packs",
-    "initial-enabled-packs",
-    "level-name",
-    "level-seed",
-    "level-type",
-    "log-ips",
-    "max-build-height",
-    "max-chained-neighbor-updates",
-    "max-players",
-    "max-tick-time",
-    "max-world-size",
-    "motd",
-    "network-compression-threshold",
-    "online-mode",
-    "op-permission-level",
-    "pause-when-empty-seconds",
-    "player-idle-timeout",
-    "prevent-proxy-connections",
-    "previews-chat",
-    "pvp",
-    "query.port",
-    "rate-limit",
-    "rcon.password",
-    "rcon.port",
-    "region-file-compression",
-    "require-resource-pack",
-    "resource-pack",
-    "resource-pack-id",
-    "resource-pack-prompt",
-    "resource-pack-sha1",
-    "server-ip",
-    "server-port",
-    "simulation-distance",
-    "snooper-enabled",
-    "spawn-animals",
-    "spawn-monsters",
-    "spawn-npcs",
-    "spawn-protection",
-    "sync-chunk-writes",
-    "text-filtering-config",
-    "text-filtering-version",
-    "use-native-transport",
-    "view-distance",
-    "white-list",
+data_bootstrap_service.ensure_data_bootstrap(
+    data_dir=DATA_DIR,
+    app_state_db_path=APP_STATE_DB_PATH,
+    log_mcweb_log=log_mcweb_log,
+    log_mcweb_exception=log_mcweb_exception,
 )
-state_store_service.migrate_state_db_to_data_dir(
-    db_path=APP_STATE_DB_PATH,
-    legacy_paths=(LEGACY_APP_STATE_DB_PATH,),
-    log_exception=log_mcweb_exception,
-)
-state_store_service.initialize_state_db(
-    db_path=APP_STATE_DB_PATH,
-    log_exception=log_mcweb_exception,
+
+
+def _setup_defaults():
+    return setup_service.setup_form_defaults(_WEB_CFG_VALUES, APP_DIR)
+
+
+def _save_setup_values(values):
+    def _to_bool(value):
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    for key in ("SERVICE", "DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR"):
+        if not str(values.get(key, "")).strip():
+            return False, f"{key} is required.", {key: "This field is required."}
+    try:
+        ZoneInfo(str(values.get("DISPLAY_TZ", "")).strip())
+    except Exception:
+        return False, "DISPLAY_TZ is invalid.", {"DISPLAY_TZ": "DISPLAY_TZ is invalid."}
+    try:
+        if _to_bool(values.get("CREATE_BACKUP_DIR")):
+            Path(str(values.get("BACKUP_DIR", "")).strip()).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    runtime_errors = setup_service.validate_runtime_locations(values)
+    if runtime_errors:
+        if "SERVICE" in runtime_errors:
+            return False, "service not found.", runtime_errors
+        if "MINECRAFT_ROOT_DIR" in runtime_errors:
+            return False, runtime_errors["MINECRAFT_ROOT_DIR"], runtime_errors
+        if "BACKUP_DIR" in runtime_errors:
+            return False, runtime_errors["BACKUP_DIR"], runtime_errors
+        return False, "Setup validation failed.", runtime_errors
+    try:
+        normalized = dict(values)
+        normalized["MCWEB_SECRET_KEY"] = secrets.token_hex(32)
+        setup_service.write_env_file(WEB_CONF_PATH, normalized)
+        setup_service.archive_data_residuals(DATA_DIR)
+        data_bootstrap_service.ensure_data_bootstrap(
+            data_dir=DATA_DIR,
+            app_state_db_path=APP_STATE_DB_PATH,
+            log_mcweb_log=log_mcweb_log,
+            log_mcweb_exception=log_mcweb_exception,
+        )
+        SETUP_REQUIRED_STATE["required"] = False
+        SETUP_REQUIRED_STATE["reasons"] = []
+        _trigger_process_reload()
+        return True, "", {}
+    except Exception as exc:
+        log_mcweb_exception("setup/save", exc)
+        return False, "Failed to save setup values.", {}
+
+
+register_setup_routes(
+    app,
+    is_setup_required=_setup_required,
+    setup_reasons=_setup_reasons,
+    setup_defaults=_setup_defaults,
+    save_setup_values=_save_setup_values,
 )
 DEBUG_SERVER_PROPERTIES_FORCED_VALUES = {
     "level-name": DEBUG_WORLD_NAME,
-    "enable-rcon": "true",
-    "rcon.password": "SuperCute",
-    "rcon.port": str(RCON_PORT),
-}
-DEBUG_SERVER_PROPERTIES_ENUMS = {
-    "difficulty": ("peaceful", "easy", "normal", "hard"),
-    "gamemode": ("survival", "creative", "adventure", "spectator"),
-    "level-type": ("default", "flat", "large_biomes", "amplified", "single_biome_surface"),
-    "region-file-compression": ("deflate", "lz4", "none"),
-}
-DEBUG_SERVER_PROPERTIES_INT_KEYS = {
-    "entity-broadcast-range-percentage",
-    "function-permission-level",
-    "max-build-height",
-    "max-chained-neighbor-updates",
-    "max-players",
-    "max-tick-time",
-    "max-world-size",
-    "network-compression-threshold",
-    "op-permission-level",
-    "pause-when-empty-seconds",
-    "player-idle-timeout",
-    "query.port",
-    "rate-limit",
-    "rcon.port",
-    "server-port",
-    "simulation-distance",
-    "spawn-protection",
-    "text-filtering-version",
-    "view-distance",
-}
-DEBUG_SERVER_PROPERTIES_BOOL_KEYS = {
-    "accepts-transfers",
-    "allow-flight",
-    "allow-nether",
-    "broadcast-console-to-ops",
-    "broadcast-rcon-to-ops",
-    "enable-command-block",
-    "enable-jmx-monitoring",
-    "enable-query",
-    "enable-rcon",
-    "enable-status",
-    "enforce-secure-profile",
-    "enforce-whitelist",
-    "force-gamemode",
-    "generate-structures",
-    "hardcore",
-    "hide-online-players",
-    "log-ips",
-    "online-mode",
-    "prevent-proxy-connections",
-    "previews-chat",
-    "pvp",
-    "require-resource-pack",
-    "snooper-enabled",
-    "spawn-animals",
-    "spawn-monsters",
-    "spawn-npcs",
-    "sync-chunk-writes",
-    "use-native-transport",
-    "white-list",
 }
 
 # Backup and automation timing controls.
@@ -311,8 +287,6 @@ LOG_SOURCE_KEYS = ("minecraft", "backup", "mcweb", "mcweb_log")
 
 # Cache Minecraft runtime probes so rapid UI polling does not overwhelm RCON.
 MC_QUERY_INTERVAL_SECONDS = _cfg_int("MC_QUERY_INTERVAL_SECONDS", 3, minimum=1)
-RCON_STARTUP_FALLBACK_AFTER_SECONDS = _cfg_int("RCON_STARTUP_FALLBACK_AFTER_SECONDS", 120, minimum=1)
-RCON_STARTUP_FALLBACK_INTERVAL_SECONDS = _cfg_int("RCON_STARTUP_FALLBACK_INTERVAL_SECONDS", 5, minimum=1)
 mc_query_lock = threading.Lock()
 mc_last_query_at = 0.0
 mc_cached_players_online = "unknown"
@@ -488,6 +462,17 @@ RUNTIME_CONTEXT = _runtime_bundle["runtime_context"]
 STATE = _runtime_bundle["state"]
 _static_asset_version_fn = _runtime_bundle["static_asset_version_fn"]
 run_server = _runtime_bundle["run_server"]
+if _setup_required():
+    def _setup_run_server():
+        bootstrap_service.run_server(
+            app,
+            _cfg_str,
+            _cfg_int,
+            log_mcweb_log,
+            log_mcweb_exception,
+            boot_steps=[],
+        )
+    run_server = _setup_run_server
 
 
 @app.context_processor

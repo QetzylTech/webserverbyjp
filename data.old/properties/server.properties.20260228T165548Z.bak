@@ -1,5 +1,5 @@
 #Minecraft server properties
-#Wed Feb 25 16:52:55 PST 2026
+#Sat Feb 28 16:37:13 UTC 2026
 accepts-transfers=false
 allow-flight=true
 allow-nether=true
@@ -10,7 +10,7 @@ difficulty=easy
 enable-command-block=true
 enable-jmx-monitoring=false
 enable-query=false
-enable-rcon=true
+enable-rcon=false
 enable-status=true
 enforce-secure-profile=false
 enforce-whitelist=false
@@ -44,7 +44,7 @@ previews-chat=false
 pvp=true
 query.port=25565
 rate-limit=0
-rcon.password=SuperCute
+rcon.password=
 rcon.port=25575
 region-file-compression=deflate
 require-resource-pack=false

@@ -4,7 +4,7 @@ This module is a facade that preserves the original public API while
 delegating to focused submodules by responsibility.
 """
 
-from app.core.state_store_core import initialize_state_db, migrate_state_db_to_data_dir
+from app.core.state_store_core import initialize_state_db
 from app.core.state_store_users_cleanup import (
     upsert_user_record,
     load_fallmap,
@@ -24,7 +24,6 @@ from app.core.state_store_files import replace_file_records_snapshot
 
 __all__ = [
     "initialize_state_db",
-    "migrate_state_db_to_data_dir",
     "upsert_user_record",
     "load_fallmap",
     "load_cleanup_config",

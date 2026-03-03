@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Initial Setup</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='global.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='setup_page.css') }}">
+</head>
+<body>
+<main class="setup-layout">
+    <section class="setup-pane">
+        <h1 id="setup-pane-title" class="pane-title setup-pane-title">Welcome</h1>
+        <article class="setup-content-card">
+            <p class="setup-instructions">
+                Complete initial configuration to activate the dashboard.
+            </p>
+            {% if error_message %}
+            <p class="setup-error">{{ error_message }}</p>
+            {% endif %}
+            <form method="post" class="setup-form" action="/setup/submit">
+                <input type="hidden" name="service" value="{{ defaults.get('SERVICE', 'minecraft') }}">
+                <section class="wizard-step" data-step="0">
+                    <p class="setup-instructions">This setup will configure timezone, Minecraft root location, backup location, and website password.</p>
+                    <p class="setup-instructions">It is assumed that you:</p>
+                    <ul class="setup-assumptions">
+                        <li>Installed Minecraft</li>
+                        <li>Added Minecraft to systemd</li>
+                    </ul>
+                </section>
+                <section class="wizard-step" data-step="1" hidden>
+                    <label>Display Timezone
+                        <select id="setup-display-tz" class="{% if field_errors.get('DISPLAY_TZ') %}field-invalid{% endif %}" name="display_tz" required>
+                            {% for tz in timezone_options %}
+                            <option value="{{ tz.value }}" {% if defaults.get('DISPLAY_TZ', '') == tz.value %}selected{% endif %}>{{ tz.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <span id="error-display_tz" class="field-error">{% if field_errors.get('DISPLAY_TZ') %}{{ field_errors.get('DISPLAY_TZ') }}{% endif %}</span>
+                    </label>
+                </section>
+                <section class="wizard-step" data-step="2" hidden>
+                    <label>Minecraft Root Location
+                        <input id="setup-minecraft-root" class="ui-text-input{% if field_errors.get('MINECRAFT_ROOT_DIR') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" name="minecraft_root_dir" value="{{ defaults.get('MINECRAFT_ROOT_DIR', '') }}" required>
+                        <span id="error-minecraft_root_dir" class="field-error">{% if field_errors.get('MINECRAFT_ROOT_DIR') %}{{ field_errors.get('MINECRAFT_ROOT_DIR') }}{% endif %}</span>
+                    </label>
+                </section>
+                <section class="wizard-step" data-step="3" hidden>
+                    <label>Backup Location
+                        <input id="setup-backup-dir" class="ui-text-input{% if field_errors.get('BACKUP_DIR') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" name="backup_dir" value="{{ defaults.get('BACKUP_DIR', '') }}" required>
+                        <span id="error-backup_dir" class="field-error">{% if field_errors.get('BACKUP_DIR') %}{{ field_errors.get('BACKUP_DIR') }}{% endif %}</span>
+                    </label>
+                    <label id="create-backup-dir-wrap" class="setup-create-option" hidden>
+                        <input id="create-backup-dir" type="checkbox" name="create_backup_dir" value="1">
+                        Create folder if missing
+                    </label>
+                </section>
+                <section class="wizard-step" data-step="4" hidden>
+                    <label>Website Password
+                        <input id="setup-admin-password" class="ui-text-input{% if field_errors.get('ADMIN_PASSWORD') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" type="password" name="admin_password" required>
+                        <span id="error-admin_password" class="field-error">{% if field_errors.get('ADMIN_PASSWORD') %}{{ field_errors.get('ADMIN_PASSWORD') }}{% endif %}</span>
+                    </label>
+                    <label>Confirm Password
+                        <input id="setup-admin-password-confirm" class="ui-text-input{% if field_errors.get('ADMIN_PASSWORD_CONFIRM') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" type="password" name="admin_password_confirm" required>
+                        <span id="error-admin_password_confirm" class="field-error">{% if field_errors.get('ADMIN_PASSWORD_CONFIRM') %}{{ field_errors.get('ADMIN_PASSWORD_CONFIRM') }}{% endif %}</span>
+                    </label>
+                    <p id="setup-password-status" class="password-status" data-initial="{{ password_match_status|default('') }}">{{ password_match_status|default('') }}</p>
+                </section>
+                <section class="wizard-step" data-step="5" hidden>
+                    <h2 class="setup-group-title">Waiting for Configuration to Finish</h2>
+                    <p class="setup-instructions">Applying configuration and preparing the application...</p>
+                </section>
+                <section class="wizard-step" data-step="6" hidden>
+                    <h2 class="setup-group-title">Success and Confirmation</h2>
+                    <p class="setup-instructions">Setup completed successfully. Redirecting to home...</p>
+                </section>
+                <div class="wizard-actions">
+                    <button type="button" id="setup-back-btn" class="btn-backup">Back</button>
+                    <button type="button" id="setup-next-btn" class="setup-submit">Next</button>
+                </div>
+            </form>
+        </article>
+    </section>
+</main>
+<script src="{{ url_for('static', filename='setup_page.js') }}"></script>
+</body>
+</html>

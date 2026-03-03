@@ -1,8 +1,8 @@
 """Application bootstrap/run helpers."""
 def run_server(app, cfg_get_str, cfg_get_int, log_mcweb_log, log_mcweb_exception, boot_steps):
     """Run startup steps, then start Flask server."""
-    host = cfg_get_str("WEB_HOST", "0.0.0.0")
-    port = cfg_get_int("WEB_PORT", 8080, minimum=1)
+    host = "0.0.0.0"
+    port = 8080
     log_mcweb_log("boot-start", command=f"host={host} port={port}")
 
     for step_name, step_func in boot_steps:

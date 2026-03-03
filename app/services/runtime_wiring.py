@@ -1,6 +1,10 @@
 """Runtime wiring helpers extracted from app.main."""
 
 
+from app.core.device_map import get_device_name_map as _default_device_name_map_lookup
+from app.services import bootstrap as _default_bootstrap_service
+
+
 def create_runtime(
     *,
     app,
@@ -46,11 +50,14 @@ def create_runtime(
     install_binding_stage("world_bindings", world_bindings)
     world_bindings["_refresh_world_dir_from_server_properties"]()
 
+    device_name_map_lookup = (
+        namespace.get("_device_name_map_lookup") or _default_device_name_map_lookup
+    )
     system_bindings = system_bindings_service.build_system_bindings(
         runtime_context,
         status_cache_service=status_cache_service,
         dashboard_runtime_service=dashboard_runtime_service,
-        device_name_map_lookup=namespace["_device_name_map_lookup"],
+        device_name_map_lookup=device_name_map_lookup,
     )
     install_binding_stage("system_bindings", system_bindings)
 
@@ -140,8 +147,9 @@ def create_runtime(
     runtime_context["STATE"] = state
     register_routes(app, state)
 
+    bootstrap_service = namespace.get("bootstrap_service") or _default_bootstrap_service
     run_server = app_lifecycle_service.build_run_server(
-        bootstrap_service=namespace["bootstrap_service"],
+        bootstrap_service=bootstrap_service,
         app=app,
         cfg_get_str=namespace["_cfg_str"],
         cfg_get_int=namespace["_cfg_int"],

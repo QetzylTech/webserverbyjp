@@ -1,10 +1,9 @@
 """Runtime configuration helpers for mcweb."""
 import os
-import secrets
 
 
 def resolve_secret_key(cfg_get_str, *env_names):
-    """Resolve secret key from env/config with secure fallback."""
+    """Resolve secret key from env/config."""
     for name in env_names:
         value = (os.environ.get(name) or "").strip()
         if value:
@@ -12,7 +11,7 @@ def resolve_secret_key(cfg_get_str, *env_names):
     configured = (cfg_get_str("MCWEB_SECRET_KEY", "") or "").strip()
     if configured:
         return configured
-    return secrets.token_hex(32)
+    raise RuntimeError("Missing required MCWEB_SECRET_KEY configuration.")
 
 
 def apply_default_flask_config(app):

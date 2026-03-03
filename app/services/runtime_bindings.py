@@ -39,9 +39,6 @@ def build_runtime_bindings(
     def stop_service_systemd():
         return control_plane_service.stop_service_systemd(_state())
 
-    def get_sudo_password():
-        return control_plane_service.get_sudo_password(_state())
-
     def run_sudo(cmd):
         return control_plane_service.run_sudo(_state(), cmd)
 
@@ -279,7 +276,6 @@ def build_runtime_bindings(
         "set_service_status_intent": set_service_status_intent,
         "get_service_status_intent": get_service_status_intent,
         "stop_service_systemd": stop_service_systemd,
-        "get_sudo_password": get_sudo_password,
         "run_sudo": run_sudo,
         "validate_sudo_password": validate_sudo_password,
         "ensure_session_file": ensure_session_file,

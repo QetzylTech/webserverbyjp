@@ -21,7 +21,7 @@ def install_flask_hooks(
         ensure_session_tracking_initialized()
         ensure_metrics_collector_started()
         ensure_csrf_token()
-        csrf_exempt_paths = {"/home-heartbeat", "/file-page-heartbeat"}
+        csrf_exempt_paths = {"/home-heartbeat", "/file-page-heartbeat", "/setup", "/setup/submit", "/setup/validate"}
         if (
             request.method in {"POST", "PUT", "PATCH", "DELETE"}
             and request.path not in csrf_exempt_paths

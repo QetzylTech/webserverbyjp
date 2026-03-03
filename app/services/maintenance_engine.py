@@ -188,14 +188,14 @@ def _space_rule_gate(state, cfg, rules):
 
 def _bucket_keep_limit(bucket, count_rule):
     """Return keep limit for backup bucket."""
-    fallback = _safe_int(count_rule.get("max_per_category", 30), 30, minimum=3, maximum=100000)
+    default_limit = _safe_int(count_rule.get("max_per_category", 30), 30, minimum=3, maximum=100000)
     if bucket == "session":
-        return _safe_int(count_rule.get("session_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
+        return _safe_int(count_rule.get("session_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
     if bucket == "manual":
-        return _safe_int(count_rule.get("manual_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
+        return _safe_int(count_rule.get("manual_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
     if bucket == "pre_restore":
-        return _safe_int(count_rule.get("prerestore_backups_to_keep", fallback), fallback, minimum=3, maximum=100000)
-    return fallback
+        return _safe_int(count_rule.get("prerestore_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
+    return default_limit
 
 
 def _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete):

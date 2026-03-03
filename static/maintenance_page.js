@@ -102,11 +102,11 @@ document.addEventListener("DOMContentLoaded", () => {
         "time_based.every_n_days": (draft, value) => { draft.time_based.every_n_days = Math.max(1, Math.min(365, Number(value || 1))); },
     };
 
-    function parseDataAttr(name, fallback) {
+    function parseDataAttr(name, defaultValue) {
         try {
             return JSON.parse(bootstrap?.dataset?.[name] || "");
         } catch (_) {
-            return fallback;
+            return defaultValue;
         }
     }
 

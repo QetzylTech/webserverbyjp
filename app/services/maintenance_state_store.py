@@ -190,7 +190,7 @@ def _cleanup_get_scope_view(cfg, scope):
 
 
 def _cleanup_migrate_config_dict(state, loaded, default_cfg):
-    """Migrate older cleanup config shapes into the current schema."""
+    """Normalize cleanup config into the current schema."""
     cfg = default_cfg
     loaded_rules = loaded.get("rules") if isinstance(loaded, dict) else None
     if isinstance(loaded_rules, dict):
@@ -216,12 +216,6 @@ def _cleanup_migrate_config_dict(state, loaded, default_cfg):
                 dst["schedules"] = copy.deepcopy(src["schedules"])
             if isinstance(src.get("meta"), dict):
                 dst["meta"] = copy.deepcopy(src["meta"])
-    else:
-        for scope_name in _CLEANUP_SCOPE_CHOICES:
-            scoped = _cleanup_get_scope_view(cfg, scope_name)
-            scoped["rules"] = copy.deepcopy(cfg.get("rules", default_cfg["rules"]))
-            scoped["schedules"] = copy.deepcopy(cfg.get("schedules", []))
-            scoped["meta"] = copy.deepcopy(cfg.get("meta", default_cfg["meta"]))
 
     rules = cfg.setdefault("rules", {})
     count = rules.setdefault("count", {})
@@ -255,37 +249,6 @@ def _cleanup_migrate_config_dict(state, loaded, default_cfg):
         time_based["weekly_day"] = "Sunday"
     time_based["monthly_date"] = _safe_int(time_based.get("monthly_date", 1), 1, minimum=1, maximum=31)
     time_based["every_n_days"] = _safe_int(time_based.get("every_n_days", 1), 1, minimum=1, maximum=365)
-
-    # Backfill time_based from first time schedule when legacy configs had schedules only.
-    if time_based["repeat_mode"] == "does_not_repeat" and cfg.get("schedules"):
-        first_time = None
-        for item in cfg.get("schedules", []):
-            if isinstance(item, dict) and str(item.get("mode", "")).strip().lower() == "time":
-                first_time = item
-                break
-        if isinstance(first_time, dict):
-            interval = str(first_time.get("interval", "daily")).strip().lower()
-            interval_map = {
-                "daily": "daily",
-                "weekly": "weekly",
-                "monthly": "monthly",
-                "weekdays": "weekdays",
-                "every_n_days": "every_n_days",
-            }
-            dow_map = {
-                0: "Monday",
-                1: "Tuesday",
-                2: "Wednesday",
-                3: "Thursday",
-                4: "Friday",
-                5: "Saturday",
-                6: "Sunday",
-            }
-            time_based["time_of_backup"] = str(first_time.get("time", time_based["time_of_backup"]))
-            time_based["repeat_mode"] = interval_map.get(interval, "daily")
-            time_based["weekly_day"] = dow_map.get(_safe_int(first_time.get("day_of_week", 6), 6, minimum=0, maximum=6), "Sunday")
-            time_based["monthly_date"] = _safe_int(first_time.get("day_of_month", 1), 1, minimum=1, maximum=31)
-            time_based["every_n_days"] = _safe_int(first_time.get("every_n_days", 1), 1, minimum=1, maximum=365)
 
     cfg["schema_version"] = _CLEANUP_SCHEMA_VERSION
     for scope_name in _CLEANUP_SCOPE_CHOICES:

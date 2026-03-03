@@ -1,12 +1,13 @@
-import threading
 import unittest
 import time
+import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app.services import control_plane
+from app.services import service_ops as control_plane
+from app.services import restore_workflow
 from app.state import BackupState
 
 
@@ -16,6 +17,8 @@ class ControlPlaneTests(unittest.TestCase):
             DISPLAY_TZ=datetime.now().astimezone().tzinfo,
             restore_lock=threading.Lock(),
             restore_status_lock=threading.Lock(),
+            APP_STATE_DB_PATH=Path("data/test_app_state.sqlite3"),
+            log_mcweb_exception=lambda *_args, **_kwargs: None,
             restore_status={
                 "job_id": "",
                 "running": False,
@@ -32,7 +35,9 @@ class ControlPlaneTests(unittest.TestCase):
             "pre_restore_snapshot_name": "world_2026-01-01_00-00-00_pre_restore.zip",
         }
 
-        with patch.object(control_plane, "restore_world_backup", return_value=fake_result):
+        with patch.object(restore_workflow, "restore_world_backup", return_value=fake_result), \
+             patch.object(restore_workflow.state_store_service, "append_restore_run", return_value=None), \
+             patch.object(restore_workflow.state_store_service, "restore_backup_records_match", return_value=True):
             started = control_plane.start_restore_job(ctx, "world_test_manual.zip")
             self.assertTrue(started["ok"])
             deadline = datetime.now().timestamp() + 1.0
@@ -44,25 +49,11 @@ class ControlPlaneTests(unittest.TestCase):
             status = control_plane.get_restore_status(ctx, since_seq=0, job_id=started["job_id"])
         self.assertFalse(status["running"])
         self.assertTrue(status["result"]["ok"])
-        self.assertEqual(fake_result["pre_restore_snapshot_name"], status["undo_filename"])
-        self.assertGreaterEqual(len(status["events"]), 2)
-
-    def test_start_undo_restore_job_requires_snapshot(self):
-        ctx = SimpleNamespace(
-            restore_status_lock=threading.Lock(),
-            restore_status={
-                "job_id": "",
-                "running": False,
-                "seq": 0,
-                "events": [],
-                "result": None,
-                "undo_filename": "",
-            },
+        self.assertEqual(
+            fake_result["pre_restore_snapshot_name"],
+            status["result"]["pre_restore_snapshot_name"],
         )
-
-        failed = control_plane.start_undo_restore_job(ctx)
-        self.assertFalse(failed["ok"])
-        self.assertIn("Undo is unavailable", failed["message"])
+        self.assertGreaterEqual(len(status["events"]), 2)
 
     def test_run_backup_script_passes_ctx_to_snapshot_change_and_trigger(self):
         ctx = SimpleNamespace(

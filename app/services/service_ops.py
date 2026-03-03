@@ -5,7 +5,6 @@ from pathlib import Path
 import subprocess
 import time
 from werkzeug.security import check_password_hash
-
 from app.services.restore_workflow import (
     ensure_startup_rcon_settings,
     restore_world_backup,
@@ -13,6 +12,14 @@ from app.services.restore_workflow import (
     start_restore_job,
     get_restore_status,
 )
+
+__all__ = [
+    "ensure_startup_rcon_settings",
+    "restore_world_backup",
+    "append_restore_event",
+    "start_restore_job",
+    "get_restore_status",
+]
 
 
 def set_service_status_intent(ctx, intent):
@@ -43,25 +50,8 @@ def stop_service_systemd(ctx):
     return False
 
 
-def get_sudo_password(ctx):
-    """Legacy password accessor retained for runtime compatibility."""
-    return None
-
-
 def run_sudo(ctx, cmd):
-    """Run command directly first; fallback to non-interactive sudo when needed."""
-    try:
-        direct = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-        )
-    except Exception:
-        direct = None
-
-    if direct is not None and direct.returncode == 0:
-        return direct
-
+    """Run command via non-interactive sudo."""
     return subprocess.run(
         ["sudo", "-n"] + cmd,
         capture_output=True,

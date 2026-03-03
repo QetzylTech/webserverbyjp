@@ -172,9 +172,17 @@ def _cleanup_start_scheduler_once(state):
         if _cleanup_scheduler_started:
             return
         cfg = _cleanup_load_config(state)
-        _cleanup_save_config(state, cfg)
-        _cleanup_atomic_write_json(_cleanup_non_normal_path(state), _cleanup_load_non_normal(state))
-        _cleanup_save_history(state, _cleanup_load_history(state))
+        try:
+            _cleanup_save_config(state, cfg)
+            _cleanup_atomic_write_json(_cleanup_non_normal_path(state), _cleanup_load_non_normal(state))
+            _cleanup_save_history(state, _cleanup_load_history(state))
+        except Exception as exc:
+            try:
+                logger = state.get("log_mcweb_exception")
+                if logger:
+                    logger("cleanup_scheduler_bootstrap", exc)
+            except Exception:
+                pass
         thread = threading.Thread(target=_cleanup_scheduler_loop, args=(state,), daemon=True, name="cleanup-scheduler")
         thread.start()
         _cleanup_scheduler_started = True
