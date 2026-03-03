@@ -46,7 +46,8 @@ def save_setup_values(
         return False, "Setup validation failed.", runtime_errors
     try:
         normalized = dict(values)
-        normalized["MCWEB_SECRET_KEY"] = secrets.token_hex(32)
+        if not str(normalized.get("MCWEB_SECRET_KEY", "")).strip():
+            normalized["MCWEB_SECRET_KEY"] = secrets.token_hex(32)
         setup_service.write_env_file(web_conf_path, normalized)
         setup_service.archive_data_residuals(data_dir)
         data_bootstrap_service.ensure_data_bootstrap(

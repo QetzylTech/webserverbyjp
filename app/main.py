@@ -31,6 +31,7 @@ from app.core.filesystem_utils import (
 )
 from app.core.logging_setup import build_loggers
 from app.core.web_config import WebConfig
+from app.platform import get_paths
 from app.services import service_ops as service_ops
 from app.services import data_bootstrap as data_bootstrap_service
 from app.services import setup_service as setup_service
@@ -74,11 +75,13 @@ _cfg_int = _WEB_CFG.get_int
 _cfg_float = _WEB_CFG.get_float
 _cfg_path = _WEB_CFG.get_path
 STATE = None
+_paths = get_paths()
 
 _setup_status = setup_service.assess_setup_requirement(WEB_CONF_PATH, _WEB_CFG_VALUES)
 SETUP_REQUIRED_STATE = {
     "required": bool(_setup_status.get("required")),
     "reasons": list(_setup_status.get("reasons", [])),
+    "mode": str(_setup_status.get("mode", "full") or "full"),
 }
 if SETUP_REQUIRED_STATE["required"]:
     app.config["SECRET_KEY"] = secrets.token_hex(32)
@@ -91,8 +94,8 @@ FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft
 SERVICE = _cfg_str("SERVICE", "minecraft")
 ADMIN_PASSWORD_HASH = _cfg_str("MCWEB_ADMIN_PASSWORD_HASH", "")
 BACKUP_SCRIPT = APP_DIR / "scripts" / "backup.sh"
-BACKUP_DIR = _cfg_path("BACKUP_DIR", Path("/home/marites/backups"))
-MINECRAFT_ROOT_DIR = _cfg_path("MINECRAFT_ROOT_DIR", Path("/opt/Minecraft"))
+BACKUP_DIR = _cfg_path("BACKUP_DIR", Path(_paths.default_backup_dir()))
+MINECRAFT_ROOT_DIR = _cfg_path("MINECRAFT_ROOT_DIR", Path(_paths.default_minecraft_root()))
 WORLD_DIR = MINECRAFT_ROOT_DIR / "config"
 CRASH_REPORTS_DIR = MINECRAFT_ROOT_DIR / "crash-reports"
 MINECRAFT_LOGS_DIR = MINECRAFT_ROOT_DIR / "logs"
@@ -137,6 +140,10 @@ log_mcweb_action, log_mcweb_log, log_mcweb_exception, log_debug_page_action = bu
 
 def _setup_required():
     return bool(SETUP_REQUIRED_STATE.get("required"))
+
+
+def _setup_mode():
+    return str(SETUP_REQUIRED_STATE.get("mode", "full") or "full")
 
 
 def _trigger_process_reload():
@@ -211,6 +218,7 @@ def _save_setup_values(values):
 register_setup_routes(
     app,
     is_setup_required=_setup_required,
+    setup_mode=_setup_mode,
     setup_defaults=_setup_defaults,
     save_setup_values=_save_setup_values,
 )

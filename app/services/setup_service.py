@@ -10,17 +10,18 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app.platform import get_calls
+from app.platform import get_calls, get_paths
 
 _calls = get_calls()
+_paths = get_paths()
 
 
 ENV_DEFAULTS = {
     "SERVICE": "minecraft",
     "DISPLAY_TZ": "Asia/Manila",
     "DOC_README_URL": "/doc/server_setup_doc.md",
-    "MINECRAFT_ROOT_DIR": "/opt/Minecraft",
-    "BACKUP_DIR": "/home/marites/backups",
+    "MINECRAFT_ROOT_DIR": _paths.default_minecraft_root(),
+    "BACKUP_DIR": _paths.default_backup_dir(),
     "BACKUP_INTERVAL_HOURS": "3",
     "BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS": "15",
     "BACKUP_WATCH_INTERVAL_OFF_SECONDS": "45",
@@ -77,21 +78,40 @@ def assess_setup_requirement(config_path, values):
     reasons = []
     if not config_path.exists():
         reasons.append("mcweb.env not found.")
-        return {"required": True, "reasons": reasons}
+        return {"required": True, "reasons": reasons, "mode": "full"}
 
     raw = values if isinstance(values, dict) else {}
+    path_keys = {"MINECRAFT_ROOT_DIR", "BACKUP_DIR"}
+    blocking_non_path = []
+    path_reasons = []
     for key in _REQUIRED_KEYS:
         if not str(raw.get(key, "")).strip():
-            reasons.append(f"Missing required setting: {key}")
+            message = f"Missing required setting: {key}"
+            reasons.append(message)
+            if key in path_keys:
+                path_reasons.append(message)
+            else:
+                blocking_non_path.append(message)
 
     tz_name = str(raw.get("DISPLAY_TZ", "")).strip()
     if tz_name:
         try:
             ZoneInfo(tz_name)
         except Exception:
-            reasons.append(f"Invalid DISPLAY_TZ: {tz_name}")
+            message = f"Invalid DISPLAY_TZ: {tz_name}"
+            reasons.append(message)
+            blocking_non_path.append(message)
 
-    return {"required": bool(reasons), "reasons": reasons}
+    for key in path_keys:
+        text = str(raw.get(key, "")).strip()
+        if text and not _paths.is_valid_env_path(text):
+            message = f"Invalid {key} path format for detected OS."
+            reasons.append(message)
+            path_reasons.append(message)
+
+    required = bool(reasons)
+    mode = "paths_only" if required and not blocking_non_path and bool(path_reasons) else "full"
+    return {"required": required, "reasons": reasons, "mode": mode}
 
 
 def setup_form_defaults(existing_values):
@@ -101,19 +121,17 @@ def setup_form_defaults(existing_values):
         or str(os.environ.get("USER", "")).strip()
         or str(getpass.getuser() or "").strip()
     )
-    if user_name:
-        user_home = Path("/home") / user_name
-    else:
-        user_home = Path.home()
     base = dict(ENV_DEFAULTS)
-    base["MINECRAFT_ROOT_DIR"] = str(user_home / "Minecraft")
-    base["BACKUP_DIR"] = str(user_home / "backups")
+    base["MINECRAFT_ROOT_DIR"] = _paths.default_minecraft_root(user_name=user_name)
+    base["BACKUP_DIR"] = _paths.default_backup_dir(user_name=user_name)
     raw = existing_values if isinstance(existing_values, dict) else {}
     for key, value in raw.items():
         if value is None:
             continue
         text = str(value).strip()
         if text:
+            if key in {"MINECRAFT_ROOT_DIR", "BACKUP_DIR"} and not _paths.is_valid_env_path(text):
+                continue
             base[key] = text
     if not str(base.get("MCWEB_SECRET_KEY", "")).strip():
         base["MCWEB_SECRET_KEY"] = secrets.token_hex(32)
@@ -148,8 +166,10 @@ def validate_runtime_locations(values):
     """Validate setup runtime paths/service and return field-level errors."""
     errors = {}
     service_name = str(values.get("SERVICE", "")).strip()
-    mc_root = Path(str(values.get("MINECRAFT_ROOT_DIR", "")).strip())
-    backup_dir = Path(str(values.get("BACKUP_DIR", "")).strip())
+    mc_root_text = str(values.get("MINECRAFT_ROOT_DIR", "")).strip()
+    backup_dir_text = str(values.get("BACKUP_DIR", "")).strip()
+    mc_root = Path(mc_root_text)
+    backup_dir = Path(backup_dir_text)
 
     # Service must exist in systemd.
     try:
@@ -160,10 +180,14 @@ def validate_runtime_locations(values):
     except Exception:
         errors["SERVICE"] = "service not found."
 
+    if mc_root_text and not _paths.is_valid_env_path(mc_root_text):
+        errors["MINECRAFT_ROOT_DIR"] = "invalid path for detected OS."
     root_result = validate_minecraft_root(str(mc_root))
     if root_result["errors"]:
         errors["MINECRAFT_ROOT_DIR"] = "\n".join(root_result["errors"])
 
+    if backup_dir_text and not _paths.is_valid_env_path(backup_dir_text):
+        errors["BACKUP_DIR"] = "invalid path for detected OS."
     backup_result = validate_backup_location(str(backup_dir), allow_create_missing=False)
     if backup_result["errors"]:
         errors["BACKUP_DIR"] = "\n".join(backup_result["errors"])
@@ -232,6 +256,8 @@ def _directory_state(path_value):
 
 def validate_minecraft_root(path_value):
     """Return minecraft-root validation details."""
+    if not _paths.is_valid_env_path(path_value):
+        return {"errors": ["invalid path for detected OS."], "missing": False}
     state = _directory_state(path_value)
     errors = []
     if state["missing"]:
@@ -247,6 +273,8 @@ def validate_minecraft_root(path_value):
 
 def validate_backup_location(path_value, allow_create_missing=False):
     """Return backup-location validation details."""
+    if not _paths.is_valid_env_path(path_value):
+        return {"errors": ["invalid path for detected OS."], "missing": False}
     state = _directory_state(path_value)
     errors = []
     if state["missing"]:

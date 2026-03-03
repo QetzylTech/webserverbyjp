@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
     const form = document.querySelector(".setup-form");
     if (!form) return;
+    const pathOnlyMode = form.dataset.pathOnly === "1";
 
     const steps = Array.from(document.querySelectorAll(".wizard-step"));
     const paneTitle = document.getElementById("setup-pane-title");
@@ -18,15 +19,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const pwdStatus = document.getElementById("setup-password-status");
 
     let stepIndex = 0;
-    const stepTitles = [
-        "Welcome",
-        "Timezone",
-        "Root Location",
-        "Backup Location",
-        "Password",
-        "Waiting for Configuration to Finish",
-        "Success and Confirmation",
-    ];
+    const stepTitles = pathOnlyMode
+        ? [
+            "Path Setup",
+            "Waiting for Configuration to Finish",
+            "Success and Confirmation",
+        ]
+        : [
+            "Welcome",
+            "Timezone",
+            "Root Location",
+            "Backup Location",
+            "Password",
+            "Waiting for Configuration to Finish",
+            "Success and Confirmation",
+        ];
+    const interactiveMaxStep = pathOnlyMode ? 0 : 4;
+    const waitingStepIndex = pathOnlyMode ? 1 : 5;
+    const successStepIndex = pathOnlyMode ? 2 : 6;
 
     function setFieldError(fieldKey, message) {
         const key = String(fieldKey || "").toLowerCase();
@@ -86,14 +96,14 @@ document.addEventListener("DOMContentLoaded", () => {
         steps.forEach((node, i) => {
             node.hidden = i !== stepIndex;
         });
-        const isInteractive = stepIndex <= 4;
+        const isInteractive = stepIndex <= interactiveMaxStep;
         if (backBtn) {
             backBtn.hidden = !isInteractive;
-            backBtn.disabled = stepIndex === 0;
+            backBtn.disabled = stepIndex === 0 || pathOnlyMode;
         }
         if (nextBtn) {
             nextBtn.hidden = !isInteractive;
-            if (stepIndex < 4) {
+            if (stepIndex < interactiveMaxStep) {
                 nextBtn.textContent = "Next";
                 nextBtn.disabled = false;
             } else {
@@ -153,6 +163,27 @@ document.addEventListener("DOMContentLoaded", () => {
     async function validateCurrentStep() {
         clearKnownErrors();
 
+        if (pathOnlyMode && stepIndex === 0) {
+            const root = String(rootInput?.value || "").trim();
+            const backup = String(backupInput?.value || "").trim();
+            if (!root) {
+                setFieldError("minecraft_root_dir", "This field is required.");
+                return false;
+            }
+            if (!backup) {
+                setFieldError("backup_dir", "This field is required.");
+                return false;
+            }
+            const rootOk = await validateStepServer("root", {
+                SERVICE: String(serviceInput?.value || "minecraft").trim() || "minecraft",
+                MINECRAFT_ROOT_DIR: root,
+            });
+            if (!rootOk) return false;
+            return validateStepServer("backup", {
+                BACKUP_DIR: backup,
+                CREATE_BACKUP_DIR: Boolean(createBackupInput?.checked),
+            });
+        }
         if (stepIndex === 0) {
             return true;
         }
@@ -211,7 +242,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function submitSetup() {
-        showStep(5);
+        showStep(waitingStepIndex);
         const formData = new FormData(form);
         const response = await fetch("/setup/submit", {
             method: "POST",
@@ -220,15 +251,15 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.ok) {
-            showStep(4);
+            showStep(pathOnlyMode ? 0 : 4);
             const errors = payload.field_errors || {};
             Object.keys(errors).forEach((key) => setFieldError(key, errors[key]));
-            if (errors.admin_password || errors.admin_password_confirm) {
+            if (!pathOnlyMode && (errors.admin_password || errors.admin_password_confirm)) {
                 validatePasswordMatch();
             }
             return;
         }
-        showStep(6);
+        showStep(successStepIndex);
         setTimeout(() => {
             window.location.href = payload.redirect || "/";
         }, 1400);
@@ -244,7 +275,7 @@ document.addEventListener("DOMContentLoaded", () => {
         nextBtn.addEventListener("click", async () => {
             const ok = await validateCurrentStep();
             if (!ok) return;
-            if (stepIndex < 4) {
+            if (stepIndex < interactiveMaxStep) {
                 showStep(stepIndex + 1);
                 return;
             }
@@ -254,8 +285,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    if (pwd) pwd.addEventListener("input", validatePasswordMatch);
-    if (pwdConfirm) pwdConfirm.addEventListener("input", validatePasswordMatch);
+    if (!pathOnlyMode) {
+        if (pwd) pwd.addEventListener("input", validatePasswordMatch);
+        if (pwdConfirm) pwdConfirm.addEventListener("input", validatePasswordMatch);
+    }
 
     [tzInput, rootInput, backupInput, pwd, pwdConfirm].forEach((node) => {
         if (!node) return;

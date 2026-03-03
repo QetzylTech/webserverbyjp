@@ -18,8 +18,34 @@
             {% if error_message %}
             <p class="setup-error">{{ error_message }}</p>
             {% endif %}
-            <form method="post" class="setup-form" action="/setup/submit">
+            <form method="post" class="setup-form" action="/setup/submit" data-path-only="{% if path_only_mode %}1{% else %}0{% endif %}">
                 <input type="hidden" name="service" value="{{ defaults.get('SERVICE', 'minecraft') }}">
+                {% if path_only_mode %}
+                <input type="hidden" name="display_tz" value="{{ defaults.get('DISPLAY_TZ', 'UTC') }}">
+                <section class="wizard-step" data-step="0">
+                    <p class="setup-instructions">Detected invalid path values for this OS. Update locations to continue.</p>
+                    <label>Minecraft Root Location
+                        <input id="setup-minecraft-root" class="ui-text-input{% if field_errors.get('MINECRAFT_ROOT_DIR') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" name="minecraft_root_dir" value="{{ defaults.get('MINECRAFT_ROOT_DIR', '') }}" required>
+                        <span id="error-minecraft_root_dir" class="field-error">{% if field_errors.get('MINECRAFT_ROOT_DIR') %}{{ field_errors.get('MINECRAFT_ROOT_DIR') }}{% endif %}</span>
+                    </label>
+                    <label>Backup Location
+                        <input id="setup-backup-dir" class="ui-text-input{% if field_errors.get('BACKUP_DIR') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" name="backup_dir" value="{{ defaults.get('BACKUP_DIR', '') }}" required>
+                        <span id="error-backup_dir" class="field-error">{% if field_errors.get('BACKUP_DIR') %}{{ field_errors.get('BACKUP_DIR') }}{% endif %}</span>
+                    </label>
+                    <label id="create-backup-dir-wrap" class="setup-create-option" hidden>
+                        <input id="create-backup-dir" type="checkbox" name="create_backup_dir" value="1">
+                        Create folder if missing
+                    </label>
+                </section>
+                <section class="wizard-step" data-step="1" hidden>
+                    <h2 class="setup-group-title">Waiting for Configuration to Finish</h2>
+                    <p class="setup-instructions">Applying configuration and preparing the application...</p>
+                </section>
+                <section class="wizard-step" data-step="2" hidden>
+                    <h2 class="setup-group-title">Success and Confirmation</h2>
+                    <p class="setup-instructions">Setup completed successfully. Redirecting to home...</p>
+                </section>
+                {% else %}
                 <section class="wizard-step" data-step="0">
                     <p class="setup-instructions">This setup will configure timezone, Minecraft root location, backup location, and website password.</p>
                     <p class="setup-instructions">It is assumed that you:</p>
@@ -73,6 +99,7 @@
                     <h2 class="setup-group-title">Success and Confirmation</h2>
                     <p class="setup-instructions">Setup completed successfully. Redirecting to home...</p>
                 </section>
+                {% endif %}
                 <div class="wizard-actions">
                     <button type="button" id="setup-back-btn" class="btn-backup">Back</button>
                     <button type="button" id="setup-next-btn" class="setup-submit">Next</button>

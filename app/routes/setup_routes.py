@@ -13,6 +13,7 @@ def register_setup_routes(
     app,
     *,
     is_setup_required,
+    setup_mode,
     setup_defaults,
     save_setup_values,
 ):
@@ -67,6 +68,7 @@ def register_setup_routes(
 
         def _render(*, defaults=None, error_message="", field_errors=None):
             selected_defaults = defaults if isinstance(defaults, dict) else setup_defaults()
+            is_paths_only = str(setup_mode() or "full").strip().lower() == "paths_only"
             return render_template(
                 "setup.html",
                 current_page="setup",
@@ -74,6 +76,7 @@ def register_setup_routes(
                 timezone_options=_timezone_options(selected_defaults.get("DISPLAY_TZ", "")),
                 error_message=error_message,
                 field_errors=field_errors or {},
+                path_only_mode=is_paths_only,
             )
 
         if not is_setup_required():
@@ -147,35 +150,45 @@ def register_setup_routes(
     def setup_submit():
         if not is_setup_required():
             return abort(404)
+        is_paths_only = str(setup_mode() or "full").strip().lower() == "paths_only"
 
         form = request.form
         field_errors = {}
+        existing_defaults = setup_defaults()
         submitted = {
-            "SERVICE": str(form.get("service", "minecraft")).strip() or "minecraft",
-            "DISPLAY_TZ": str(form.get("display_tz", "")).strip(),
+            "SERVICE": str(form.get("service", existing_defaults.get("SERVICE", "minecraft"))).strip() or "minecraft",
+            "DISPLAY_TZ": str(form.get("display_tz", existing_defaults.get("DISPLAY_TZ", ""))).strip(),
             "MINECRAFT_ROOT_DIR": str(form.get("minecraft_root_dir", "")).strip(),
             "BACKUP_DIR": str(form.get("backup_dir", "")).strip(),
             "CREATE_BACKUP_DIR": _to_bool(form.get("create_backup_dir")),
         }
-        password = str(form.get("admin_password", "")).strip()
-        password_confirm = str(form.get("admin_password_confirm", "")).strip()
+        password = str(form.get("admin_password", "")).strip() if not is_paths_only else ""
+        password_confirm = str(form.get("admin_password_confirm", "")).strip() if not is_paths_only else ""
 
-        for key in ("DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR"):
+        required_keys = ("MINECRAFT_ROOT_DIR", "BACKUP_DIR") if is_paths_only else ("DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR")
+        for key in required_keys:
             if not submitted[key]:
                 field_errors[key] = "This field is required."
-        if not password:
-            field_errors["ADMIN_PASSWORD"] = "This field is required."
-        if not password_confirm:
-            field_errors["ADMIN_PASSWORD_CONFIRM"] = "This field is required."
+        if not is_paths_only:
+            if not password:
+                field_errors["ADMIN_PASSWORD"] = "This field is required."
+            if not password_confirm:
+                field_errors["ADMIN_PASSWORD_CONFIRM"] = "This field is required."
         if field_errors:
             return jsonify({"ok": False, "message": "Please fill in all required fields.", "field_errors": field_errors}), 400
-        if len(password) < 8:
-            return jsonify({"ok": False, "message": "Password must be at least 8 characters.", "field_errors": {"ADMIN_PASSWORD": "Password must be at least 8 characters."}}), 400
-        if password != password_confirm:
-            return jsonify({"ok": False, "message": "Passwords do not match.", "field_errors": {"ADMIN_PASSWORD": "Passwords do not match.", "ADMIN_PASSWORD_CONFIRM": "Passwords do not match."}}), 400
+        if not is_paths_only:
+            if len(password) < 8:
+                return jsonify({"ok": False, "message": "Password must be at least 8 characters.", "field_errors": {"ADMIN_PASSWORD": "Password must be at least 8 characters."}}), 400
+            if password != password_confirm:
+                return jsonify({"ok": False, "message": "Passwords do not match.", "field_errors": {"ADMIN_PASSWORD": "Passwords do not match.", "ADMIN_PASSWORD_CONFIRM": "Passwords do not match."}}), 400
 
         values = {
-            "MCWEB_ADMIN_PASSWORD_HASH": generate_password_hash(password),
+            "MCWEB_ADMIN_PASSWORD_HASH": (
+                generate_password_hash(password)
+                if not is_paths_only
+                else str(existing_defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "")).strip()
+            ),
+            "MCWEB_SECRET_KEY": str(existing_defaults.get("MCWEB_SECRET_KEY", "")).strip(),
             "SERVICE": submitted["SERVICE"],
             "DISPLAY_TZ": submitted["DISPLAY_TZ"],
             "MINECRAFT_ROOT_DIR": submitted["MINECRAFT_ROOT_DIR"],
