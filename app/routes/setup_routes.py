@@ -13,7 +13,6 @@ def register_setup_routes(
     app,
     *,
     is_setup_required,
-    setup_reasons,
     setup_defaults,
     save_setup_values,
 ):
@@ -66,23 +65,21 @@ def register_setup_routes(
             items.sort(key=lambda item: (item["offset_minutes"], item["value"]))
             return items
 
-        def _render(*, defaults=None, error_message="", field_errors=None, status_text=""):
+        def _render(*, defaults=None, error_message="", field_errors=None):
             selected_defaults = defaults if isinstance(defaults, dict) else setup_defaults()
             return render_template(
                 "setup.html",
                 current_page="setup",
-                reasons=setup_reasons(),
                 defaults=selected_defaults,
                 timezone_options=_timezone_options(selected_defaults.get("DISPLAY_TZ", "")),
                 error_message=error_message,
                 field_errors=field_errors or {},
-                password_match_status=status_text,
             )
 
         if not is_setup_required():
             return abort(404)
 
-        return _render(defaults=setup_defaults(), error_message="", field_errors={}, status_text="")
+        return _render(defaults=setup_defaults(), error_message="", field_errors={})
 
     @app.route("/setup/validate", methods=["POST"])
     def setup_validate():
@@ -108,7 +105,7 @@ def register_setup_routes(
             if not root:
                 return jsonify({"ok": False, "field_errors": {"MINECRAFT_ROOT_DIR": "This field is required."}, "message": "Please fill in all required fields."}), 400
             service_error = setup_service_service.validate_service_name(service_name)
-            root_result = setup_service_service.validate_minecraft_root(root, allow_create_missing=False)
+            root_result = setup_service_service.validate_minecraft_root(root)
             messages = []
             if service_error:
                 messages.append(service_error)

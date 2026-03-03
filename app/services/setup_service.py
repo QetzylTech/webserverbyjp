@@ -91,9 +91,8 @@ def assess_setup_requirement(config_path, values):
     return {"required": bool(reasons), "reasons": reasons}
 
 
-def setup_form_defaults(existing_values, app_dir):
+def setup_form_defaults(existing_values):
     """Build setup form defaults from existing env values + app defaults."""
-    _ = Path(app_dir)
     user_name = (
         str(os.environ.get("SUDO_USER", "")).strip()
         or str(os.environ.get("USER", "")).strip()
@@ -163,7 +162,7 @@ def validate_runtime_locations(values):
     except Exception:
         errors["SERVICE"] = "service not found."
 
-    root_result = validate_minecraft_root(str(mc_root), allow_create_missing=False)
+    root_result = validate_minecraft_root(str(mc_root))
     if root_result["errors"]:
         errors["MINECRAFT_ROOT_DIR"] = "\n".join(root_result["errors"])
 
@@ -225,7 +224,6 @@ def _directory_state(path_value):
             "path": path_obj,
             "exists_dir": True,
             "missing": False,
-            "writable": writable,
             "not_writable": not writable,
         }
 
@@ -235,19 +233,16 @@ def _directory_state(path_value):
         "path": path_obj,
         "exists_dir": False,
         "missing": True,
-        "writable": False,
         "not_writable": not parent_writable,
     }
 
 
-def validate_minecraft_root(path_value, allow_create_missing=False):
+def validate_minecraft_root(path_value):
     """Return minecraft-root validation details."""
     state = _directory_state(path_value)
     errors = []
     if state["missing"]:
         errors.append("location does not exist.")
-        if not allow_create_missing:
-            errors.append("Enable 'Create folder' to continue.")
     if state["not_writable"]:
         errors.append("location not writable.")
     if state["exists_dir"]:

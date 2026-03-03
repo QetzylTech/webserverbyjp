@@ -63,7 +63,7 @@
                         <input id="setup-admin-password-confirm" class="ui-text-input{% if field_errors.get('ADMIN_PASSWORD_CONFIRM') %} field-invalid{% endif %}" style="background:#ffffff !important;background-color:#ffffff !important;" type="password" name="admin_password_confirm" required>
                         <span id="error-admin_password_confirm" class="field-error">{% if field_errors.get('ADMIN_PASSWORD_CONFIRM') %}{{ field_errors.get('ADMIN_PASSWORD_CONFIRM') }}{% endif %}</span>
                     </label>
-                    <p id="setup-password-status" class="password-status" data-initial="{{ password_match_status|default('') }}">{{ password_match_status|default('') }}</p>
+                    <p id="setup-password-status" class="password-status"></p>
                 </section>
                 <section class="wizard-step" data-step="5" hidden>
                     <h2 class="setup-group-title">Waiting for Configuration to Finish</h2>

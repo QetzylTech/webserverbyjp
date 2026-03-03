@@ -22,8 +22,6 @@ from app.services.restore_workflow_helpers import (
     _sanitize_backup_name_component,
     _update_property_text,
     clear_session_start_time,
-    ensure_session_file,
-    ensure_startup_rcon_settings,
     is_backup_running,
     reset_backup_schedule_state,
     run_sudo,

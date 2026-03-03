@@ -138,10 +138,6 @@ def _setup_required():
     return bool(SETUP_REQUIRED_STATE.get("required"))
 
 
-def _setup_reasons():
-    return list(SETUP_REQUIRED_STATE.get("reasons", []))
-
-
 def _trigger_process_reload():
     def _reload():
         time.sleep(0.35)
@@ -193,7 +189,7 @@ data_bootstrap_service.ensure_data_bootstrap(
 
 
 def _setup_defaults():
-    return setup_service.setup_form_defaults(_WEB_CFG_VALUES, APP_DIR)
+    return setup_service.setup_form_defaults(_WEB_CFG_VALUES)
 
 
 def _save_setup_values(values):
@@ -245,7 +241,6 @@ def _save_setup_values(values):
 register_setup_routes(
     app,
     is_setup_required=_setup_required,
-    setup_reasons=_setup_reasons,
     setup_defaults=_setup_defaults,
     save_setup_values=_save_setup_values,
 )

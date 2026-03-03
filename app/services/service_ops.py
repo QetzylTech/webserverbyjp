@@ -5,8 +5,8 @@ from pathlib import Path
 import subprocess
 import time
 from werkzeug.security import check_password_hash
+from app.services.restore_workflow_helpers import ensure_startup_rcon_settings
 from app.services.restore_workflow import (
-    ensure_startup_rcon_settings,
     restore_world_backup,
     append_restore_event,
     start_restore_job,
