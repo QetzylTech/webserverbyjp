@@ -850,6 +850,10 @@ def collect_dashboard_metrics(ctx):
     backup_schedule = ctx.get_backup_schedule_times(service_status)
     backup_status, backup_status_class = ctx.get_backup_status()
     backup_warning = ctx.get_backup_warning_state(ctx.BACKUP_WARNING_TTL_SECONDS)
+    now_display = datetime.now(tz=ctx.DISPLAY_TZ)
+    server_time_text = now_display.strftime("%b %d, %Y %I:%M:%S %p %Z")
+    server_time_epoch_ms = int(now_display.timestamp() * 1000)
+    server_time_zone = str(now_display.tzname() or "").strip()
 
     return {
         "service_status": service_status_display,
@@ -875,7 +879,9 @@ def collect_dashboard_metrics(ctx):
         "backup_warning_message": str(backup_warning.get("message", "") or ""),
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
-        "server_time": ctx.get_server_time_text(),
+        "server_time": server_time_text,
+        "server_time_epoch_ms": server_time_epoch_ms,
+        "server_time_zone": server_time_zone,
         "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
         "observed_state": observed,
@@ -969,6 +975,10 @@ def get_cached_dashboard_metrics(ctx):
     with ctx.metrics_cache_cond:
         if ctx.metrics_cache_payload:
             return dict(ctx.metrics_cache_payload)
+    now_display = datetime.now(tz=ctx.DISPLAY_TZ)
+    server_time_text = now_display.strftime("%b %d, %Y %I:%M:%S %p %Z")
+    server_time_epoch_ms = int(now_display.timestamp() * 1000)
+    server_time_zone = str(now_display.tzname() or "").strip()
     return {
         "service_status": "Off",
         "service_status_class": "stat-red",
@@ -993,7 +1003,9 @@ def get_cached_dashboard_metrics(ctx):
         "backup_warning_message": "",
         "last_backup_time": "--",
         "next_backup_time": "--",
-        "server_time": ctx.get_server_time_text(),
+        "server_time": server_time_text,
+        "server_time_epoch_ms": server_time_epoch_ms,
+        "server_time_zone": server_time_zone,
         "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
     }

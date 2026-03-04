@@ -163,7 +163,7 @@ def _setup_route_guard():
     setup_mode = _setup_required()
     path = request.path or ""
     if setup_mode:
-        if path == "/setup" or path.startswith("/setup") or path.startswith("/static/"):
+        if path == "/setup" or path.startswith("/setup") or path.startswith("/static/") or path == "/sw.js":
             return None
         if path == "/favicon.ico":
             return None

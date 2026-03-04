@@ -27,14 +27,8 @@ self.addEventListener("fetch", (event) => {
     if (req.mode === "navigate") {
         event.respondWith(
             fetch(req)
-                .then((res) => {
-                    const clone = res.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
-                    return res;
-                })
+                .then((res) => res)
                 .catch(async () => {
-                    const cachedPage = await caches.match(req);
-                    if (cachedPage) return cachedPage;
                     const fallback = await caches.match(OFFLINE_FALLBACK_URL);
                     if (fallback) return fallback;
                     return new Response("Server offline.", {

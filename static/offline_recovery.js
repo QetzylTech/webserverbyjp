@@ -1,8 +1,11 @@
 (function () {
     const OFFLINE_BANNER_ID = "mcweb-offline-banner";
     const RECOVERY_PROBE_INTERVAL_MS = 3000;
+    const RECOVERY_RESTORED_BANNER_MS = 1000;
     let offlineActive = false;
     let recoveryTimer = null;
+    let recoveryHideTimer = null;
+    let recoveryAcknowledging = false;
     let wrappedFetch = false;
     const nativeFetch = (typeof window.fetch === "function") ? window.fetch.bind(window) : null;
 
@@ -21,13 +24,23 @@
 
     function showOfflineBanner() {
         const banner = ensureBanner();
+        banner.textContent = "Server offline. Waiting for connection and server recovery...";
+        banner.classList.remove("restored");
         banner.classList.add("active");
     }
 
     function hideOfflineBanner() {
         const banner = document.getElementById(OFFLINE_BANNER_ID);
         if (!banner) return;
+        banner.classList.remove("restored");
         banner.classList.remove("active");
+    }
+
+    function showRecoveredBanner() {
+        const banner = ensureBanner();
+        banner.textContent = "Signal restored. Reconnecting...";
+        banner.classList.add("restored");
+        banner.classList.add("active");
     }
 
     async function probeServerReachable() {
@@ -51,12 +64,17 @@
     function setOfflineActive(reason) {
         if (offlineActive) return;
         offlineActive = true;
+        recoveryAcknowledging = false;
+        if (recoveryHideTimer) {
+            window.clearTimeout(recoveryHideTimer);
+            recoveryHideTimer = null;
+        }
         showOfflineBanner();
         if (!recoveryTimer) {
             recoveryTimer = window.setInterval(async () => {
                 const ok = await probeServerReachable();
                 if (!ok) return;
-                window.location.reload();
+                acknowledgeRecoveryAndReload();
             }, RECOVERY_PROBE_INTERVAL_MS);
         }
         if (reason && window.console) {
@@ -64,13 +82,41 @@
         }
     }
 
+    async function setOfflineIfUnreachable(reason) {
+        if (offlineActive) return;
+        const ok = await probeServerReachable();
+        if (!ok) {
+            setOfflineActive(reason || "server_unreachable");
+        }
+    }
+
+    function acknowledgeRecoveryAndReload() {
+        if (recoveryAcknowledging) return;
+        recoveryAcknowledging = true;
+        if (recoveryTimer) {
+            window.clearInterval(recoveryTimer);
+            recoveryTimer = null;
+        }
+        showRecoveredBanner();
+        recoveryHideTimer = window.setTimeout(() => {
+            recoveryHideTimer = null;
+            clearOfflineActive();
+            window.location.reload();
+        }, RECOVERY_RESTORED_BANNER_MS);
+    }
+
     function clearOfflineActive() {
         if (!offlineActive) return;
         offlineActive = false;
+        recoveryAcknowledging = false;
         hideOfflineBanner();
         if (recoveryTimer) {
             window.clearInterval(recoveryTimer);
             recoveryTimer = null;
+        }
+        if (recoveryHideTimer) {
+            window.clearTimeout(recoveryHideTimer);
+            recoveryHideTimer = null;
         }
     }
 
@@ -85,6 +131,27 @@
             }
         };
         wrappedFetch = true;
+    }
+
+    function installEventSourceFailureHook() {
+        if (typeof window.EventSource !== "function") return;
+        const NativeEventSource = window.EventSource;
+        if (NativeEventSource.__mcwebWrapped) return;
+
+        function WrappedEventSource(url, config) {
+            const es = new NativeEventSource(url, config);
+            es.addEventListener("error", () => {
+                setOfflineIfUnreachable("sse_error");
+            });
+            return es;
+        }
+
+        WrappedEventSource.prototype = NativeEventSource.prototype;
+        WrappedEventSource.CONNECTING = NativeEventSource.CONNECTING;
+        WrappedEventSource.OPEN = NativeEventSource.OPEN;
+        WrappedEventSource.CLOSED = NativeEventSource.CLOSED;
+        WrappedEventSource.__mcwebWrapped = true;
+        window.EventSource = WrappedEventSource;
     }
 
     async function bootOfflineState() {
@@ -108,7 +175,11 @@
     window.addEventListener("online", async () => {
         const ok = await probeServerReachable();
         if (ok) {
-            window.location.reload();
+            if (offlineActive) {
+                acknowledgeRecoveryAndReload();
+            } else {
+                window.location.reload();
+            }
         } else {
             setOfflineActive("online_but_server_down");
         }
@@ -118,14 +189,26 @@
         setOfflineActive("navigator_offline_event");
     });
 
+    window.addEventListener("mcweb:stream-error", () => {
+        setOfflineIfUnreachable("stream_error_event");
+    });
+
+    window.MCWebOfflineRecovery = {
+        setOffline: (reason) => setOfflineActive(reason || "external"),
+        setOfflineIfUnreachable: (reason) => setOfflineIfUnreachable(reason || "external_probe"),
+        clearOffline: () => clearOfflineActive(),
+    };
+
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", () => {
             registerServiceWorker();
+            installEventSourceFailureHook();
             installFetchNetworkFailureHook();
             bootOfflineState();
         });
     } else {
         registerServiceWorker();
+        installEventSourceFailureHook();
         installFetchNetworkFailureHook();
         bootOfflineState();
     }

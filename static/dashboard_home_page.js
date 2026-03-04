@@ -40,6 +40,9 @@
     let sessionDurationBaseSeconds = null;
     let sessionDurationBaseAtMs = null;
     let sessionDurationRunning = false;
+    let serverTimeBaseUtcMs = null;
+    let serverTimeBaseAtMs = null;
+    let serverTimeZoneLabel = "";
     let pendingSudoForm = null;
     const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb", "mcweb_log"];
     const LOG_SOURCE_STREAM_PATHS = {
@@ -90,11 +93,14 @@
     let metricsPollTimer = null;
     let metricsFastPollTimer = null;
     let countdownTimer = null;
+    let serverClockTimer = null;
     const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
+    const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
+    const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     function isLogNearBottom(target, thresholdPx = 24) {
         if (!target) return true;
@@ -331,6 +337,69 @@
         return `${hours}:${mins}:${secs}`;
     }
 
+    function parseServerTimeText(text) {
+        const raw = String(text || "").trim();
+        if (!raw) return null;
+        const match = raw.match(
+            /^([A-Za-z]{3})\s+([0-9]{1,2}),\s+([0-9]{4})\s+([0-9]{2}):([0-9]{2}):([0-9]{2})\s+(AM|PM)\s+(.+)$/
+        );
+        if (!match) return null;
+        const monthIdx = MONTH_ABBREV.indexOf(match[1]);
+        if (monthIdx < 0) return null;
+        const day = parseInt(match[2], 10);
+        const year = parseInt(match[3], 10);
+        let hour = parseInt(match[4], 10);
+        const minute = parseInt(match[5], 10);
+        const second = parseInt(match[6], 10);
+        const amPm = match[7];
+        const zoneLabel = String(match[8] || "").trim();
+        if (hour === 12) {
+            hour = (amPm === "AM") ? 0 : 12;
+        } else if (amPm === "PM") {
+            hour += 12;
+        }
+        if ([day, year, hour, minute, second].some((n) => Number.isNaN(n))) return null;
+        return {
+            utcMs: Date.UTC(year, monthIdx, day, hour, minute, second),
+            zoneLabel,
+        };
+    }
+
+    function formatServerTimeText(utcMs, zoneLabel) {
+        if (utcMs === null || Number.isNaN(utcMs)) return "";
+        const date = new Date(utcMs);
+        const month = MONTH_ABBREV[date.getUTCMonth()];
+        const day = String(date.getUTCDate()).padStart(2, "0");
+        const year = String(date.getUTCFullYear());
+        let hour24 = date.getUTCHours();
+        const minute = String(date.getUTCMinutes()).padStart(2, "0");
+        const second = String(date.getUTCSeconds()).padStart(2, "0");
+        const amPm = hour24 >= 12 ? "PM" : "AM";
+        hour24 = hour24 % 12;
+        const hour12 = String(hour24 === 0 ? 12 : hour24).padStart(2, "0");
+        const label = String(zoneLabel || "").trim();
+        return label
+            ? `${month} ${day}, ${year} ${hour12}:${minute}:${second} ${amPm} ${label}`
+            : `${month} ${day}, ${year} ${hour12}:${minute}:${second} ${amPm}`;
+    }
+
+    function setServerTimeFromEpoch(epochMs, zoneLabel, options = {}) {
+        const force = options.force === true;
+        const nextMs = Number(epochMs);
+        if (!Number.isFinite(nextMs) || nextMs <= 0) return false;
+        const currentMs = currentServerTimeUtcMs();
+        if (!force && currentMs !== null) {
+            const driftSeconds = Math.abs(nextMs - currentMs) / 1000;
+            if (driftSeconds <= SERVER_TIME_REBASE_TOLERANCE_SECONDS) {
+                return true;
+            }
+        }
+        serverTimeBaseUtcMs = nextMs;
+        serverTimeBaseAtMs = Date.now();
+        serverTimeZoneLabel = String(zoneLabel || "").trim() || serverTimeZoneLabel;
+        return true;
+    }
+
     function currentIdleCountdownSeconds() {
         if (idleCountdownDeadlineMs === null) return null;
         return Math.max(0, Math.ceil((idleCountdownDeadlineMs - Date.now()) / 1000));
@@ -379,6 +448,39 @@
         sessionDurationBaseAtMs = Date.now();
     }
 
+    function currentServerTimeUtcMs() {
+        if (serverTimeBaseUtcMs === null || serverTimeBaseAtMs === null) return null;
+        const elapsedMs = Math.max(0, Date.now() - serverTimeBaseAtMs);
+        return serverTimeBaseUtcMs + elapsedMs;
+    }
+
+    function setServerTimeFromText(text, options = {}) {
+        const force = options.force === true;
+        const parsed = parseServerTimeText(text);
+        if (!parsed) return false;
+        const nextMs = parsed.utcMs;
+        const currentMs = currentServerTimeUtcMs();
+        if (!force && currentMs !== null) {
+            const driftSeconds = Math.abs(nextMs - currentMs) / 1000;
+            if (driftSeconds <= SERVER_TIME_REBASE_TOLERANCE_SECONDS) {
+                return true;
+            }
+        }
+        serverTimeBaseUtcMs = nextMs;
+        serverTimeBaseAtMs = Date.now();
+        serverTimeZoneLabel = parsed.zoneLabel;
+        return true;
+    }
+
+    function tickServerClock() {
+        const serverTimeNode = document.getElementById("server-time");
+        if (!serverTimeNode) return;
+        const nowUtcMs = currentServerTimeUtcMs();
+        if (nowUtcMs === null) return;
+        const nextText = formatServerTimeText(nowUtcMs, serverTimeZoneLabel);
+        if (nextText) serverTimeNode.textContent = nextText;
+    }
+
     function tickRuntimeSimulation() {
         const idleCountdown = document.getElementById("idle-countdown");
         if (idleCountdown) {
@@ -411,6 +513,21 @@
         const driftToNextSecond = 1000 - (now % 1000);
         const delay = Math.max(250, Math.min(1250, driftToNextSecond));
         countdownTimer = window.setTimeout(scheduleRuntimeSimulationTick, delay);
+    }
+
+    function clearServerClockTimer() {
+        if (!serverClockTimer) return;
+        clearTimeout(serverClockTimer);
+        serverClockTimer = null;
+    }
+
+    function scheduleServerClockTick() {
+        clearServerClockTimer();
+        tickServerClock();
+        const now = Date.now();
+        const driftToNextSecond = 1000 - (now % 1000);
+        const delay = Math.max(250, Math.min(1250, driftToNextSecond));
+        serverClockTimer = window.setTimeout(scheduleServerClockTick, delay);
     }
 
     function isServiceRunningInMetrics(data) {
@@ -758,7 +875,15 @@
         if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
         if (service && data.service_status) service.textContent = data.service_status;
         if (service && data.service_status_class) service.className = data.service_status_class;
-        if (serverTime && data.server_time) serverTime.textContent = data.server_time;
+        if (serverTime && (data.server_time || data.server_time_epoch_ms)) {
+            const accepted = setServerTimeFromEpoch(data.server_time_epoch_ms, data.server_time_zone)
+                || setServerTimeFromText(data.server_time);
+            if (accepted) {
+                tickServerClock();
+            } else {
+                serverTime.textContent = data.server_time;
+            }
+        }
         if (controlPanelTitle && data.world_name) controlPanelTitle.textContent = `${data.world_name} Control Panel`;
         if (serviceDurationPrefix && service && sessionDuration) {
             if (data.service_status === "Running" && data.session_duration && data.session_duration !== "--") {
@@ -836,6 +961,11 @@
         }
         if (data.session_duration !== undefined) {
             setSessionDurationFromParsedSeconds(parseSessionDuration(data.session_duration));
+        }
+        if (data.server_time || data.server_time_epoch_ms) {
+            setServerTimeFromEpoch(data.server_time_epoch_ms, data.server_time_zone)
+                || setServerTimeFromText(data.server_time);
+            tickServerClock();
         }
     }
 
@@ -1095,6 +1225,7 @@
             homeHeartbeatTimer = null;
         }
         clearRefreshTimers();
+        clearServerClockTimer();
     }
 
     function handleVisibilityRefreshMode() {
@@ -1103,11 +1234,13 @@
             stopMetricsStream();
             stopMetricsPolling();
             stopFastMetricsPolling();
+            clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
         startMetricsStream();
         startMetricsPolling();
+        scheduleServerClockTick();
         refreshMetrics();
         sendHomePageHeartbeat();
     }
@@ -1221,6 +1354,10 @@
         if (existingSessionDuration) {
             setSessionDurationFromParsedSeconds(parseSessionDuration(existingSessionDuration.textContent.trim()));
         }
+        const existingServerTime = document.getElementById("server-time");
+        if (existingServerTime) {
+            setServerTimeFromText(existingServerTime.textContent.trim(), { force: true });
+        }
         const logSource = document.getElementById("log-source");
         if (logSource) {
             logSource.addEventListener("change", async () => {
@@ -1251,6 +1388,7 @@
         loadLogSourceFromServer(selectedLogSource);
         startMetricsStream();
         startMetricsPolling();
+        scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
     });
