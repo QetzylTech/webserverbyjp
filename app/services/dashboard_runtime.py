@@ -433,12 +433,15 @@ def get_observed_state(ctx):
             return False
         return str(op.get("status", "")).strip().lower() in {"intent", "in_progress"}
 
-    if _active(latest_restore):
-        service_status_raw = "shutting_down"
-    elif _active(latest_stop):
-        service_status_raw = "shutting_down"
-    elif _active(latest_start):
-        service_status_raw = "starting"
+    # Boot/runtime precedence: if probe already sees the service as active,
+    # report Running immediately and ignore stale async intent rows.
+    if service_status_raw != "active":
+        if _active(latest_restore):
+            service_status_raw = "shutting_down"
+        elif _active(latest_stop):
+            service_status_raw = "shutting_down"
+        elif _active(latest_start):
+            service_status_raw = "starting"
     players_online = ctx.get_players_online()
     service_status_display = ctx.get_service_status_display(service_status_raw, players_online)
     observed_payload = {
