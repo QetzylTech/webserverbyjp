@@ -127,6 +127,7 @@ def _build_run_server(app_lifecycle_service, app, namespace, binding):
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
         ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
         collect_and_publish_metrics=binding("_collect_and_publish_metrics"),
+        start_operation_reconciler=binding("start_operation_reconciler"),
         start_idle_player_watcher=binding("start_idle_player_watcher"),
         start_backup_session_watcher=binding("start_backup_session_watcher"),
         start_storage_safety_watcher=binding("start_storage_safety_watcher"),

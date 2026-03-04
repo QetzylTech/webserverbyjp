@@ -14,6 +14,7 @@ from app.services.maintenance_state_store import (
     _safe_int,
 )
 from app.services.maintenance_candidate_scan import _backup_bucket, _cleanup_collect_candidates
+from app.core import profiling
 
 _cleanup_run_lock = threading.Lock()
 
@@ -309,157 +310,171 @@ def _build_deleted_output_items(rows):
 
 def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
     """Handle cleanup evaluate."""
-    selected_paths = set(selected_paths or [])
-    rules = cfg.get("rules", {})
-    candidates = _cleanup_collect_candidates(state, cfg)
-    by_category = _group_by_category(candidates)
-    protected = _build_protected_paths(candidates, by_category, rules)
-    eligible = _apply_hard_guards(candidates, protected)
+    with profiling.timed("maintenance.evaluate.total"):
+        selected_paths = set(selected_paths or [])
+        rules = cfg.get("rules", {})
+        with profiling.timed("maintenance.evaluate.candidate_discovery"):
+            candidates = _cleanup_collect_candidates(state, cfg)
+        if not isinstance(candidates, list):
+            profiling.incr_error("maintenance.evaluate.candidate_discovery.invalid_result")
+            candidates = []
+        with profiling.timed("maintenance.evaluate.grouping"):
+            by_category = _group_by_category(candidates)
+        with profiling.timed("maintenance.evaluate.hard_guards"):
+            protected = _build_protected_paths(candidates, by_category, rules)
+            eligible = _apply_hard_guards(candidates, protected)
 
-    to_delete = []
-    reasons_map = {}
-    if mode == "manual":
-        for row in candidates:
-            if row["path"] in selected_paths and row["eligible"]:
-                to_delete.append(row)
-                _mark(reasons_map, row["path"], "manual_selection")
-            elif row["path"] in selected_paths and not row["eligible"]:
-                _mark(reasons_map, row["path"], "ineligible_selection")
-    else:
-        _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete)
+        to_delete = []
+        reasons_map = {}
+        with profiling.timed("maintenance.evaluate.rule_selection"):
+            if mode == "manual":
+                for row in candidates:
+                    if row["path"] in selected_paths and row["eligible"]:
+                        to_delete.append(row)
+                        _mark(reasons_map, row["path"], "manual_selection")
+                    elif row["path"] in selected_paths and not row["eligible"]:
+                        _mark(reasons_map, row["path"], "ineligible_selection")
+            else:
+                _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete)
 
-        non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
-        if non_backup_eligible:
-            non_backup_by_category = _group_by_category([row for row in candidates if row.get("category") != "backup_zip"])
-            _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
-            _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
-            _add_space_targets(state, cfg, non_backup_eligible, rules, reasons_map, to_delete)
+                non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
+                if non_backup_eligible:
+                    non_backup_by_category = _group_by_category([row for row in candidates if row.get("category") != "backup_zip"])
+                    _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
+                    _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
+                    _add_space_targets(state, cfg, non_backup_eligible, rules, reasons_map, to_delete)
 
-    ordered = _dedupe_oldest_first(to_delete)
-    eligible_count = len(eligible)
-    capped_targets = _apply_blast_radius_cap(ordered, eligible_count, rules)
+        with profiling.timed("maintenance.evaluate.dedup_and_blast_cap"):
+            ordered = _dedupe_oldest_first(to_delete)
+            eligible_count = len(eligible)
+            capped_targets = _apply_blast_radius_cap(ordered, eligible_count, rules)
 
-    deleted = []
-    errors = []
-    if apply_changes:
-        for row in capped_targets:
-            try:
-                _cleanup_delete_target(row["path"], row["is_dir"])
-                deleted.append(row)
-            except OSError as exc:
-                errors.append(f"{row['name']}: {exc}")
-    else:
-        deleted = list(capped_targets)
+        deleted = []
+        errors = []
+        with profiling.timed("maintenance.evaluate.apply_changes"):
+            if apply_changes:
+                for row in capped_targets:
+                    try:
+                        _cleanup_delete_target(row["path"], row["is_dir"])
+                        deleted.append(row)
+                    except OSError as exc:
+                        errors.append(f"{row['name']}: {exc}")
+            else:
+                deleted = list(capped_targets)
 
-    deleted_paths = {row["path"] for row in capped_targets}
-    output_items = _build_output_items(candidates, reasons_map, deleted_paths)
-    deleted_path_set = {row["path"] for row in deleted}
-    selected_ineligible = sorted(
-        path
-        for path in selected_paths
-        if path not in deleted_path_set and path in reasons_map and "ineligible_selection" in reasons_map[path]
-    )
+        with profiling.timed("maintenance.evaluate.output_build"):
+            deleted_paths = {row["path"] for row in capped_targets}
+            output_items = _build_output_items(candidates, reasons_map, deleted_paths)
+            deleted_path_set = {row["path"] for row in deleted}
+            selected_ineligible = sorted(
+                path
+                for path in selected_paths
+                if path not in deleted_path_set and path in reasons_map and "ineligible_selection" in reasons_map[path]
+            )
 
-    return {
-        "ok": True,
-        "mode": mode,
-        "apply_changes": bool(apply_changes),
-        "eligible_count": eligible_count,
-        "requested_delete_count": len(ordered),
-        "capped_delete_count": len(capped_targets),
-        "deleted_count": len(deleted),
-        "deleted_bytes": sum(int(row["size"]) for row in deleted),
-        "deleted_items": _build_deleted_output_items(deleted),
-        "errors": errors,
-        "items": output_items,
-        "selected_ineligible": selected_ineligible,
-    }
+        return {
+            "ok": True,
+            "mode": mode,
+            "apply_changes": bool(apply_changes),
+            "eligible_count": eligible_count,
+            "requested_delete_count": len(ordered),
+            "capped_delete_count": len(capped_targets),
+            "deleted_count": len(deleted),
+            "deleted_bytes": sum(int(row["size"]) for row in deleted),
+            "deleted_items": _build_deleted_output_items(deleted),
+            "errors": errors,
+            "items": output_items,
+            "selected_ineligible": selected_ineligible,
+        }
 
 
 def _cleanup_state_snapshot(state, cfg):
     """Handle cleanup state snapshot."""
-    def _next_time_schedule_run():
-        tz = state.get("DISPLAY_TZ")
-        now_local = datetime.now(tz) if tz else datetime.now()
-        schedules = cfg.get("schedules", [])
-        next_candidates = []
-        has_event_schedule = False
+    with profiling.timed("maintenance.state_snapshot.total"):
+        def _next_time_schedule_run():
+            tz = state.get("DISPLAY_TZ")
+            now_local = datetime.now(tz) if tz else datetime.now()
+            schedules = cfg.get("schedules", [])
+            next_candidates = []
+            has_event_schedule = False
 
-        for schedule in schedules:
-            if not isinstance(schedule, dict) or not schedule.get("enabled", True):
-                continue
-            mode = str(schedule.get("mode", "")).strip().lower()
-            if mode == "event":
-                has_event_schedule = True
-                continue
-            if mode != "time":
-                continue
-
-            raw_time = str(schedule.get("time", "03:00")).strip()
-            try:
-                hour, minute = [int(part) for part in raw_time.split(":", 1)]
-            except Exception:
-                continue
-            if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                continue
-
-            interval = str(schedule.get("interval", "daily")).strip().lower()
-            weekly_day = _safe_int(schedule.get("day_of_week", 0), 0, minimum=0, maximum=6)
-            monthly_day = _safe_int(schedule.get("day_of_month", 1), 1, minimum=1, maximum=31)
-            every_n = _safe_int(schedule.get("every_n_days", 1), 1, minimum=1, maximum=365)
-            anchor_raw = str(schedule.get("anchor_date", now_local.date().isoformat()))
-            try:
-                anchor_date = datetime.fromisoformat(anchor_raw).date()
-            except Exception:
-                anchor_date = now_local.date()
-
-            for day_offset in range(0, 400):
-                run_date = now_local.date() + timedelta(days=day_offset)
-                due = False
-                if interval == "daily":
-                    due = True
-                elif interval == "weekly":
-                    due = run_date.weekday() == weekly_day
-                elif interval == "monthly":
-                    due = run_date.day == monthly_day
-                elif interval == "weekdays":
-                    due = run_date.weekday() in {0, 1, 2, 3, 4}
-                elif interval == "every_n_days":
-                    due = ((run_date - anchor_date).days % every_n) == 0
-                if not due:
+            for schedule in schedules:
+                if not isinstance(schedule, dict) or not schedule.get("enabled", True):
                     continue
-                candidate = datetime(
-                    run_date.year,
-                    run_date.month,
-                    run_date.day,
-                    hour,
-                    minute,
-                    tzinfo=now_local.tzinfo,
-                )
-                if candidate >= now_local:
-                    next_candidates.append(candidate)
-                    break
+                mode = str(schedule.get("mode", "")).strip().lower()
+                if mode == "event":
+                    has_event_schedule = True
+                    continue
+                if mode != "time":
+                    continue
 
-        if next_candidates:
-            return min(next_candidates).isoformat(timespec="seconds")
-        if has_event_schedule:
-            return "On event trigger"
-        return "-"
+                raw_time = str(schedule.get("time", "03:00")).strip()
+                try:
+                    hour, minute = [int(part) for part in raw_time.split(":", 1)]
+                except Exception:
+                    continue
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    continue
 
-    used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(state["BACKUP_DIR"])
-    non_normal = _cleanup_load_non_normal(state)
-    history = _cleanup_load_history(state)
-    return {
-        "config": cfg,
-        "non_normal": non_normal,
-        "history": history,
-        "next_run_at": _next_time_schedule_run(),
-        "storage": {
-            "used_percent": used_percent,
-            "total_bytes": total_bytes,
-            "free_bytes": free_bytes,
-        },
-    }
+                interval = str(schedule.get("interval", "daily")).strip().lower()
+                weekly_day = _safe_int(schedule.get("day_of_week", 0), 0, minimum=0, maximum=6)
+                monthly_day = _safe_int(schedule.get("day_of_month", 1), 1, minimum=1, maximum=31)
+                every_n = _safe_int(schedule.get("every_n_days", 1), 1, minimum=1, maximum=365)
+                anchor_raw = str(schedule.get("anchor_date", now_local.date().isoformat()))
+                try:
+                    anchor_date = datetime.fromisoformat(anchor_raw).date()
+                except Exception:
+                    anchor_date = now_local.date()
+
+                for day_offset in range(0, 400):
+                    run_date = now_local.date() + timedelta(days=day_offset)
+                    due = False
+                    if interval == "daily":
+                        due = True
+                    elif interval == "weekly":
+                        due = run_date.weekday() == weekly_day
+                    elif interval == "monthly":
+                        due = run_date.day == monthly_day
+                    elif interval == "weekdays":
+                        due = run_date.weekday() in {0, 1, 2, 3, 4}
+                    elif interval == "every_n_days":
+                        due = ((run_date - anchor_date).days % every_n) == 0
+                    if not due:
+                        continue
+                    candidate = datetime(
+                        run_date.year,
+                        run_date.month,
+                        run_date.day,
+                        hour,
+                        minute,
+                        tzinfo=now_local.tzinfo,
+                    )
+                    if candidate >= now_local:
+                        next_candidates.append(candidate)
+                        break
+
+            if next_candidates:
+                return min(next_candidates).isoformat(timespec="seconds")
+            if has_event_schedule:
+                return "On event trigger"
+            return "-"
+
+        used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(state["BACKUP_DIR"])
+        with profiling.timed("maintenance.state_snapshot.non_normal_load"):
+            non_normal = _cleanup_load_non_normal(state)
+        with profiling.timed("maintenance.state_snapshot.history_load"):
+            history = _cleanup_load_history(state)
+        return {
+            "config": cfg,
+            "non_normal": non_normal,
+            "history": history,
+            "next_run_at": _next_time_schedule_run(),
+            "storage": {
+                "used_percent": used_percent,
+                "total_bytes": total_bytes,
+                "free_bytes": free_bytes,
+            },
+        }
 
 
 def _cleanup_run_with_lock(state, cfg, *, mode, selected_paths=None, trigger="manual_rule"):

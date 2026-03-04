@@ -29,6 +29,23 @@ from app.services.restore_workflow_helpers import (
     write_session_start_time,
 )
 
+SNAPSHOT_TOKEN_PREFIX = "snapshot::"
+
+
+def _safe_extract_zip(zip_file, destination):
+    """Extract zip members under destination only (blocks path traversal)."""
+    dest_resolved = Path(destination).resolve()
+    for member in zip_file.infolist():
+        name = str(member.filename or "")
+        if not name or "\x00" in name:
+            raise ValueError("Invalid zip entry.")
+        target = (dest_resolved / name).resolve()
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError as exc:
+            raise ValueError("Unsafe path in zip archive.") from exc
+    zip_file.extractall(dest_resolved)
+
 
 def restore_world_backup(ctx, backup_filename, progress_callback=None):
     """Restore backup into a new world dir, switch level-name, and archive old world."""
@@ -44,54 +61,102 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         return _restore_failed("A restore operation is already in progress.")
 
     extract_root = None
-    try:
-        progress(f"Validating restore source: {backup_filename}")
-        safe_name = ctx._safe_filename_in_dir(ctx.BACKUP_DIR, backup_filename)
-        if safe_name is None:
-            return _restore_failed("Backup file not found.")
-        if not safe_name.lower().endswith(".zip"):
-            return _restore_failed("Only .zip backups can be restored.")
+    was_active = False
+    restore_succeeded = False
+    service_stopped_for_restore = False
 
-        backup_zip = ctx.BACKUP_DIR / safe_name
+    try:
+        def fail(message, error="restore_failed"):
+            nonlocal service_stopped_for_restore
+            if was_active and service_stopped_for_restore:
+                restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+                ctx.invalidate_status_cache()
+                if restart_result.returncode == 0:
+                    write_session_start_time(ctx)
+                    service_stopped_for_restore = False
+                else:
+                    message = f"{message} Service restart after failed restore also failed."
+            return _restore_failed(message, error=error)
+
+        selected_name = str(backup_filename or "").strip()
+        progress(f"Validating restore source: {selected_name}")
+        is_snapshot = selected_name.startswith(SNAPSHOT_TOKEN_PREFIX)
+        safe_name = ""
+        snapshot_dir = None
+        backup_zip = None
+        restore_source_name = ""
+
+        if is_snapshot:
+            raw_snapshot_name = selected_name[len(SNAPSHOT_TOKEN_PREFIX):].strip()
+            snapshot_name = Path(raw_snapshot_name).name
+            if not snapshot_name or snapshot_name != raw_snapshot_name:
+                return fail("Snapshot not found.")
+            snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+            snapshot_dir = snapshot_root / snapshot_name
+            try:
+                snapshot_root_resolved = snapshot_root.resolve()
+                snapshot_dir_resolved = snapshot_dir.resolve()
+                snapshot_dir_resolved.relative_to(snapshot_root_resolved)
+            except (OSError, ValueError):
+                return fail("Snapshot not found.")
+            if not snapshot_dir_resolved.exists() or not snapshot_dir_resolved.is_dir():
+                return fail("Snapshot not found.")
+            safe_name = snapshot_name
+            snapshot_dir = snapshot_dir_resolved
+            restore_source_name = snapshot_name
+        else:
+            safe_name = ctx._safe_filename_in_dir(ctx.BACKUP_DIR, selected_name)
+            if safe_name is None:
+                return fail("Backup file not found.")
+            if not safe_name.lower().endswith(".zip"):
+                return fail("Only .zip backups can be restored.")
+            backup_zip = ctx.BACKUP_DIR / safe_name
+            restore_source_name = safe_name
+
         if is_backup_running(ctx):
-            return _restore_failed("Cannot restore while backup is running.")
+            return fail("Cannot restore while backup is running.")
 
         world_dir = Path(ctx.WORLD_DIR)
         if not world_dir.exists() or not world_dir.is_dir():
-            return _restore_failed(f"WORLD_DIR does not exist: {world_dir}")
+            return fail(f"WORLD_DIR does not exist: {world_dir}")
 
         props_path = _detect_server_properties_path(ctx)
         if props_path is None:
-            return _restore_failed("server.properties not found; cannot switch level-name.")
+            return fail("server.properties not found; cannot switch level-name.")
         try:
             props_text = props_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            return _restore_failed("Failed to read server.properties.")
+            return fail("Failed to read server.properties.")
         props_kv = _parse_server_properties_kv(props_text)
         old_level_name = (props_kv.get("level-name") or "").strip() or world_dir.name
 
         was_active = ctx.get_status() == "active"
         if was_active and not stop_service_systemd(ctx):
-            return _restore_failed("Could not stop service for restore.")
+            return fail("Could not stop service for restore.")
         if was_active:
+            service_stopped_for_restore = True
             progress("Minecraft service stopped for restore.")
 
-        extract_root = Path(tempfile.mkdtemp(prefix="restore_"))
-        progress("Extracting backup zip.")
-        with zipfile.ZipFile(backup_zip, "r") as zf:
-            zf.extractall(extract_root)
+        if snapshot_dir is not None:
+            restore_source = snapshot_dir
+            progress(f"Restore source detected: {restore_source}")
+        else:
+            extract_root = Path(tempfile.mkdtemp(prefix="restore_"))
+            progress("Extracting backup zip.")
+            with zipfile.ZipFile(backup_zip, "r") as zf:
+                _safe_extract_zip(zf, extract_root)
 
-        restore_source = _restore_source_from_extraction(ctx, extract_root)
-        if restore_source is None:
-            return _restore_failed("Could not locate world data inside the selected backup zip.")
-        progress(f"Restore source detected: {restore_source}")
+            restore_source = _restore_source_from_extraction(ctx, extract_root)
+            if restore_source is None:
+                return fail("Could not locate world data inside the selected backup zip.")
+            progress(f"Restore source detected: {restore_source}")
 
         stored_id = _new_restore_code(ctx)
         active_id = _new_restore_code(ctx)
         while active_id == stored_id:
             active_id = _new_restore_code(ctx)
         stored_world_name = _compose_restore_world_name(old_level_name, "Gx", stored_id)
-        restore_base_name = _derive_restore_base_name(safe_name, restore_source)
+        restore_base_name = _derive_restore_base_name(restore_source_name, restore_source)
         active_world_name = _compose_restore_world_name(restore_base_name, "Rx", active_id)
 
         stamp = datetime.now(tz=ctx.DISPLAY_TZ).strftime("%Y-%m-%d_%H-%M-%S")
@@ -106,7 +171,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             if detail:
                 message = f"{message} {detail[:400]}"
             ctx.log_mcweb_action("restore-backup", command=safe_name, rejection_message=message[:700])
-            return _restore_failed(message, error="pre_restore_snapshot_failed")
+            return fail(message, error="pre_restore_snapshot_failed")
         progress(f"Pre-restore snapshot saved: {pre_restore_snapshot.name}")
 
         new_level_name = active_world_name
@@ -124,13 +189,13 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             ["rsync", "-a", "--delete", f"{restore_source}/", f"{new_world_dir}/"],
         )
         if restore_result.returncode != 0:
-            return _restore_failed("Restore copy failed while applying backup data.")
+            return fail("Restore copy failed while applying backup data.")
         progress("Restore data applied to new world directory.")
 
         progress("Archiving previous world directory.")
         archived_old_world_dir, archive_err = _archive_old_world_dir(ctx, world_dir, stored_world_name)
         if archived_old_world_dir is None:
-            return _restore_failed(archive_err or "Failed to archive previous world directory.")
+            return fail(archive_err or "Failed to archive previous world directory.")
 
         try:
             next_props = _update_property_text(props_text, "level-name", new_world_dir.name)
@@ -138,10 +203,10 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         except OSError:
             rollback_result = run_sudo(ctx, ["mv", str(archived_old_world_dir), str(world_dir)])
             if rollback_result.returncode != 0:
-                return _restore_failed(
+                return fail(
                     "Restore applied, but failed to update server.properties level-name and failed to rollback archived world."
                 )
-            return _restore_failed("Restore applied, but failed to update server.properties level-name.")
+            return fail("Restore applied, but failed to update server.properties level-name.")
 
         if not _record_restore_history(ctx, safe_name, world_dir, archived_old_world_dir, new_world_dir):
             ctx.log_mcweb_action(
@@ -156,7 +221,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             state_store_service.append_restore_name_run(
                 Path(ctx.APP_STATE_DB_PATH),
                 {
-                    "backup_filename": safe_name,
+                    "backup_filename": selected_name,
                     "restore_source_name": getattr(restore_source, "name", ""),
                     "previous_world_name": old_level_name,
                     "stored_world_name": stored_world_name,
@@ -180,20 +245,22 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
             ctx.invalidate_status_cache()
             if restart_result.returncode != 0:
-                return _restore_failed(
+                return fail(
                     "Restore applied, but failed to restart the Minecraft service."
                 )
             write_session_start_time(ctx)
             restarted = True
+            service_stopped_for_restore = False
             progress("Minecraft service restarted.")
 
+        restore_succeeded = True
         progress("Restore completed.")
         return {
             "ok": True,
             "message": "Restore completed successfully.",
             "pre_restore_snapshot": str(pre_restore_snapshot),
             "pre_restore_snapshot_name": pre_restore_snapshot.name,
-            "backup_file": safe_name,
+            "backup_file": selected_name,
             "switched_from_world": str(world_dir),
             "archived_old_world": str(archived_old_world_dir),
             "switched_to_world": str(new_world_dir),
@@ -203,9 +270,29 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             "service_restarted": restarted,
         }
     except zipfile.BadZipFile:
+        if was_active and service_stopped_for_restore and not restore_succeeded:
+            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            ctx.invalidate_status_cache()
+            if restart_result.returncode == 0:
+                write_session_start_time(ctx)
+                service_stopped_for_restore = False
         return _restore_failed("Backup zip is invalid or corrupted.")
+    except ValueError:
+        if was_active and service_stopped_for_restore and not restore_succeeded:
+            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            ctx.invalidate_status_cache()
+            if restart_result.returncode == 0:
+                write_session_start_time(ctx)
+                service_stopped_for_restore = False
+        return _restore_failed("Backup zip contains unsafe paths.")
     except Exception as exc:
         ctx.log_mcweb_exception("restore_world_backup", exc)
+        if was_active and service_stopped_for_restore and not restore_succeeded:
+            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            ctx.invalidate_status_cache()
+            if restart_result.returncode == 0:
+                write_session_start_time(ctx)
+                service_stopped_for_restore = False
         return _restore_failed("Restore failed due to an internal error.")
     finally:
         if extract_root is not None:
@@ -273,7 +360,7 @@ def _start_restore_job_locked(ctx, backup_filename):
             )
         except Exception as exc:
             ctx.log_mcweb_exception("append_restore_run", exc)
-        if bool(result.get("ok")):
+        if bool(result.get("ok")) and not str(result.get("backup_file", "")).startswith(SNAPSHOT_TOKEN_PREFIX):
             try:
                 db_match = state_store_service.restore_backup_records_match(
                     Path(ctx.APP_STATE_DB_PATH),

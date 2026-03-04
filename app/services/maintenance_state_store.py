@@ -4,6 +4,8 @@ import copy
 from datetime import datetime
 import json
 import shutil
+import threading
+import time
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -23,6 +25,9 @@ _CLEANUP_ERROR_MESSAGES = {
     "rules_disabled": "Rule-based cleanup is disabled.",
     "invalid_password": "Password incorrect.",
 }
+_CLEANUP_CONFIG_CACHE_TTL_SECONDS = 1.5
+_CLEANUP_CONFIG_CACHE_LOCK = threading.Lock()
+_CLEANUP_CONFIG_CACHE = {}
 
 
 def _safe_int(value, default_value, minimum=0, maximum=10_000):
@@ -289,15 +294,29 @@ def _cleanup_apply_scope_from_state(state, rules, scope=""):
 
 def _cleanup_load_config(state):
     """Handle cleanup load config."""
+    db_path = _cleanup_db_path(state)
+    cache_key = str(db_path)
+    now = time.time()
+    with _CLEANUP_CONFIG_CACHE_LOCK:
+        cached = _CLEANUP_CONFIG_CACHE.get(cache_key)
+        if isinstance(cached, dict) and (float(cached.get("expires_at", 0.0)) >= now):
+            payload = cached.get("config")
+            if isinstance(payload, dict):
+                return copy.deepcopy(payload)
+
     default = _cleanup_default_config()
     loaded = None
-    db_path = _cleanup_db_path(state)
     try:
         loaded = state_store_service.load_cleanup_config(db_path)
     except Exception:
         loaded = None
     if not isinstance(loaded, dict):
-        return default
+        with _CLEANUP_CONFIG_CACHE_LOCK:
+            _CLEANUP_CONFIG_CACHE[cache_key] = {
+                "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
+                "config": copy.deepcopy(default),
+            }
+        return copy.deepcopy(default)
     cfg = _cleanup_migrate_config_dict(state, loaded, default)
     try:
         # Persist migrated config once so future loads are clean and stable.
@@ -310,13 +329,21 @@ def _cleanup_load_config(state):
         scoped = _cleanup_get_scope_view(cfg, scope_name)
         scoped_rules = _cleanup_apply_scope_from_state(state, scoped.get("rules", {}), scope=scope_name)
         scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
-    return cfg
+    with _CLEANUP_CONFIG_CACHE_LOCK:
+        _CLEANUP_CONFIG_CACHE[cache_key] = {
+            "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
+            "config": copy.deepcopy(cfg),
+        }
+    return copy.deepcopy(cfg)
 
 
 def _cleanup_save_config(state, payload):
     """Persist cleanup config to sqlite."""
     db_path = _cleanup_db_path(state)
     state_store_service.save_cleanup_config(db_path, payload)
+    cache_key = str(db_path)
+    with _CLEANUP_CONFIG_CACHE_LOCK:
+        _CLEANUP_CONFIG_CACHE.pop(cache_key, None)
 
 
 def _cleanup_load_non_normal(state):

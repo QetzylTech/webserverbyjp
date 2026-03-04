@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from app.core.state_store_core import _connect, _create_tables
+from app.core import profiling
 
 
 def replace_file_records_snapshot(db_path, *, source_key, items):
+    """Replace mutable file records and append immutable change history."""
+    with profiling.timed("sqlite.file_records.replace_snapshot"):
+        return _replace_file_records_snapshot_impl(db_path, source_key=source_key, items=items)
+
+
+def _replace_file_records_snapshot_impl(db_path, *, source_key, items):
     """Replace mutable file records and append immutable change history."""
     source = str(source_key or "").strip()
     if not source:

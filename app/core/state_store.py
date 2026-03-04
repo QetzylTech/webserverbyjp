@@ -21,6 +21,14 @@ from app.core.state_store_restore import (
     restore_backup_records_match,
 )
 from app.core.state_store_files import replace_file_records_snapshot
+from app.core.state_store_operations import (
+    create_operation,
+    update_operation,
+    get_operation,
+    get_latest_operation_for_type,
+    list_operations_by_status,
+    get_operation_by_idempotency_key,
+)
 
 __all__ = [
     "initialize_state_db",
@@ -36,4 +44,10 @@ __all__ = [
     "append_restore_run",
     "restore_backup_records_match",
     "replace_file_records_snapshot",
+    "create_operation",
+    "update_operation",
+    "get_operation",
+    "get_latest_operation_for_type",
+    "list_operations_by_status",
+    "get_operation_by_idempotency_key",
 ]

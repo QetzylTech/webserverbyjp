@@ -300,6 +300,11 @@ BACKUP_WARNING_TTL_SECONDS = _cfg_float("BACKUP_WARNING_TTL_SECONDS", 120.0, min
 LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT = _cfg_float("LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT", 10.0, minimum=0.1)
 STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS = _cfg_int("STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS", 5, minimum=1)
 STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS = _cfg_int("STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS", 15, minimum=1)
+OPERATION_RECONCILE_INTERVAL_SECONDS = _cfg_float("OPERATION_RECONCILE_INTERVAL_SECONDS", 2.0, minimum=0.5)
+OPERATION_INTENT_STALE_SECONDS = _cfg_float("OPERATION_INTENT_STALE_SECONDS", 15.0, minimum=1.0)
+OPERATION_START_TIMEOUT_SECONDS = _cfg_float("OPERATION_START_TIMEOUT_SECONDS", 180.0, minimum=5.0)
+OPERATION_STOP_TIMEOUT_SECONDS = _cfg_float("OPERATION_STOP_TIMEOUT_SECONDS", 180.0, minimum=5.0)
+OPERATION_RESTORE_TIMEOUT_SECONDS = _cfg_float("OPERATION_RESTORE_TIMEOUT_SECONDS", 7200.0, minimum=30.0)
 SERVICE_STATUS_CACHE_ACTIVE_SECONDS = _cfg_float("SERVICE_STATUS_CACHE_ACTIVE_SECONDS", 1.0, minimum=0.0)
 SERVICE_STATUS_CACHE_OFF_SECONDS = _cfg_float("SERVICE_STATUS_CACHE_OFF_SECONDS", 5.0, minimum=0.0)
 SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS = _cfg_float("SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS", 3.0, minimum=0.5)
@@ -340,6 +345,8 @@ mcweb_log_cache_mtime_ns = None
 file_page_last_seen = 0.0
 file_page_cache_refresher_started = False
 file_page_cache_refresher_start_lock = threading.Lock()
+operation_reconciler_started = False
+operation_reconciler_start_lock = threading.Lock()
 file_page_cache_lock = threading.Lock()
 file_page_cache = {
     "backups": {"items": [], "updated_at": 0.0},

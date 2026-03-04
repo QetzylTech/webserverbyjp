@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import abort, jsonify, render_template, request
 from werkzeug.security import generate_password_hash
 from zoneinfo import ZoneInfo, available_timezones
@@ -39,7 +39,7 @@ def _timezone_options(default_tz):
     if selected and selected not in zones:
         zones.append(selected)
     items = []
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
     for tz_name in zones:
         try:
             offset = now_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(tz_name)).utcoffset()

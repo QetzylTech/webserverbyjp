@@ -3,6 +3,7 @@ import threading
 import time
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
+from app.core import profiling
 
 from app.routes.dashboard_control_routes import register_control_routes
 from app.routes.dashboard_debug_routes import register_debug_routes
@@ -137,6 +138,38 @@ def register_routes(app, state):
         """Runtime helper readme_url_config."""
         return jsonify({"url": state["DOC_README_URL"]})
 
+    # Route: /observed-state
+    @app.route("/observed-state")
+    def observed_state():
+        """Return observed runtime state derived from service/filesystem probes."""
+        return jsonify({"ok": True, "observed": state["get_observed_state"]()})
+
+    # Route: /consistency-check
+    @app.route("/consistency-check")
+    def consistency_check():
+        """Return runtime consistency/invariant report for debug/admin checks."""
+        auto_repair_raw = str(request.args.get("auto_repair", "") or "").strip().lower()
+        auto_repair = auto_repair_raw in {"1", "true", "yes", "on"}
+        if auto_repair:
+            sudo_password = request.args.get("sudo_password", "")
+            if not state["validate_sudo_password"](sudo_password):
+                return state["_password_rejected_response"]()
+            state["record_successful_password_ip"]()
+        report = state["get_consistency_report"](auto_repair=auto_repair)
+        return jsonify({"ok": True, "report": report})
+
+    # Route: /profiling-summary
+    @app.route("/profiling-summary")
+    def profiling_summary():
+        """Return in-process profiling summary when MCWEB_PROFILE is enabled."""
+        if not profiling.ENABLED:
+            return jsonify({"ok": False, "error": "profiling_disabled", "message": "Profiling is disabled."}), 404
+        sudo_password = request.args.get("sudo_password", "")
+        if not state["validate_sudo_password"](sudo_password):
+            return state["_password_rejected_response"]()
+        state["record_successful_password_ip"]()
+        return jsonify({"ok": True, "profiling": profiling.summary()})
+
     # Route: /device-name-map
     @app.route("/device-name-map")
     def device_name_map():
@@ -197,8 +230,8 @@ def register_routes(app, state):
         device_map = state["get_device_name_map"]()
         opener_name = str(device_map.get(opener_ip, "") or "").strip()
         opener_identity = opener_name or opener_ip or "unknown"
-        metrics = state["get_cached_dashboard_metrics"]()
-        service_status = str(metrics.get("service_status", "") or "").strip().lower()
+        observed = state["get_observed_state"]()
+        service_status = str(observed.get("service_status_display", "") or "").strip().lower()
         home_attention = "none"
         if service_status == "crashed":
             home_attention = "red"

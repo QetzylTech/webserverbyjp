@@ -227,37 +227,55 @@ def get_server_time_text(ctx):
 
 
 def get_latest_backup_zip_timestamp(ctx):
-    """Return latest backup zip modification timestamp."""
+    """Return latest backup artifact timestamp across zips and snapshots."""
     backup_dir = ctx.BACKUP_DIR
-    if not backup_dir.exists() or not backup_dir.is_dir():
-        return None
     latest = None
-    for path in backup_dir.glob("*.zip"):
-        try:
-            ts = path.stat().st_mtime
-        except OSError:
-            continue
-        if latest is None or ts > latest:
-            latest = ts
+    if backup_dir.exists() and backup_dir.is_dir():
+        for path in backup_dir.glob("*.zip"):
+            try:
+                ts = path.stat().st_mtime
+            except OSError:
+                continue
+            if latest is None or ts > latest:
+                latest = ts
+    snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+    if snapshot_root.exists() and snapshot_root.is_dir():
+        for path in snapshot_root.iterdir():
+            if not path.is_dir():
+                continue
+            try:
+                ts = path.stat().st_mtime
+            except OSError:
+                continue
+            if latest is None or ts > latest:
+                latest = ts
     return latest
 
 
 def get_backup_zip_snapshot(ctx):
-    """Capture ``path -> mtime_ns`` snapshot for backup output verification."""
+    """Capture backup artifact mtime snapshot for output verification."""
     snapshot = {}
     backup_dir = ctx.BACKUP_DIR
-    if not backup_dir.exists() or not backup_dir.is_dir():
-        return snapshot
-    for path in backup_dir.glob("*.zip"):
-        try:
-            snapshot[str(path)] = path.stat().st_mtime_ns
-        except OSError:
-            continue
+    if backup_dir.exists() and backup_dir.is_dir():
+        for path in backup_dir.glob("*.zip"):
+            try:
+                snapshot[str(path)] = path.stat().st_mtime_ns
+            except OSError:
+                continue
+    snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+    if snapshot_root.exists() and snapshot_root.is_dir():
+        for path in snapshot_root.iterdir():
+            if not path.is_dir():
+                continue
+            try:
+                snapshot[str(path)] = path.stat().st_mtime_ns
+            except OSError:
+                continue
     return snapshot
 
 
 def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
-    """Return True when any backup zip was created or modified."""
+    """Return True when any backup artifact was created or modified."""
     if not before_snapshot and after_snapshot:
         return True
     for file_path, after_mtime in after_snapshot.items():

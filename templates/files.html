@@ -82,13 +82,14 @@
                             <button
                                 class="file-action-btn file-download-btn"
                                 type="button"
-                                data-download-url="{{ download_base }}/{{ item.name }}"
-                                data-filename="{{ item.name }}"
+                                data-download-url="{{ item.download_url if item.download_url else (download_base ~ '/' ~ item.name) }}"
+                                data-filename="{{ item.download_name if item.download_name else item.name }}"
                             >Download</button>
                             <button
                                 class="file-action-btn file-restore-btn"
                                 type="button"
-                                data-filename="{{ item.name }}"
+                                data-filename="{{ item.restore_name if item.restore_name else item.name }}"
+                                data-display-name="{{ item.name }}"
                             >Restore</button>
                         </div>
                         {% else %}

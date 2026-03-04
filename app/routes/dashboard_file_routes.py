@@ -2,12 +2,39 @@
 from collections import deque
 import gzip
 import json
+from pathlib import Path
+import shutil
+import tempfile
+import tracemalloc
+import time
 
-from flask import Response, abort, jsonify, render_template, request, send_from_directory, stream_with_context
+from flask import Response, abort, after_this_request, jsonify, render_template, request, send_file, send_from_directory, stream_with_context
+from app.core import profiling
 
 
 def register_file_routes(app, state):
     """Register file browsing, log streaming, and metrics routes."""
+
+    def _snapshot_root_dir():
+        return Path(getattr(state, "AUTO_SNAPSHOT_DIR", "") or (state["BACKUP_DIR"] / "snapshots"))
+
+    def _resolve_snapshot_dir(snapshot_name):
+        if not snapshot_name:
+            return None, ""
+        safe_name = Path(snapshot_name).name
+        if safe_name != snapshot_name:
+            return None, ""
+        base_dir = _snapshot_root_dir()
+        candidate = base_dir / safe_name
+        try:
+            base_resolved = base_dir.resolve()
+            candidate_resolved = candidate.resolve()
+            candidate_resolved.relative_to(base_resolved)
+        except (OSError, ValueError):
+            return None, ""
+        if not candidate_resolved.exists() or not candidate_resolved.is_dir():
+            return None, ""
+        return candidate_resolved, safe_name
 
     def _log_file_source_spec(source):
         normalized = str(source or "").strip().lower()
@@ -77,10 +104,10 @@ def register_file_routes(app, state):
             current_page="backups",
             page_title="Backup & Restore",
             panel_title="Backup & Restore",
-            panel_hint="Latest to oldest from /home/marites/backups",
+            panel_hint="Latest to oldest from backup zips and auto snapshots",
             items=state["get_cached_file_page_items"]("backups"),
             download_base="/download/backups",
-            empty_text="No backup zip files found.",
+            empty_text="No backups or snapshots found.",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
@@ -146,6 +173,59 @@ def register_file_routes(app, state):
             return abort(404)
         state["log_mcweb_action"]("download-backup", command=safe_name)
         return send_from_directory(str(state["BACKUP_DIR"]), safe_name, as_attachment=True)
+
+    # Route: /download/backups-snapshot/<path:snapshot_name>
+    @app.route("/download/backups-snapshot/<path:snapshot_name>", methods=["POST"])
+    def download_snapshot(snapshot_name):
+        """Zip one snapshot directory and download it as an attachment."""
+        sudo_password = request.form.get("sudo_password", "")
+        if not state["validate_sudo_password"](sudo_password):
+            state["log_mcweb_action"]("download-snapshot", command=snapshot_name, rejection_message="Password incorrect.")
+            return state["_password_rejected_response"]()
+        state["record_successful_password_ip"]()
+
+        snapshot_dir, safe_name = _resolve_snapshot_dir(snapshot_name)
+        if snapshot_dir is None:
+            state["log_mcweb_action"]("download-snapshot", command=snapshot_name, rejection_message="Snapshot not found or invalid path.")
+            return abort(404)
+
+        tracemalloc_started = False
+        try:
+            tmp_root = Path(tempfile.mkdtemp(prefix="mcweb_snapshot_zip_"))
+            if profiling.ENABLED and not tracemalloc.is_tracing():
+                tracemalloc.start()
+                tracemalloc_started = True
+            started = time.perf_counter()
+            zip_path = Path(shutil.make_archive(str(tmp_root / safe_name), "zip", root_dir=snapshot_dir))
+            elapsed = time.perf_counter() - started
+            profiling.record_duration("snapshot_download.zip_build", elapsed)
+            if profiling.ENABLED and tracemalloc.is_tracing():
+                _current, peak = tracemalloc.get_traced_memory()
+                profiling.set_gauge("snapshot_download.zip_peak_bytes", int(peak))
+                if tracemalloc_started:
+                    tracemalloc.stop()
+
+            @after_this_request
+            def _cleanup_temp_zip(response):
+                try:
+                    shutil.rmtree(tmp_root, ignore_errors=True)
+                except OSError:
+                    pass
+                return response
+
+            state["log_mcweb_action"]("download-snapshot", command=safe_name)
+            return send_file(
+                str(zip_path),
+                as_attachment=True,
+                download_name=f"{safe_name}.zip",
+                mimetype="application/zip",
+            )
+        except OSError:
+            state["log_mcweb_action"]("download-snapshot", command=safe_name, rejection_message="Unable to create snapshot zip.")
+            return abort(500)
+        finally:
+            if tracemalloc_started and tracemalloc.is_tracing():
+                tracemalloc.stop()
 
     # Route: /download/crash-logs/<path:filename>
     @app.route("/download/crash-logs/<path:filename>")

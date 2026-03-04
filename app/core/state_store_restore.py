@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from app.core.state_store_core import _connect, _create_tables
+from app.core import profiling
 
 
 def restore_id_exists(db_path, restore_id):
+    """Return True when the restore ID already exists in stored/active history."""
+    with profiling.timed("sqlite.restore.id_exists"):
+        return _restore_id_exists_impl(db_path, restore_id)
+
+
+def _restore_id_exists_impl(db_path, restore_id):
     """Return True when the restore ID already exists in stored/active history."""
     code = str(restore_id or "").strip()
     if not code:
@@ -25,6 +32,12 @@ def restore_id_exists(db_path, restore_id):
 
 
 def append_restore_name_run(db_path, payload):
+    """Append one restore naming run record."""
+    with profiling.timed("sqlite.restore.append_name_run"):
+        return _append_restore_name_run_impl(db_path, payload)
+
+
+def _append_restore_name_run_impl(db_path, payload):
     """Append one restore naming run record."""
     item = payload if isinstance(payload, dict) else {}
     with _connect(db_path) as conn:
@@ -60,6 +73,12 @@ def append_restore_name_run(db_path, payload):
 
 
 def append_restore_run(db_path, payload):
+    """Append one restore run status record (success/failure)."""
+    with profiling.timed("sqlite.restore.append_run"):
+        return _append_restore_run_impl(db_path, payload)
+
+
+def _append_restore_run_impl(db_path, payload):
     """Append one restore run status record (success/failure)."""
     item = payload if isinstance(payload, dict) else {}
     with _connect(db_path) as conn:
@@ -101,6 +120,25 @@ def append_restore_run(db_path, payload):
 
 
 def restore_backup_records_match(
+    db_path,
+    *,
+    backup_filename,
+    pre_restore_snapshot_name,
+    stored_restore_id="",
+    active_restore_id="",
+):
+    """Return True when restore naming records match the backup restore run."""
+    with profiling.timed("sqlite.restore.records_match"):
+        return _restore_backup_records_match_impl(
+            db_path,
+            backup_filename=backup_filename,
+            pre_restore_snapshot_name=pre_restore_snapshot_name,
+            stored_restore_id=stored_restore_id,
+            active_restore_id=active_restore_id,
+        )
+
+
+def _restore_backup_records_match_impl(
     db_path,
     *,
     backup_filename,

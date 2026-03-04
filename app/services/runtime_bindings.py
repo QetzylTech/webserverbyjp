@@ -226,6 +226,12 @@ def build_runtime_bindings(
     def collect_dashboard_metrics():
         return dashboard_runtime_service.collect_dashboard_metrics(_state())
 
+    def get_observed_state():
+        return dashboard_runtime_service.get_observed_state(_state())
+
+    def get_consistency_report(auto_repair=False):
+        return dashboard_runtime_service.get_consistency_report(_state(), auto_repair=bool(auto_repair))
+
     def _mark_home_page_client_active():
         return dashboard_runtime_service.mark_home_page_client_active(_state())
 
@@ -237,6 +243,9 @@ def build_runtime_bindings(
 
     def ensure_metrics_collector_started():
         return dashboard_runtime_service.ensure_metrics_collector_started(_state())
+
+    def start_operation_reconciler():
+        return dashboard_runtime_service.start_operation_reconciler(_state())
 
     def get_cached_dashboard_metrics():
         return dashboard_runtime_service.get_cached_dashboard_metrics(_state())
@@ -330,10 +339,13 @@ def build_runtime_bindings(
         "get_backup_warning_state": get_backup_warning_state,
         "reset_backup_schedule_state": reset_backup_schedule_state,
         "collect_dashboard_metrics": collect_dashboard_metrics,
+        "get_observed_state": get_observed_state,
+        "get_consistency_report": get_consistency_report,
         "_mark_home_page_client_active": _mark_home_page_client_active,
         "_collect_and_publish_metrics": _collect_and_publish_metrics,
         "metrics_collector_loop": metrics_collector_loop,
         "ensure_metrics_collector_started": ensure_metrics_collector_started,
+        "start_operation_reconciler": start_operation_reconciler,
         "get_cached_dashboard_metrics": get_cached_dashboard_metrics,
         "format_countdown": format_countdown,
         "get_idle_countdown": get_idle_countdown,

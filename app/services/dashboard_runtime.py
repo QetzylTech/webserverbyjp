@@ -1,9 +1,47 @@
 """Dashboard runtime caching, metrics, and file-list services."""
+from datetime import datetime
 import subprocess
 import threading
 import time
 from pathlib import Path
+from app.core.filesystem_utils import format_file_size
 from app.core import state_store as state_store_service
+from app.core import profiling
+
+_OBSERVED_OPS_CACHE_LOCK = threading.Lock()
+_OBSERVED_OPS_CACHE = {
+    "db_path": "",
+    "cached_at": 0.0,
+    "latest_start": None,
+    "latest_stop": None,
+    "latest_restore": None,
+}
+_OBSERVED_OPS_CACHE_TTL_SECONDS = 1.5
+
+
+def _get_cached_latest_operations(db_path):
+    """Return cached latest operation rows for start/stop/restore within a short TTL."""
+    now = time.time()
+    key = str(db_path)
+    with _OBSERVED_OPS_CACHE_LOCK:
+        is_fresh = (_OBSERVED_OPS_CACHE["cached_at"] + _OBSERVED_OPS_CACHE_TTL_SECONDS) >= now
+        if _OBSERVED_OPS_CACHE["db_path"] == key and is_fresh:
+            return (
+                _OBSERVED_OPS_CACHE["latest_start"],
+                _OBSERVED_OPS_CACHE["latest_stop"],
+                _OBSERVED_OPS_CACHE["latest_restore"],
+            )
+    with profiling.timed("observed_state.operation_aggregation"):
+        latest_start = state_store_service.get_latest_operation_for_type(db_path, "start")
+        latest_stop = state_store_service.get_latest_operation_for_type(db_path, "stop")
+        latest_restore = state_store_service.get_latest_operation_for_type(db_path, "restore")
+    with _OBSERVED_OPS_CACHE_LOCK:
+        _OBSERVED_OPS_CACHE["db_path"] = key
+        _OBSERVED_OPS_CACHE["cached_at"] = now
+        _OBSERVED_OPS_CACHE["latest_start"] = latest_start
+        _OBSERVED_OPS_CACHE["latest_stop"] = latest_stop
+        _OBSERVED_OPS_CACHE["latest_restore"] = latest_restore
+    return latest_start, latest_stop, latest_restore
 
 
 def _is_rcon_noise_line(line):
@@ -178,6 +216,43 @@ def refresh_file_page_items(ctx, cache_key):
     """Refresh one file-list cache key from its backing directory."""
     if cache_key == "backups":
         items = ctx._list_download_files(ctx.BACKUP_DIR, "*.zip", ctx.DISPLAY_TZ)
+        for item in items:
+            item["restore_name"] = item["name"]
+            item["download_name"] = item["name"]
+            item["download_url"] = f"/download/backups/{item['name']}"
+
+        snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+        if snapshot_root.exists() and snapshot_root.is_dir():
+            for path in snapshot_root.iterdir():
+                if not path.is_dir():
+                    continue
+                try:
+                    dir_stat = path.stat()
+                except OSError:
+                    continue
+                total_size = 0
+                try:
+                    for child in path.rglob("*"):
+                        if not child.is_file():
+                            continue
+                        try:
+                            total_size += child.stat().st_size
+                        except OSError:
+                            continue
+                except OSError:
+                    total_size = 0
+                ts = dir_stat.st_mtime
+                items.append({
+                    "name": path.name,
+                    "mtime": ts,
+                    "size_bytes": total_size,
+                    "modified": datetime.fromtimestamp(ts, tz=ctx.DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z"),
+                    "size_text": format_file_size(total_size),
+                    "restore_name": f"snapshot::{path.name}",
+                    "download_name": f"{path.name}.zip",
+                    "download_url": f"/download/backups-snapshot/{path.name}",
+                })
+        items.sort(key=lambda item: item["mtime"], reverse=True)
     elif cache_key == "crash_logs":
         items = ctx._list_download_files(ctx.CRASH_REPORTS_DIR, "*.txt", ctx.DISPLAY_TZ)
     elif cache_key == "minecraft_logs":
@@ -254,6 +329,333 @@ def get_backups_status(ctx):
         return "missing"
     zip_count = sum(1 for _ in ctx.BACKUP_DIR.glob("*.zip"))
     return f"ready ({zip_count} zip files)"
+
+
+def get_observed_state(ctx):
+    """Return runtime-observed snapshot from service/filesystem and latest operations."""
+    with profiling.timed("observed_state.total"):
+        with profiling.timed("observed_state.service_probe"):
+            service_status_raw = str(ctx.get_status() or "inactive").strip().lower()
+        with profiling.timed("observed_state.filesystem_checks"):
+            world_dir = Path(getattr(ctx, "WORLD_DIR", ""))
+            backup_dir = Path(getattr(ctx, "BACKUP_DIR", ""))
+            snapshot_dir = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
+        latest_start = None
+        latest_stop = None
+        latest_restore = None
+        try:
+            db_path = Path(ctx.APP_STATE_DB_PATH)
+            latest_start, latest_stop, latest_restore = _get_cached_latest_operations(db_path)
+        except Exception:
+            latest_start = None
+            latest_stop = None
+            latest_restore = None
+
+    def _active(op):
+        if not isinstance(op, dict):
+            return False
+        return str(op.get("status", "")).strip().lower() in {"intent", "in_progress"}
+
+    if _active(latest_restore):
+        service_status_raw = "shutting_down"
+    elif _active(latest_stop):
+        service_status_raw = "shutting_down"
+    elif _active(latest_start):
+        service_status_raw = "starting"
+    players_online = ctx.get_players_online()
+    service_status_display = ctx.get_service_status_display(service_status_raw, players_online)
+    return {
+        "service_status_raw": service_status_raw,
+        "service_status_display": service_status_display,
+        "service_status_class": ctx.get_service_status_class(service_status_display),
+        "players_online": players_online,
+        "world_dir_exists": bool(world_dir.exists() and world_dir.is_dir()) if str(world_dir) else False,
+        "backup_dir_exists": bool(backup_dir.exists() and backup_dir.is_dir()) if str(backup_dir) else False,
+        "snapshot_dir_exists": bool(snapshot_dir.exists() and snapshot_dir.is_dir()) if str(snapshot_dir) else False,
+        "latest_start_operation": latest_start if isinstance(latest_start, dict) else {},
+        "latest_stop_operation": latest_stop if isinstance(latest_stop, dict) else {},
+        "latest_restore_operation": latest_restore if isinstance(latest_restore, dict) else {},
+    }
+
+
+def _operation_age_seconds(op, now_epoch):
+    if not isinstance(op, dict):
+        return 0.0
+    started = str(op.get("started_at", "") or "").strip()
+    intent = str(op.get("intent_at", "") or "").strip()
+    source = started or intent
+    if not source:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(source.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+    return max(0.0, now_epoch - ts)
+
+
+def get_consistency_report(ctx, *, auto_repair=False):
+    """Validate runtime invariants and optionally repair safe drift."""
+    with profiling.timed("consistency.report"):
+        issues = []
+        repairs = []
+        service_status = str(ctx.get_status() or "").strip().lower()
+        try:
+            session_start = ctx.read_session_start_time()
+        except Exception:
+            session_start = None
+
+        if service_status not in ctx.OFF_STATES and session_start is None:
+            issue = {
+                "code": "active_missing_session_start",
+                "message": "Service is active but session start timestamp is missing.",
+                "severity": "warning",
+            }
+            issues.append(issue)
+            if auto_repair:
+                try:
+                    repaired = ctx.write_session_start_time() is not None
+                except Exception:
+                    repaired = False
+                repairs.append({
+                    "code": "write_session_start",
+                    "ok": bool(repaired),
+                    "message": "Attempted to restore missing session timestamp.",
+                })
+
+        if service_status in ctx.OFF_STATES and session_start is not None:
+            issue = {
+                "code": "off_with_session_start",
+                "message": "Service is off but session start timestamp still exists.",
+                "severity": "warning",
+            }
+            issues.append(issue)
+            if auto_repair:
+                try:
+                    ctx.clear_session_start_time()
+                    repaired = True
+                except Exception:
+                    repaired = False
+                repairs.append({
+                    "code": "clear_session_start",
+                    "ok": bool(repaired),
+                    "message": "Attempted to clear stale session timestamp.",
+                })
+
+        return {
+            "ok": len(issues) == 0,
+            "service_status_raw": service_status,
+            "issues": issues,
+            "repairs": repairs,
+            "checked_at": datetime.now().isoformat(),
+        }
+
+
+def reconcile_operations_once(ctx):
+    """Advance stale/finished async operations using observed runtime state."""
+    with profiling.timed("reconciler.iteration"):
+        db_path = Path(ctx.APP_STATE_DB_PATH)
+        with profiling.timed("reconciler.fetch_active_ops"):
+            active_ops = state_store_service.list_operations_by_status(
+                db_path,
+                statuses=("intent", "in_progress"),
+                limit=200,
+            )
+        profiling.set_gauge("reconciler.active_ops", len(active_ops))
+        if not active_ops:
+            with profiling.timed("reconciler.consistency_check"):
+                try:
+                    get_consistency_report(ctx, auto_repair=True)
+                except Exception as exc:
+                    ctx.log_mcweb_exception("reconcile_consistency_report", exc)
+            return 0
+        updated = 0
+        now_epoch = time.time()
+        service_status = str(ctx.get_status() or "").strip().lower()
+
+        for op in active_ops:
+            with profiling.timed("reconciler.per_operation"):
+                op_id = str(op.get("op_id", "") or "")
+                op_type = str(op.get("op_type", "") or "").strip().lower()
+                status = str(op.get("status", "") or "").strip().lower()
+                age = _operation_age_seconds(op, now_epoch)
+                data = op.get("data", {}) if isinstance(op.get("data"), dict) else {}
+
+                if op_type == "start":
+                    if service_status == "active":
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="observed",
+                            message="Service start observed by reconciler.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="intent_stale",
+                            message="Start operation stale before worker progress.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    if age >= float(ctx.OPERATION_START_TIMEOUT_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="start_timeout",
+                            message="Start operation timed out.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    continue
+
+                if op_type == "restore":
+                    restore_job_id = str(data.get("restore_job_id", "") or "").strip()
+                    if restore_job_id:
+                        payload = ctx.get_restore_status(since_seq=0, job_id=restore_job_id)
+                        if isinstance(payload, dict) and not bool(payload.get("running")):
+                            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                            if bool(result.get("ok")):
+                                state_store_service.update_operation(
+                                    db_path,
+                                    op_id=op_id,
+                                    status="observed",
+                                    message=str(result.get("message", "Restore observed complete.") or "Restore observed complete."),
+                                    payload={"restore_job_id": restore_job_id, "result": result},
+                                    finished=True,
+                                )
+                            else:
+                                state_store_service.update_operation(
+                                    db_path,
+                                    op_id=op_id,
+                                    status="failed",
+                                    error_code=str(result.get("error", "") or "restore_failed"),
+                                    message=str(result.get("message", "Restore failed.") or "Restore failed."),
+                                    payload={"restore_job_id": restore_job_id, "result": result},
+                                    finished=True,
+                                )
+                            updated += 1
+                            continue
+                    if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="intent_stale",
+                            message="Restore operation stale before worker progress.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    if age >= float(ctx.OPERATION_RESTORE_TIMEOUT_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="restore_timeout",
+                            message="Restore operation timed out.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    continue
+
+                if op_type == "stop":
+                    if service_status in ctx.OFF_STATES:
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="observed",
+                            message="Service stop observed by reconciler.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    if age >= float(ctx.OPERATION_STOP_TIMEOUT_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="stop_timeout",
+                            message="Stop operation timed out.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    continue
+
+                if op_type == "backup":
+                    backup_status, _backup_class = ctx.get_backup_status()
+                    backup_running = str(backup_status or "").strip().lower() == "running"
+                    if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="intent_stale",
+                            message="Backup operation stale before worker progress.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    if status == "in_progress" and not backup_running and age >= float(ctx.OPERATION_STOP_TIMEOUT_SECONDS):
+                        state_store_service.update_operation(
+                            db_path,
+                            op_id=op_id,
+                            status="failed",
+                            error_code="backup_timeout",
+                            message="Backup operation timed out.",
+                            finished=True,
+                        )
+                        updated += 1
+                        continue
+                    continue
+
+        with profiling.timed("reconciler.consistency_check"):
+            try:
+                consistency = get_consistency_report(ctx, auto_repair=True)
+            except Exception as exc:
+                ctx.log_mcweb_exception("reconcile_consistency_report", exc)
+                consistency = {"ok": True, "issues": []}
+            if not bool(consistency.get("ok")):
+                try:
+                    ctx.log_mcweb_log(
+                        "consistency-warning",
+                        command="runtime_invariants",
+                        rejection_message=str(consistency.get("issues", []))[:700],
+                    )
+                except Exception:
+                    pass
+
+        return updated
+
+
+def operation_reconciler_loop(ctx):
+    """Background reconciliation loop for async operation states."""
+    while True:
+        try:
+            reconcile_operations_once(ctx)
+        except Exception as exc:
+            ctx.log_mcweb_exception("operation_reconciler_loop", exc)
+        time.sleep(float(ctx.OPERATION_RECONCILE_INTERVAL_SECONDS))
+
+
+def start_operation_reconciler(ctx):
+    """Start operation reconciler daemon thread once."""
+    if ctx.operation_reconciler_started:
+        return
+    with ctx.operation_reconciler_start_lock:
+        if ctx.operation_reconciler_started:
+            return
+        watcher = threading.Thread(target=operation_reconciler_loop, args=(ctx,), daemon=True)
+        watcher.start()
+        ctx.operation_reconciler_started = True
 
 
 def class_from_percent(value):
@@ -349,17 +751,18 @@ def get_slow_metrics(ctx, service_status):
 
 def collect_dashboard_metrics(ctx):
     """Collect one full dashboard metrics snapshot."""
-    service_status = ctx.get_status()
+    observed = get_observed_state(ctx)
+    service_status = str(observed.get("service_status_raw", "") or ctx.get_status())
     slow = get_slow_metrics(ctx, service_status)
     cpu_per_core = slow["cpu_per_core"]
     ram_usage = slow["ram_usage"]
     cpu_frequency = slow["cpu_frequency"]
     storage_usage = slow["storage_usage"]
     low_storage_blocked = ctx.is_storage_low(storage_usage)
-    players_online = ctx.get_players_online()
+    players_online = observed.get("players_online", ctx.get_players_online())
     tick_rate = ctx.get_tick_rate()
     session_duration = ctx.get_session_duration_text()
-    service_status_display = ctx.get_service_status_display(service_status, players_online)
+    service_status_display = str(observed.get("service_status_display", "") or ctx.get_service_status_display(service_status, players_online))
     backup_schedule = ctx.get_backup_schedule_times(service_status)
     backup_status, backup_status_class = ctx.get_backup_status()
     backup_warning = ctx.get_backup_warning_state(ctx.BACKUP_WARNING_TTL_SECONDS)
@@ -391,6 +794,7 @@ def collect_dashboard_metrics(ctx):
         "server_time": ctx.get_server_time_text(),
         "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
+        "observed_state": observed,
     }
 
 

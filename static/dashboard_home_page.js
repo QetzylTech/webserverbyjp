@@ -81,6 +81,7 @@
     let metricsEventSource = null;
     let metricsPollTimer = null;
     let countdownTimer = null;
+    const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
     // Current scheduler mode: "active" or "off".
@@ -484,6 +485,63 @@
         return "Action completed successfully.";
     }
 
+    function stopOperationPoll(opId) {
+        const key = String(opId || "").trim();
+        if (!key) return;
+        const timerId = operationPollTimers[key];
+        if (!timerId) return;
+        clearTimeout(timerId);
+        delete operationPollTimers[key];
+    }
+
+    async function pollOperationStatus(opId, action) {
+        const key = String(opId || "").trim();
+        if (!key) return;
+        let response;
+        let payload = null;
+        try {
+            response = await fetch(`/operation-status/${encodeURIComponent(key)}`, {
+                method: "GET",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                cache: "no-store",
+            });
+        } catch (_) {
+            operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 1000);
+            return;
+        }
+        try {
+            payload = await response.json();
+        } catch (_) {
+            payload = null;
+        }
+        if (!response.ok || !payload || payload.ok === false || !payload.operation) {
+            operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 1200);
+            return;
+        }
+        const operation = payload.operation || {};
+        const status = String(operation.status || "").trim().toLowerCase();
+        if (status === "observed") {
+            stopOperationPoll(key);
+            await refreshMetrics();
+            return;
+        }
+        if (status === "failed") {
+            stopOperationPoll(key);
+            showErrorModal(
+                String(operation.message || "Action failed."),
+                {
+                    errorCode: String(operation.error_code || "operation_failed"),
+                    action,
+                }
+            );
+            await refreshMetrics();
+            return;
+        }
+        operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 700);
+    }
+
     function showErrorModal(message, options = {}) {
         // Never stack error modal on top of the password modal.
         closeSudoModal();
@@ -710,6 +768,14 @@
             }
 
             showSuccessModal(summarizeSuccess(action, payload));
+            if (payload && payload.accepted === true && payload.op_id) {
+                const opId = String(payload.op_id || "").trim();
+                if (opId) {
+                    stopOperationPoll(opId);
+                    operationPollTimers[opId] = window.setTimeout(() => pollOperationStatus(opId, action), 400);
+                }
+                return;
+            }
             await refreshMetrics();
         } catch (err) {
             showErrorModal("Network request failed.", {
@@ -839,6 +905,7 @@
         });
         stopMetricsStream();
         stopMetricsPolling();
+        Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
             homeHeartbeatTimer = null;

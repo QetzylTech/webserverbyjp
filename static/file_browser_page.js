@@ -93,11 +93,14 @@
         const paneAnimations = window.MCWebPaneAnimations || null;
         let isResizingViewer = false;
         let selectedRestoreFilename = "";
+        let selectedRestoreDisplayName = "";
         let pendingAction = null;
         let reloadAfterMessageClose = false;
         let restorePollTimer = null;
         let restorePollJobId = "";
         let restorePollSeq = 0;
+        let restoreOperationPollTimer = null;
+        let restoreOperationOpId = "";
         let restorePaneAlertTimer = null;
         let restorePaneStatePollTimer = null;
         let restoreServerIsOff = false;
@@ -314,11 +317,12 @@
             syncRestoreAvailabilityUi();
         }
 
-        function openBackupRestorePane(filename, source = "local") {
+        function openBackupRestorePane(filename, source = "local", displayName = "") {
             if (pageId !== "backups") return;
             selectedRestoreFilename = filename || "";
+            selectedRestoreDisplayName = displayName || selectedRestoreFilename;
             restorePaneForcedByRemote = source === "remote";
-            setActiveRestoreFilename(selectedRestoreFilename);
+            setActiveRestoreFilename(selectedRestoreDisplayName);
             if (restorePaneForcedByRemote) {
                 stopRestorePaneAlertHeartbeat();
             } else {
@@ -328,13 +332,13 @@
             setBackupRestoreControlsVisible(true);
             syncRestoreAvailabilityUi();
             if (fileViewerTitle) {
-                fileViewerTitle.textContent = selectedRestoreFilename
-                    ? `Restore: ${selectedRestoreFilename}`
+                fileViewerTitle.textContent = selectedRestoreDisplayName
+                    ? `Restore: ${selectedRestoreDisplayName}`
                     : "Restore Backup";
             }
             if (fileViewerContent) {
-                const message = selectedRestoreFilename
-                    ? `Ready to restore ${selectedRestoreFilename}. Press Restore to continue.`
+                const message = selectedRestoreDisplayName
+                    ? `Ready to restore ${selectedRestoreDisplayName}. Press Restore to continue.`
                     : "Select a backup to restore.";
                 fileViewerContent.innerHTML = formatViewerLogHtml(message);
             }
@@ -360,9 +364,64 @@
             restorePollTimer = null;
         }
 
+        function stopRestoreOperationPolling() {
+            if (!restoreOperationPollTimer) return;
+            window.clearTimeout(restoreOperationPollTimer);
+            restoreOperationPollTimer = null;
+            restoreOperationOpId = "";
+        }
+
         function scheduleRestorePoll(delayMs) {
             stopRestorePolling();
             restorePollTimer = window.setTimeout(pollRestoreStatus, delayMs);
+        }
+
+        function scheduleRestoreOperationPoll(delayMs) {
+            if (!restoreOperationOpId) return;
+            if (restoreOperationPollTimer) {
+                window.clearTimeout(restoreOperationPollTimer);
+            }
+            restoreOperationPollTimer = window.setTimeout(pollRestoreOperationStatus, delayMs);
+        }
+
+        async function pollRestoreOperationStatus() {
+            if (pageId !== "backups" || !restoreOperationOpId) return;
+            let response;
+            let payload = null;
+            try {
+                response = await fetch(`/operation-status/${encodeURIComponent(restoreOperationOpId)}`, {
+                    method: "GET",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store",
+                });
+            } catch (_) {
+                scheduleRestoreOperationPoll(1100);
+                return;
+            }
+            try {
+                payload = await response.json();
+            } catch (_) {
+                payload = null;
+            }
+            if (!response.ok || !payload || payload.ok === false || !payload.operation) {
+                scheduleRestoreOperationPoll(1300);
+                return;
+            }
+            const operation = payload.operation || {};
+            const status = String(operation.status || "").trim().toLowerCase();
+            if (status === "failed") {
+                appendRestoreLine("", String(operation.message || "Restore failed."));
+                showErrorModal(String(operation.message || "Restore failed."), {
+                    errorCode: String(operation.error_code || "restore_failed"),
+                });
+                stopRestoreOperationPolling();
+                return;
+            }
+            if (status === "observed") {
+                stopRestoreOperationPolling();
+                return;
+            }
+            scheduleRestoreOperationPoll(700);
         }
 
         async function pollRestoreStatus() {
@@ -730,6 +789,7 @@
                 fileViewer.setAttribute("aria-hidden", "true");
                 if (pageId === "backups") {
                     selectedRestoreFilename = "";
+                    selectedRestoreDisplayName = "";
                     restorePaneForcedByRemote = false;
                     setBackupRestoreControlsVisible(false);
                     setActiveRestoreFilename("");
@@ -912,7 +972,8 @@
             }
             if (passwordText) {
                 if (actionRequest.kind === "restore") {
-                    passwordText.textContent = `Enter sudo password to restore ${actionRequest.filename}. This will create a new world folder and switch level-name.`;
+                    const restoreDisplay = actionRequest.displayName || actionRequest.filename;
+                    passwordText.textContent = `Enter sudo password to restore ${restoreDisplay}. This will create a new world folder and switch level-name.`;
                 } else {
                     passwordText.textContent = "Enter sudo password to download this backup.";
                 }
@@ -1119,8 +1180,14 @@
             }
 
             const jobId = (payload && payload.job_id) ? payload.job_id : "";
-            startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreRequest.filename}.`);
-            showSuccessModal(`Restore requested for ${restoreRequest.filename}.`);
+            const opId = (payload && payload.op_id) ? payload.op_id : "";
+            const restoreDisplay = restoreRequest.displayName || restoreRequest.filename || "selected backup";
+            startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreDisplay}.`);
+            if (opId) {
+                restoreOperationOpId = String(opId || "").trim();
+                scheduleRestoreOperationPoll(500);
+            }
+            showSuccessModal(`Restore requested for ${restoreDisplay}.`);
         }
 
         async function runFileView(viewRequest) {
@@ -1297,6 +1364,7 @@
                 openPasswordModal({
                     kind: "restore",
                     filename: selectedRestoreFilename,
+                    displayName: selectedRestoreDisplayName,
                 });
             });
         }
@@ -1379,8 +1447,9 @@
                 }
                 setDownloadError("");
                 const filename = btn.getAttribute("data-filename") || "";
+                const displayName = btn.getAttribute("data-display-name") || filename;
                 if (!filename) return;
-                openBackupRestorePane(filename);
+                openBackupRestorePane(filename, "local", displayName);
             });
         });
         if (pageId === "backups") {
@@ -1389,6 +1458,7 @@
             startRestorePaneStatePolling();
             window.setInterval(refreshRestoreAvailability, 5000);
             window.addEventListener("beforeunload", stopRestorePaneStatePolling);
+            window.addEventListener("beforeunload", stopRestoreOperationPolling);
         }
         ensureFileListClickBinding();
         logSourceToggles.forEach((btn) => {

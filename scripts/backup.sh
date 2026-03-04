@@ -17,6 +17,7 @@ BACKUP_SUFFIX=""
 BACKUP_STATE_FILE="$APP_DIR/data/state.txt"
 RCON_HOST="127.0.0.1"
 AUTO_SNAPSHOT_DIR=""
+AUTO_SNAPSHOTS_TO_KEEP="${AUTO_SNAPSHOTS_TO_KEEP:-3}"
 WORLD_DIR=""
 DEBUG_MODE="false"
 DEBUG_WORLD_DIR=""
@@ -265,6 +266,10 @@ else
   WORLD_NAME="$(sanitize_filename_component "$(basename "$WORLD_DIR")")"
 fi
 
+if [[ ! "$AUTO_SNAPSHOTS_TO_KEEP" =~ ^[0-9]+$ ]] || [[ "$AUTO_SNAPSHOTS_TO_KEEP" -lt 1 ]]; then
+  AUTO_SNAPSHOTS_TO_KEEP=3
+fi
+
 # Mark backup as running and always clear state on script exit.
 echo "true" > "$BACKUP_STATE_FILE"
 trap cleanup EXIT INT TERM
@@ -308,6 +313,19 @@ if [[ "$BACKUP_TRIGGER" == "auto" ]]; then
       if rsync -a --delete "$WORLD_DIR"/ "$SNAPSHOT_DIR"/; then
         backup_ok=1
         backup_target="$SNAPSHOT_DIR"
+      fi
+    fi
+    if [[ "$backup_ok" -eq 1 ]]; then
+      mapfile -t SNAPSHOT_DIRS < <(
+        find "$AUTO_SNAPSHOT_DIR" -mindepth 1 -maxdepth 1 -type d -name "${WORLD_NAME}_*_auto*" \
+          | sort
+      )
+      SNAPSHOT_COUNT="${#SNAPSHOT_DIRS[@]}"
+      if [[ "$SNAPSHOT_COUNT" -gt "$AUTO_SNAPSHOTS_TO_KEEP" ]]; then
+        REMOVE_COUNT=$((SNAPSHOT_COUNT - AUTO_SNAPSHOTS_TO_KEEP))
+        for ((i=0; i<REMOVE_COUNT; i++)); do
+          rm -rf "${SNAPSHOT_DIRS[$i]}"
+        done
       fi
     fi
   fi

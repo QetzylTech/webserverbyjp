@@ -2,6 +2,7 @@
 import copy
 
 from flask import jsonify, render_template, request
+from app.core import profiling
 
 from app.services.maintenance_scheduler import start_cleanup_scheduler_once
 from app.services.maintenance_state_store import (
@@ -62,34 +63,36 @@ def register_maintenance_routes(app, state):
     @app.route("/maintenance")
     def maintenance_page():
         """Runtime helper maintenance_page."""
-        full_cfg = _cleanup_load_config(state)
-        scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
-        cfg = _cleanup_get_scope_view(full_cfg, scope)
-        snapshot = _cleanup_state_snapshot(state, cfg)
-        eval_preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
-        return render_template(
-            "maintenance.html",
-            current_page="maintenance",
-            csrf_token=state["_ensure_csrf_token"](),
-            maintenance_snapshot=snapshot,
-            maintenance_preview=eval_preview,
-            maintenance_scope=scope,
-            maintenance_device_map=state["get_device_name_map"](),
-            maintenance_timezone=str(state["DISPLAY_TZ"]),
-            maintenance_active_world=str(_cleanup_active_world_path(state) or state["WORLD_DIR"]),
-            maintenance_backup_dir=str(state["BACKUP_DIR"]),
-            maintenance_stale_dir=str((_cleanup_data_dir(state) / "old_worlds").resolve()),
-        )
+        with profiling.timed("maintenance.route.page"):
+            full_cfg = _cleanup_load_config(state)
+            scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
+            cfg = _cleanup_get_scope_view(full_cfg, scope)
+            snapshot = _cleanup_state_snapshot(state, cfg)
+            eval_preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+            return render_template(
+                "maintenance.html",
+                current_page="maintenance",
+                csrf_token=state["_ensure_csrf_token"](),
+                maintenance_snapshot=snapshot,
+                maintenance_preview=eval_preview,
+                maintenance_scope=scope,
+                maintenance_device_map=state["get_device_name_map"](),
+                maintenance_timezone=str(state["DISPLAY_TZ"]),
+                maintenance_active_world=str(_cleanup_active_world_path(state) or state["WORLD_DIR"]),
+                maintenance_backup_dir=str(state["BACKUP_DIR"]),
+                maintenance_stale_dir=str((_cleanup_data_dir(state) / "old_worlds").resolve()),
+            )
 
     # Route: /maintenance/api/state
     @app.route("/maintenance/api/state", methods=["GET"])
     def maintenance_api_state():
         """Handle maintenance api state."""
-        full_cfg = _cleanup_load_config(state)
-        scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
-        cfg = _cleanup_get_scope_view(full_cfg, scope)
-        preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
-        return jsonify({"ok": True, **_cleanup_state_snapshot(state, cfg), "preview": preview, "scope": scope, "device_map": state["get_device_name_map"]()})
+        with profiling.timed("maintenance.route.api_state"):
+            full_cfg = _cleanup_load_config(state)
+            scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
+            cfg = _cleanup_get_scope_view(full_cfg, scope)
+            preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+            return jsonify({"ok": True, **_cleanup_state_snapshot(state, cfg), "preview": preview, "scope": scope, "device_map": state["get_device_name_map"]()})
 
     # Route: /maintenance/api/confirm-password
     @app.route("/maintenance/api/confirm-password", methods=["POST"])

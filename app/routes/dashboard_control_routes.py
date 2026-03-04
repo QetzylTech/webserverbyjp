@@ -1,11 +1,22 @@
 """Control action route registration for the MC web dashboard."""
 import threading
+import time
+import uuid
 
 from flask import jsonify, request
+from app.core import state_store as state_store_service
 
 
 def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     """Register start/stop/backup/restore/RCON control routes."""
+
+    def _new_operation_id(prefix):
+        return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+    def _idempotency_key_from_request():
+        header_value = (request.headers.get("X-Idempotency-Key", "") or "").strip()
+        form_value = (request.form.get("idempotency_key", "") or "").strip()
+        return header_value or form_value
 
     # Route: /start
     @app.route("/start", methods=["POST"])
@@ -15,21 +26,128 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             message = state["low_storage_error_message"]()
             state["log_mcweb_action"]("start", rejection_message=message)
             return state["_low_storage_blocked_response"](message)
+        idempotency_key = _idempotency_key_from_request()
+        op_id = ""
+        existing = None
+        resumed = False
+        if idempotency_key:
+            try:
+                existing = state_store_service.get_operation_by_idempotency_key(
+                    state["APP_STATE_DB_PATH"],
+                    op_type="start",
+                    idempotency_key=idempotency_key,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("get_operation_by_idempotency_key/start", exc)
+                return state["_start_failed_response"]("Failed to load start operation record.")
+        if isinstance(existing, dict):
+            op_id = str(existing.get("op_id", "") or "")
+            status = str(existing.get("status", "") or "").strip().lower()
+            if status in {"intent", "in_progress", "observed"}:
+                state["log_mcweb_action"]("start")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": op_id,
+                    "status": str(existing.get("status", "") or "intent"),
+                }), 202
+            if status == "failed" and op_id:
+                resumed = True
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="intent",
+                        error_code="",
+                        message="Resume requested for start operation.",
+                        checkpoint="resume_requested",
+                        increment_attempt=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/start_resume", exc)
+                    return state["_start_failed_response"]("Failed to resume start operation.")
+
+        if not op_id:
+            op_id = _new_operation_id("start")
+            try:
+                state_store_service.create_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    op_type="start",
+                    target=state.get("SERVICE", "minecraft"),
+                    idempotency_key=idempotency_key,
+                    status="intent",
+                    checkpoint="intent_created",
+                    payload={},
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("create_operation/start", exc)
+                return state["_start_failed_response"]("Failed to create start operation record.")
         state["set_service_status_intent"]("starting")
         state["invalidate_status_cache"]()
-        if state["write_session_start_time"]() is None:
-            state["log_mcweb_action"]("start", rejection_message="Session file write failed.")
-            return state["_session_write_failed_response"]()
-        state["reset_backup_schedule_state"]()
 
         def _start_worker():
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="in_progress",
+                    checkpoint="worker_started",
+                    started=True,
+                    message="Start operation in progress.",
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/start_in_progress", exc)
             result = state["start_service_non_blocking"](timeout=12)
             if not result.get("ok"):
                 message = result.get("message", "Failed to start service.")
                 state["set_service_status_intent"](None)
                 state["invalidate_status_cache"]()
                 state["log_mcweb_action"]("start-worker", rejection_message=message)
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="failed",
+                        error_code="start_failed",
+                        checkpoint="start_failed",
+                        message=message,
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/start_failed", exc)
                 return
+            if state["write_session_start_time"]() is None:
+                state["set_service_status_intent"](None)
+                state["invalidate_status_cache"]()
+                state["log_mcweb_action"]("start-worker", rejection_message="Session file write failed.")
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="failed",
+                        error_code="session_write_failed",
+                        checkpoint="session_write_failed",
+                        message="Session file write failed.",
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/start_session_failed", exc)
+                return
+            state["reset_backup_schedule_state"]()
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="observed",
+                    checkpoint="observed",
+                    message="Service start observed.",
+                    finished=True,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/start_observed", exc)
 
         try:
             threading.Thread(target=_start_worker, daemon=True).start()
@@ -38,45 +156,327 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             state["invalidate_status_cache"]()
             state["log_mcweb_exception"]("start-thread", exc)
             state["log_mcweb_action"]("start-worker", rejection_message="Failed to start service worker thread.")
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="failed",
+                    error_code="thread_start_failed",
+                    checkpoint="thread_start_failed",
+                    message="Failed to start service worker thread.",
+                    finished=True,
+                )
+            except Exception:
+                pass
             return state["_start_failed_response"]("Failed to start service worker thread.")
 
         state["log_mcweb_action"]("start")
-        return state["_ok_response"]()
+        return jsonify({
+            "ok": True,
+            "accepted": True,
+            "existing": resumed,
+            "resumed": resumed,
+            "op_id": op_id,
+            "status": "intent",
+        }), 202
 
     # Route: /stop
     @app.route("/stop", methods=["POST"])
     def stop():
         """Runtime helper stop."""
         sudo_password = request.form.get("sudo_password", "")
+        idempotency_key = _idempotency_key_from_request()
         if not state["validate_sudo_password"](sudo_password):
             state["log_mcweb_action"]("stop", rejection_message="Password incorrect.")
             return state["_password_rejected_response"]()
         state["record_successful_password_ip"]()
 
+        op_id = ""
+        existing = None
+        resumed = False
+        if idempotency_key:
+            try:
+                existing = state_store_service.get_operation_by_idempotency_key(
+                    state["APP_STATE_DB_PATH"],
+                    op_type="stop",
+                    idempotency_key=idempotency_key,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("get_operation_by_idempotency_key/stop", exc)
+                return state["_start_failed_response"]("Failed to load stop operation record.")
+        if isinstance(existing, dict):
+            op_id = str(existing.get("op_id", "") or "")
+            status = str(existing.get("status", "") or "").strip().lower()
+            if status in {"intent", "in_progress", "observed"}:
+                state["log_mcweb_action"]("stop")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": op_id,
+                    "status": str(existing.get("status", "") or "intent"),
+                }), 202
+            if status == "failed" and op_id:
+                resumed = True
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="intent",
+                        error_code="",
+                        message="Resume requested for stop operation.",
+                        checkpoint="resume_requested",
+                        increment_attempt=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/stop_resume", exc)
+                    return state["_start_failed_response"]("Failed to resume stop operation.")
+
+        if not op_id:
+            op_id = _new_operation_id("stop")
+            try:
+                state_store_service.create_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    op_type="stop",
+                    target=state.get("SERVICE", "minecraft"),
+                    idempotency_key=idempotency_key,
+                    status="intent",
+                    checkpoint="intent_created",
+                    payload={},
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("create_operation/stop", exc)
+                return state["_start_failed_response"]("Failed to create stop operation record.")
+
         state["set_service_status_intent"]("shutting")
-        state["graceful_stop_minecraft"]()
-        state["clear_session_start_time"]()
-        state["reset_backup_schedule_state"]()
-        run_cleanup_event_if_enabled(state, "server_shutdown")
+        state["invalidate_status_cache"]()
+
+        def _stop_worker():
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="in_progress",
+                    checkpoint="worker_started",
+                    started=True,
+                    message="Stop operation in progress.",
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/stop_in_progress", exc)
+
+            result = state["graceful_stop_minecraft"]()
+            systemd_ok = bool((result or {}).get("systemd_ok")) if isinstance(result, dict) else bool(result)
+            backup_ok = bool((result or {}).get("backup_ok")) if isinstance(result, dict) else True
+            if not (systemd_ok and backup_ok):
+                message = "Stop operation failed."
+                if isinstance(result, dict):
+                    if not systemd_ok:
+                        message = "Stop operation failed: service did not stop cleanly."
+                    elif not backup_ok:
+                        message = "Stop operation failed: backup pre-stop hook failed."
+                state["set_service_status_intent"](None)
+                state["invalidate_status_cache"]()
+                state["log_mcweb_action"]("stop-worker", rejection_message=message)
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="failed",
+                        error_code="stop_failed",
+                        checkpoint="stop_failed",
+                        message=message,
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/stop_failed", exc)
+                return
+
+            state["clear_session_start_time"]()
+            state["reset_backup_schedule_state"]()
+            run_cleanup_event_if_enabled(state, "server_shutdown")
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="observed",
+                    checkpoint="observed",
+                    message="Service stop observed.",
+                    finished=True,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/stop_observed", exc)
+
+        try:
+            threading.Thread(target=_stop_worker, daemon=True).start()
+        except Exception as exc:
+            state["set_service_status_intent"](None)
+            state["invalidate_status_cache"]()
+            state["log_mcweb_exception"]("stop-thread", exc)
+            state["log_mcweb_action"]("stop-worker", rejection_message="Failed to start service stop worker thread.")
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="failed",
+                    error_code="thread_start_failed",
+                    checkpoint="thread_start_failed",
+                    message="Failed to start service stop worker thread.",
+                    finished=True,
+                )
+            except Exception:
+                pass
+            return state["_start_failed_response"]("Failed to start service stop worker thread.")
+
         state["log_mcweb_action"]("stop")
-        return state["_ok_response"]()
+        return jsonify({
+            "ok": True,
+            "accepted": True,
+            "existing": resumed,
+            "resumed": resumed,
+            "op_id": op_id,
+            "status": "intent",
+        }), 202
 
     # Route: /backup
     @app.route("/backup", methods=["POST"])
     def backup():
         """Runtime helper backup."""
-        if not state["run_backup_script"](trigger="manual"):
-            detail = ""
-            backup_state = state["backup_state"]
-            with backup_state.lock:
-                detail = backup_state.last_error
-            message = "Backup failed."
-            if detail:
-                message = f"Backup failed: {detail}"
-            state["log_mcweb_action"]("backup", rejection_message=message)
-            return state["_backup_failed_response"](message)
+        idempotency_key = _idempotency_key_from_request()
+        op_id = ""
+        existing = None
+        resumed = False
+        if idempotency_key:
+            try:
+                existing = state_store_service.get_operation_by_idempotency_key(
+                    state["APP_STATE_DB_PATH"],
+                    op_type="backup",
+                    idempotency_key=idempotency_key,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("get_operation_by_idempotency_key/backup", exc)
+                return state["_backup_failed_response"]("Failed to load backup operation record.")
+        if isinstance(existing, dict):
+            op_id = str(existing.get("op_id", "") or "")
+            status = str(existing.get("status", "") or "").strip().lower()
+            if status in {"intent", "in_progress", "observed"}:
+                state["log_mcweb_action"]("backup")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": op_id,
+                    "status": str(existing.get("status", "") or "intent"),
+                }), 202
+            if status == "failed" and op_id:
+                resumed = True
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="intent",
+                        error_code="",
+                        message="Resume requested for backup operation.",
+                        checkpoint="resume_requested",
+                        increment_attempt=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/backup_resume", exc)
+                    return state["_backup_failed_response"]("Failed to resume backup operation.")
+
+        if not op_id:
+            op_id = _new_operation_id("backup")
+            try:
+                state_store_service.create_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    op_type="backup",
+                    target="manual",
+                    idempotency_key=idempotency_key,
+                    status="intent",
+                    checkpoint="intent_created",
+                    payload={"trigger": "manual"},
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("create_operation/backup", exc)
+                return state["_backup_failed_response"]("Failed to create backup operation record.")
+
+        def _backup_worker():
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="in_progress",
+                    checkpoint="worker_started",
+                    started=True,
+                    message="Backup operation in progress.",
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/backup_in_progress", exc)
+            ok = state["run_backup_script"](trigger="manual")
+            if not ok:
+                detail = ""
+                backup_state = state["backup_state"]
+                with backup_state.lock:
+                    detail = backup_state.last_error
+                message = "Backup failed."
+                if detail:
+                    message = f"Backup failed: {detail}"
+                state["log_mcweb_action"]("backup", rejection_message=message)
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="failed",
+                        error_code="backup_failed",
+                        checkpoint="backup_failed",
+                        message=message,
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/backup_failed", exc)
+                return
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="observed",
+                    checkpoint="observed",
+                    message="Backup operation observed complete.",
+                    finished=True,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/backup_observed", exc)
+
+        try:
+            threading.Thread(target=_backup_worker, daemon=True).start()
+        except Exception as exc:
+            state["log_mcweb_exception"]("backup-thread", exc)
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="failed",
+                    error_code="thread_start_failed",
+                    checkpoint="thread_start_failed",
+                    message="Failed to start backup worker thread.",
+                    finished=True,
+                )
+            except Exception:
+                pass
+            return state["_backup_failed_response"]("Failed to start backup worker thread.")
+
         state["log_mcweb_action"]("backup")
-        return state["_ok_response"]()
+        return jsonify({
+            "ok": True,
+            "accepted": True,
+            "existing": resumed,
+            "resumed": resumed,
+            "op_id": op_id,
+            "status": "intent",
+        }), 202
 
     # Route: /restore-backup
     @app.route("/restore-backup", methods=["POST"])
@@ -84,6 +484,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         """Runtime helper restore_backup."""
         sudo_password = request.form.get("sudo_password", "")
         filename = (request.form.get("filename", "") or "").strip()
+        idempotency_key = _idempotency_key_from_request()
 
         if not state["validate_sudo_password"](sudo_password):
             state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Password incorrect.")
@@ -92,18 +493,188 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         if not filename:
             return jsonify({"ok": False, "error": "restore_failed", "message": "Backup filename is required."}), 400
 
-        result = state["start_restore_job"](filename)
-        if not result.get("ok"):
-            message = result.get("message", "Restore failed to start.")
-            state["log_mcweb_action"]("restore-backup", command=filename, rejection_message=message)
-            return jsonify({"ok": False, "error": "restore_failed", "message": message}), 409
+        op_id = ""
+        existing = None
+        resumed = False
+        if idempotency_key:
+            try:
+                existing = state_store_service.get_operation_by_idempotency_key(
+                    state["APP_STATE_DB_PATH"],
+                    op_type="restore",
+                    idempotency_key=idempotency_key,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("get_operation_by_idempotency_key/restore", exc)
+                return jsonify({"ok": False, "error": "restore_failed", "message": "Failed to load restore operation record."}), 500
+        if isinstance(existing, dict):
+            op_id = str(existing.get("op_id", "") or "")
+            existing_target = str(existing.get("target", "") or "")
+            if existing_target and existing_target != filename:
+                return jsonify({
+                    "ok": False,
+                    "error": "idempotency_key_conflict",
+                    "message": "Idempotency key already used for a different restore target.",
+                }), 409
+            status = str(existing.get("status", "") or "").strip().lower()
+            if status in {"intent", "in_progress", "observed"}:
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "message": "Restore accepted.",
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": op_id,
+                    "status": str(existing.get("status", "") or "intent"),
+                }), 202
+            if status == "failed" and op_id:
+                resumed = True
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="intent",
+                        error_code="",
+                        message="Resume requested for restore operation.",
+                        checkpoint="resume_requested",
+                        increment_attempt=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/restore_resume", exc)
+                    return jsonify({"ok": False, "error": "restore_failed", "message": "Failed to resume restore operation."}), 500
 
-        state["log_mcweb_action"]("restore-backup", command=f"{filename} (started)")
+        if not op_id:
+            op_id = _new_operation_id("restore")
+            try:
+                state_store_service.create_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    op_type="restore",
+                    target=filename,
+                    idempotency_key=idempotency_key,
+                    status="intent",
+                    checkpoint="intent_created",
+                    payload={},
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("create_operation/restore", exc)
+                return jsonify({"ok": False, "error": "restore_failed", "message": "Failed to create restore operation record."}), 500
+
+        def _restore_worker():
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="in_progress",
+                    checkpoint="worker_started",
+                    started=True,
+                    message="Restore operation in progress.",
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/restore_in_progress", exc)
+
+            result = state["start_restore_job"](filename)
+            if not result.get("ok"):
+                message = result.get("message", "Restore failed to start.")
+                state["log_mcweb_action"]("restore-backup", command=filename, rejection_message=message)
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="failed",
+                        error_code=str(result.get("error", "") or "restore_start_failed"),
+                        checkpoint="restore_start_failed",
+                        message=message,
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/restore_failed", exc)
+                return
+
+            restore_job_id = str(result.get("job_id", "") or "")
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="in_progress",
+                    checkpoint="restore_job_started",
+                    message="Restore worker started.",
+                    payload={"restore_job_id": restore_job_id},
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/restore_job_started", exc)
+
+            deadline = time.time() + (2 * 60 * 60)
+            last_payload = {}
+            while time.time() < deadline:
+                payload = state["get_restore_status"](since_seq=0, job_id=restore_job_id)
+                last_payload = payload if isinstance(payload, dict) else {}
+                if not last_payload.get("running"):
+                    break
+                time.sleep(0.4)
+
+            result_payload = last_payload.get("result") if isinstance(last_payload, dict) else None
+            if isinstance(result_payload, dict) and bool(result_payload.get("ok")):
+                try:
+                    state_store_service.update_operation(
+                        state["APP_STATE_DB_PATH"],
+                        op_id=op_id,
+                        status="observed",
+                        checkpoint="observed",
+                        message=str(result_payload.get("message", "Restore completed successfully.") or "Restore completed successfully."),
+                        payload={"restore_job_id": restore_job_id, "result": result_payload},
+                        finished=True,
+                    )
+                except Exception as exc:
+                    state["log_mcweb_exception"]("update_operation/restore_observed", exc)
+                state["log_mcweb_action"]("restore-backup", command=f"{filename} (started)")
+                return
+
+            message = "Restore failed."
+            error_code = "restore_failed"
+            if isinstance(result_payload, dict):
+                message = str(result_payload.get("message", message) or message)
+                error_code = str(result_payload.get("error", error_code) or error_code)
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="failed",
+                    error_code=error_code,
+                    checkpoint="restore_failed",
+                    message=message,
+                    payload={"restore_job_id": restore_job_id, "result": result_payload if isinstance(result_payload, dict) else {}},
+                    finished=True,
+                )
+            except Exception as exc:
+                state["log_mcweb_exception"]("update_operation/restore_terminal_failed", exc)
+
+        try:
+            threading.Thread(target=_restore_worker, daemon=True).start()
+        except Exception as exc:
+            state["log_mcweb_exception"]("restore-thread", exc)
+            try:
+                state_store_service.update_operation(
+                    state["APP_STATE_DB_PATH"],
+                    op_id=op_id,
+                    status="failed",
+                    error_code="thread_start_failed",
+                    checkpoint="thread_start_failed",
+                    message="Failed to start restore worker thread.",
+                    finished=True,
+                )
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": "restore_failed", "message": "Failed to start restore worker thread."}), 500
+
         return jsonify({
             "ok": True,
-            "message": "Restore started.",
-            "job_id": result.get("job_id", ""),
-        })
+            "accepted": True,
+            "message": "Restore accepted.",
+            "existing": resumed,
+            "resumed": resumed,
+            "op_id": op_id,
+            "status": "intent",
+        }), 202
 
     # Route: /restore-status
     @app.route("/restore-status")
@@ -113,6 +684,15 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         job_id = (request.args.get("job_id", "") or "").strip() or None
         payload = state["get_restore_status"](since_seq=since, job_id=job_id)
         return jsonify(payload)
+
+    # Route: /operation-status/<op_id>
+    @app.route("/operation-status/<op_id>")
+    def operation_status(op_id):
+        """Return one async control-plane operation status by operation id."""
+        item = state_store_service.get_operation(state["APP_STATE_DB_PATH"], op_id)
+        if item is None:
+            return jsonify({"ok": False, "error": "not_found", "message": "Operation not found."}), 404
+        return jsonify({"ok": True, "operation": item})
 
     # Route: /rcon
     @app.route("/rcon", methods=["POST"])

@@ -99,6 +99,11 @@ _STATE_CORE_KEYS = (
     "SLOW_METRICS_INTERVAL_OFF_SECONDS",
     "STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS",
     "STORAGE_SAFETY_CHECK_INTERVAL_OFF_SECONDS",
+    "OPERATION_RECONCILE_INTERVAL_SECONDS",
+    "OPERATION_INTENT_STALE_SECONDS",
+    "OPERATION_START_TIMEOUT_SECONDS",
+    "OPERATION_STOP_TIMEOUT_SECONDS",
+    "OPERATION_RESTORE_TIMEOUT_SECONDS",
 )
 
 _STATE_BINDING_KEYS = (
@@ -158,6 +163,8 @@ _STATE_BINDING_KEYS = (
     "get_backup_status",
     "get_backup_warning_state",
     "get_cached_dashboard_metrics",
+    "get_observed_state",
+    "get_consistency_report",
     "get_cached_file_page_items",
     "get_cpu_frequency",
     "get_cpu_usage_per_core",
@@ -203,6 +210,8 @@ _STATE_BINDING_KEYS = (
     "metrics_collector_start_lock",
     "metrics_collector_started",
     "metrics_stream_client_count",
+    "operation_reconciler_start_lock",
+    "operation_reconciler_started",
     "minecraft_log_cache_lines",
     "minecraft_log_cache_loaded",
     "minecraft_log_cache_lock",

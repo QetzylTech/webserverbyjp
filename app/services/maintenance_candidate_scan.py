@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from app.services.maintenance_state_store import _cleanup_data_dir
+from app.core import profiling
 
 _RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
 
@@ -236,26 +237,29 @@ def _cleanup_active_world_path(state):
 
 def _cleanup_dir_size(path):
     """Handle cleanup dir size."""
-    total = 0
-    for root, _, files in os.walk(path):
-        for name in files:
-            target = Path(root) / name
-            try:
-                total += int(target.stat().st_size)
-            except OSError:
-                continue
-    return total
+    with profiling.timed("maintenance.fs.dir_size"):
+        total = 0
+        for root, _, files in os.walk(path):
+            for name in files:
+                target = Path(root) / name
+                try:
+                    total += int(target.stat().st_size)
+                except OSError:
+                    continue
+        return total
 
 
 def _cleanup_collect_candidates(state, cfg):
     """Handle cleanup collect candidates."""
-    backup_dir = Path(state["BACKUP_DIR"]).resolve()
-    data_dir = _cleanup_data_dir(state).resolve()
-    old_worlds_dir = (data_dir / "old_worlds").resolve()
-    allowed_roots = [backup_dir, old_worlds_dir]
-    active_world = _cleanup_active_world_path(state)
-    categories = cfg.get("rules", {}).get("categories", {})
-    candidates = []
+    with profiling.timed("maintenance.candidate_discovery.total"):
+        backup_dir = Path(state["BACKUP_DIR"]).resolve()
+        data_dir = _cleanup_data_dir(state).resolve()
+        old_worlds_dir = (data_dir / "old_worlds").resolve()
+        allowed_roots = [backup_dir, old_worlds_dir]
+        with profiling.timed("maintenance.candidate_discovery.active_world_probe"):
+            active_world = _cleanup_active_world_path(state)
+        categories = cfg.get("rules", {}).get("categories", {})
+        candidates = []
 
     def _append(path, category, is_dir=False):
         """Handle append."""
@@ -300,21 +304,24 @@ def _cleanup_collect_candidates(state, cfg):
             row["reasons"].append("category_disabled")
         candidates.append(row)
 
-    if backup_dir.exists() and backup_dir.is_dir():
-        for entry in backup_dir.glob("*.zip"):
-            _append(entry, "backup_zip", is_dir=False)
+        if backup_dir.exists() and backup_dir.is_dir():
+            with profiling.timed("maintenance.candidate_discovery.scan_backup_dir"):
+                for entry in backup_dir.glob("*.zip"):
+                    _append(entry, "backup_zip", is_dir=False)
 
-    if old_worlds_dir.exists() and old_worlds_dir.is_dir():
-        for entry in old_worlds_dir.iterdir():
-            if entry.is_dir():
-                _append(entry, "stale_world_dir", is_dir=True)
-            elif entry.is_file() and entry.suffix.lower() == ".zip":
-                _append(entry, "old_world_zip", is_dir=False)
-        for entry in old_worlds_dir.rglob("*.zip"):
-            if entry.parent == old_worlds_dir:
-                continue
-            _append(entry, "old_world_zip", is_dir=False)
+        if old_worlds_dir.exists() and old_worlds_dir.is_dir():
+            with profiling.timed("maintenance.candidate_discovery.scan_old_worlds"):
+                for entry in old_worlds_dir.iterdir():
+                    if entry.is_dir():
+                        _append(entry, "stale_world_dir", is_dir=True)
+                    elif entry.is_file() and entry.suffix.lower() == ".zip":
+                        _append(entry, "old_world_zip", is_dir=False)
+                for entry in old_worlds_dir.rglob("*.zip"):
+                    if entry.parent == old_worlds_dir:
+                        continue
+                    _append(entry, "old_world_zip", is_dir=False)
 
-    candidates.sort(key=lambda row: row["mtime"], reverse=True)
-    return candidates
+        candidates.sort(key=lambda row: row["mtime"], reverse=True)
+        profiling.set_gauge("maintenance.candidate_count", len(candidates))
+        return candidates
 

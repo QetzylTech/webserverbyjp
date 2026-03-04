@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
+from app.core import profiling
 
 
 _CLEANUP_CONFIG_KEY = "cleanup_config"
@@ -12,7 +14,12 @@ _CLEANUP_CONFIG_KEY = "cleanup_config"
 def _connect(db_path):
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    started = 0.0
+    if profiling.ENABLED:
+        started = time.perf_counter()
     conn = sqlite3.connect(str(path), timeout=5.0)
+    if profiling.ENABLED:
+        profiling.record_duration("sqlite.connect", time.perf_counter() - started)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -131,6 +138,37 @@ def _create_tables(conn):
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_record_history_source_key ON file_record_history(source_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_record_history_observed_at ON file_record_history(observed_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            op_id TEXT NOT NULL UNIQUE,
+            op_type TEXT NOT NULL DEFAULT '',
+            target TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'intent',
+            checkpoint TEXT NOT NULL DEFAULT '',
+            attempt INTEGER NOT NULL DEFAULT 1,
+            intent_at TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL DEFAULT '',
+            finished_at TEXT NOT NULL DEFAULT '',
+            error_code TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            data_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_op_type ON operations(op_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status)")
+
+    # Backward-compatible migrations for existing databases.
+    existing_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(operations)").fetchall()}
+    if "idempotency_key" not in existing_cols:
+        conn.execute("ALTER TABLE operations ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ''")
+    if "checkpoint" not in existing_cols:
+        conn.execute("ALTER TABLE operations ADD COLUMN checkpoint TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_idempotency_key ON operations(idempotency_key)")
 
 
 def initialize_state_db(
@@ -151,4 +189,3 @@ def initialize_state_db(
             except Exception:
                 pass
         return False
-
