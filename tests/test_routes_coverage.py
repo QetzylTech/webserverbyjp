@@ -318,6 +318,65 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
             self.assertEqual(client.post("/maintenance/api/manual-delete", json={"dry_run": True, "selected_paths": []}).status_code, 200)
             self.assertEqual(client.post("/maintenance/api/ack-non-normal", json={}).status_code, 200)
 
+    def test_maintenance_api_state_uses_short_ttl_cache(self):
+        app = Flask(__name__)
+        state = {
+            "_ensure_csrf_token": lambda: "t",
+            "get_device_name_map": lambda: {"127.0.0.1": "local"},
+            "DISPLAY_TZ": "UTC",
+            "WORLD_DIR": "/world",
+            "BACKUP_DIR": "/backups",
+            "validate_sudo_password": lambda password: password == "ok",
+            "record_successful_password_ip": lambda: None,
+        }
+        calls = {"load_cfg": 0, "evaluate": 0, "snapshot": 0}
+
+        def _load_cfg(_state):
+            calls["load_cfg"] += 1
+            return {"rules": {"enabled": True}, "meta": {}}
+
+        def _eval(_state, _cfg, **_kwargs):
+            calls["evaluate"] += 1
+            return {"items": [], "requested_delete_count": 0, "capped_delete_count": 0, "selected_ineligible": [], "errors": [], "deleted_count": 0}
+
+        def _snap(_state, _cfg):
+            calls["snapshot"] += 1
+            return {"config": {}, "non_normal": {}, "storage": {}, "history": [], "next_run_at": None}
+
+        patches = {
+            "start_cleanup_scheduler_once": lambda _state: None,
+            "_cleanup_load_config": _load_cfg,
+            "_cleanup_normalize_scope": lambda _scope: "backups",
+            "_cleanup_get_scope_view": lambda full_cfg, scope: {"rules": {"enabled": True}, "meta": {}},
+            "_cleanup_state_snapshot": _snap,
+            "_cleanup_evaluate": _eval,
+            "_cleanup_validate_rules": lambda rules: (True, rules),
+            "_cleanup_apply_scope_from_state": lambda _state, parsed, scope="backups": parsed,
+            "_cleanup_now_iso": lambda _state: "2026-03-04T00:00:00Z",
+            "_cleanup_get_client_ip": lambda _state: "127.0.0.1",
+            "_cleanup_save_config": lambda _state, _cfg: None,
+            "_cleanup_log": lambda *_args, **_kwargs: None,
+            "_cleanup_run_with_lock": lambda _state, _cfg, **kwargs: {"deleted_count": 0, "errors": [], "requested_delete_count": 0, "capped_delete_count": 0},
+            "_cleanup_append_history": lambda *_args, **_kwargs: None,
+            "_cleanup_error": lambda code, message=None, status=400: ({"ok": False, "error": code, "message": message or ""}, status),
+            "_cleanup_active_world_path": lambda _state: Path("/world"),
+            "_cleanup_data_dir": lambda _state: Path("/tmp"),
+            "_cleanup_load_non_normal": lambda _state: {"missed_runs": []},
+            "_cleanup_atomic_write_json": lambda path, data: None,
+            "_cleanup_non_normal_path": lambda _state: Path("/tmp/non_normal.json"),
+        }
+
+        with patch.multiple(maintenance_routes, render_template=lambda *_args, **_kwargs: "maintenance-page", **patches):
+            maintenance_routes.register_maintenance_routes(app, state)
+            client = app.test_client()
+            first = client.get("/maintenance/api/state")
+            second = client.get("/maintenance/api/state")
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(calls["load_cfg"], 1)
+            self.assertEqual(calls["evaluate"], 1)
+            self.assertEqual(calls["snapshot"], 1)
+
 
 class HomeRoutesCoverageTests(unittest.TestCase):
     def test_home_routes_registered_and_smoke(self):

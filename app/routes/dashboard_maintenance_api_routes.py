@@ -1,5 +1,7 @@
 """Maintenance route registration for the MC web dashboard."""
 import copy
+import threading
+import time
 
 from flask import jsonify, render_template, request
 from app.core import profiling
@@ -31,8 +33,48 @@ from app.services.maintenance_engine import (
     _cleanup_state_snapshot,
 )
 
+_MAINTENANCE_STATE_CACHE_TTL_SECONDS = 3.0
+_MAINTENANCE_STATE_CACHE_LOCK = threading.Lock()
+_MAINTENANCE_STATE_CACHE = {}
+
+
+def _maintenance_state_cache_get(scope):
+    """Return cached maintenance API payload for scope when still fresh."""
+    now = time.time()
+    with _MAINTENANCE_STATE_CACHE_LOCK:
+        item = _MAINTENANCE_STATE_CACHE.get(scope)
+        if not isinstance(item, dict):
+            return None
+        if float(item.get("expires_at", 0.0)) < now:
+            _MAINTENANCE_STATE_CACHE.pop(scope, None)
+            return None
+        payload = item.get("payload")
+        return copy.deepcopy(payload) if isinstance(payload, dict) else None
+
+
+def _maintenance_state_cache_set(scope, payload):
+    """Store maintenance API payload cache entry for scope."""
+    if not isinstance(payload, dict):
+        return
+    with _MAINTENANCE_STATE_CACHE_LOCK:
+        _MAINTENANCE_STATE_CACHE[scope] = {
+            "expires_at": time.time() + _MAINTENANCE_STATE_CACHE_TTL_SECONDS,
+            "payload": copy.deepcopy(payload),
+        }
+
+
+def _maintenance_state_cache_invalidate(scope=None):
+    """Invalidate maintenance API payload cache (single scope or all)."""
+    with _MAINTENANCE_STATE_CACHE_LOCK:
+        if scope is None:
+            _MAINTENANCE_STATE_CACHE.clear()
+        else:
+            _MAINTENANCE_STATE_CACHE.pop(scope, None)
+
+
 def register_maintenance_routes(app, state):
     """Register maintenance page and maintenance API routes."""
+    _maintenance_state_cache_invalidate()
     start_cleanup_scheduler_once(state)
 
     def _require_password(payload, *, what, why, trigger, scope, details="", log_success=False):
@@ -88,11 +130,24 @@ def register_maintenance_routes(app, state):
     def maintenance_api_state():
         """Handle maintenance api state."""
         with profiling.timed("maintenance.route.api_state"):
-            full_cfg = _cleanup_load_config(state)
+            force_refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
             scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
+            if not force_refresh:
+                cached = _maintenance_state_cache_get(scope)
+                if isinstance(cached, dict):
+                    return jsonify(cached)
+            full_cfg = _cleanup_load_config(state)
             cfg = _cleanup_get_scope_view(full_cfg, scope)
             preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
-            return jsonify({"ok": True, **_cleanup_state_snapshot(state, cfg), "preview": preview, "scope": scope, "device_map": state["get_device_name_map"]()})
+            payload = {
+                "ok": True,
+                **_cleanup_state_snapshot(state, cfg),
+                "preview": preview,
+                "scope": scope,
+                "device_map": state["get_device_name_map"](),
+            }
+            _maintenance_state_cache_set(scope, payload)
+            return jsonify(payload)
 
     # Route: /maintenance/api/confirm-password
     @app.route("/maintenance/api/confirm-password", methods=["POST"])
@@ -180,6 +235,7 @@ def register_maintenance_routes(app, state):
         meta["last_changed_by"] = _cleanup_get_client_ip(state)
         meta["last_changed_at"] = _cleanup_now_iso(state)
         _cleanup_save_config(state, full_cfg)
+        _maintenance_state_cache_invalidate(scope)
         _cleanup_log(
             state,
             what="save_rules",
@@ -254,6 +310,7 @@ def register_maintenance_routes(app, state):
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
         _cleanup_save_config(state, full_cfg)
+        _maintenance_state_cache_invalidate(scope)
         _cleanup_append_history(
             state,
             trigger=f"manual_rule:{selected_rule or 'all'}",
@@ -338,6 +395,7 @@ def register_maintenance_routes(app, state):
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
         _cleanup_save_config(state, full_cfg)
+        _maintenance_state_cache_invalidate(scope)
         _cleanup_append_history(
             state,
             trigger="manual_selection",
@@ -389,6 +447,7 @@ def register_maintenance_routes(app, state):
         data["last_ack_at"] = _cleanup_now_iso(state)
         data["last_ack_by"] = _cleanup_get_client_ip(state)
         _cleanup_atomic_write_json(_cleanup_non_normal_path(state), data)
+        _maintenance_state_cache_invalidate(scope)
         _cleanup_log(state, what="ack_non_normal", why="manual_ack", trigger="manual", result="ok", details=f"scope={scope}")
         return jsonify({"ok": True, "non_normal": data})
 

@@ -261,48 +261,48 @@ def _cleanup_collect_candidates(state, cfg):
         categories = cfg.get("rules", {}).get("categories", {})
         candidates = []
 
-    def _append(path, category, is_dir=False):
-        """Handle append."""
-        row = {
-            "category": category,
-            "path": str(path),
-            "name": Path(path).name,
-            "is_dir": bool(is_dir),
-            "size": 0,
-            "mtime": 0.0,
-            "eligible": True,
-            "reasons": [],
-        }
-        try:
-            stat = Path(path).stat()
-            row["mtime"] = float(stat.st_mtime)
-            row["size"] = _cleanup_dir_size(path) if is_dir else int(stat.st_size)
-        except OSError:
-            row["eligible"] = False
-            row["reasons"].append("stat_failed")
-
-        resolved = None
-        try:
-            resolved = Path(path).resolve()
-        except OSError:
-            row["eligible"] = False
-            row["reasons"].append("resolve_failed")
-
-        if resolved is not None:
-            if Path(path).is_symlink():
+        def _append(path, category, is_dir=False):
+            """Append one discovered candidate row with eligibility guards."""
+            row = {
+                "category": category,
+                "path": str(path),
+                "name": Path(path).name,
+                "is_dir": bool(is_dir),
+                "size": 0,
+                "mtime": 0.0,
+                "eligible": True,
+                "reasons": [],
+            }
+            try:
+                stat = Path(path).stat()
+                row["mtime"] = float(stat.st_mtime)
+                row["size"] = _cleanup_dir_size(path) if is_dir else int(stat.st_size)
+            except OSError:
                 row["eligible"] = False
-                row["reasons"].append("symlink_blocked")
-            if not any(_cleanup_is_under(root, resolved) for root in allowed_roots):
-                row["eligible"] = False
-                row["reasons"].append("outside_allowed_roots")
-            if active_world is not None and (resolved == active_world or active_world in resolved.parents or resolved in active_world.parents):
-                row["eligible"] = False
-                row["reasons"].append("active_world_protected")
+                row["reasons"].append("stat_failed")
 
-        if not categories.get(category, False):
-            row["eligible"] = False
-            row["reasons"].append("category_disabled")
-        candidates.append(row)
+            resolved = None
+            try:
+                resolved = Path(path).resolve()
+            except OSError:
+                row["eligible"] = False
+                row["reasons"].append("resolve_failed")
+
+            if resolved is not None:
+                if Path(path).is_symlink():
+                    row["eligible"] = False
+                    row["reasons"].append("symlink_blocked")
+                if not any(_cleanup_is_under(root, resolved) for root in allowed_roots):
+                    row["eligible"] = False
+                    row["reasons"].append("outside_allowed_roots")
+                if active_world is not None and (resolved == active_world or active_world in resolved.parents or resolved in active_world.parents):
+                    row["eligible"] = False
+                    row["reasons"].append("active_world_protected")
+
+            if not categories.get(category, False):
+                row["eligible"] = False
+                row["reasons"].append("category_disabled")
+            candidates.append(row)
 
         if backup_dir.exists() and backup_dir.is_dir():
             with profiling.timed("maintenance.candidate_discovery.scan_backup_dir"):

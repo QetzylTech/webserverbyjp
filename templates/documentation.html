@@ -4,9 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>README Documentation</title>
+  {% include "partials/theme_init.html" %}
   <link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
   <link rel="stylesheet" href="{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}">
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-light="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-dark="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" crossorigin="anonymous">
+  <script>
+    (function () {
+      var link = document.getElementById("hljs-theme");
+      if (!link) return;
+      var prefersDark = false;
+      try {
+        prefersDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      } catch (_err) {
+        prefersDark = false;
+      }
+      var nextHref = prefersDark ? link.getAttribute("data-dark") : link.getAttribute("data-light");
+      if (nextHref && link.getAttribute("href") !== nextHref) {
+        link.setAttribute("href", nextHref);
+      }
+    })();
+  </script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js" crossorigin="anonymous"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js" crossorigin="anonymous"></script>

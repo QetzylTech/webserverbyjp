@@ -81,6 +81,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let manualSelectedPaths = new Set();
     let rulesEditMode = false;
     let rulesDraft = null;
+    let stateRefreshInFlight = false;
+    let stateAutoRefreshTimer = null;
+    const STATE_AUTO_REFRESH_MS = 5000;
     const RULE_FIELD_UPDATERS = {
         "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
         "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
@@ -1113,37 +1116,67 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function refreshState(options = {}) {
+        if (stateRefreshInFlight) return;
+        stateRefreshInFlight = true;
         const preservePreview = !!options.preservePreview;
         const requestedScope = options.scope || currentScope;
 
-        const statePath = `/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}`;
-        let response;
-        let payload;
-        if (http) {
-            const result = await http.getJson(statePath, { headers: { "X-Requested-With": "XMLHttpRequest" } });
-            response = result.response;
-            payload = result.payload;
-        } else {
-            response = await fetch(statePath, { headers: { Accept: "application/json" } });
-            payload = await response.json();
+        try {
+            const statePath = `/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}`;
+            let response;
+            let payload;
+            if (http) {
+                const result = await http.getJson(statePath, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+                response = result.response;
+                payload = result.payload;
+            } else {
+                response = await fetch(statePath, { headers: { Accept: "application/json" } });
+                payload = await response.json();
+            }
+            if (!response.ok) throw (payload || {});
+            if (!payload.ok) throw payload;
+            currentScope = String(payload.scope || requestedScope || "backups");
+            config = payload.config || config;
+            if (!preservePreview) {
+                preview = payload.preview || preview;
+            }
+            nonNormal = payload.non_normal || nonNormal;
+            storage = payload.storage || storage;
+            cleanupHistory = payload.history || cleanupHistory;
+            deviceMap = payload.device_map || deviceMap;
+            nextRunAt = payload.next_run_at || "-";
+            syncScopeButtons();
+            renderSummaryPanels();
+            if (currentActionView === "rules") {
+                setActionView(currentActionView);
+            }
+        } finally {
+            stateRefreshInFlight = false;
         }
-        if (!response.ok) throw (payload || {});
-        if (!payload.ok) throw payload;
-        currentScope = String(payload.scope || requestedScope || "backups");
-        config = payload.config || config;
-        if (!preservePreview) {
-            preview = payload.preview || preview;
+    }
+
+    function shouldAutoRefreshMaintenanceState() {
+        if (document.hidden) return false;
+        const page = String(document.body?.dataset?.page || "").trim().toLowerCase();
+        if (page !== "maintenance") return false;
+        return true;
+    }
+
+    async function runAutoRefreshTick() {
+        if (!shouldAutoRefreshMaintenanceState()) return;
+        try {
+            await refreshState({ preservePreview: rulesEditMode, scope: currentScope });
+        } catch (_err) {
+            // Keep auto-refresh quiet; user-driven actions already surface errors.
         }
-        nonNormal = payload.non_normal || nonNormal;
-        storage = payload.storage || storage;
-        cleanupHistory = payload.history || cleanupHistory;
-        deviceMap = payload.device_map || deviceMap;
-        nextRunAt = payload.next_run_at || "-";
-        syncScopeButtons();
-        renderSummaryPanels();
-        if (currentActionView === "rules") {
-            setActionView(currentActionView);
+    }
+
+    function startMaintenanceStateAutoRefresh() {
+        if (stateAutoRefreshTimer) {
+            window.clearInterval(stateAutoRefreshTimer);
+            stateAutoRefreshTimer = null;
         }
+        stateAutoRefreshTimer = window.setInterval(runAutoRefreshTick, STATE_AUTO_REFRESH_MS);
     }
 
     async function runRulesDryRunWithoutPassword() {
@@ -1435,6 +1468,12 @@ document.addEventListener("DOMContentLoaded", () => {
     setActionView(hasMissedRuns ? "history" : "rules");
     syncPaneHeadActions();
     syncMaintenanceOverflowState();
+    startMaintenanceStateAutoRefresh();
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            runAutoRefreshTick();
+        }
+    });
     window.addEventListener("resize", syncMaintenanceOverflowState);
     if (window.ResizeObserver) {
         const ro = new ResizeObserver(syncMaintenanceOverflowState);
