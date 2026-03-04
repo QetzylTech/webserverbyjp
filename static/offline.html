@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MC Web Dashboard Offline</title>
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+    }
+    .panel {
+        width: min(92vw, 560px);
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 20px;
+    }
+    h1 {
+        margin: 0 0 10px 0;
+        font-size: 1.2rem;
+    }
+    p {
+        margin: 0 0 10px 0;
+        line-height: 1.4;
+    }
+    .muted {
+        color: #94a3b8;
+        font-size: 0.9rem;
+    }
+</style>
+</head>
+<body>
+<section class="panel">
+    <h1>Server is offline</h1>
+    <p>The dashboard cannot reach the server right now.</p>
+    <p class="muted">This page will reload automatically when connection is restored.</p>
+</section>
+<script>
+(() => {
+    async function canReachServer() {
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3000);
+            const response = await fetch("/observed-state?t=" + Date.now(), {
+                method: "GET",
+                cache: "no-store",
+                signal: controller.signal,
+                headers: { "Accept": "application/json" },
+            });
+            clearTimeout(timer);
+            return response.ok;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    async function tryReload() {
+        const ok = await canReachServer();
+        if (!ok) return;
+        window.location.href = "/";
+    }
+
+    setInterval(tryReload, 3000);
+    window.addEventListener("online", tryReload);
+    tryReload();
+})();
+</script>
+</body>
+</html>

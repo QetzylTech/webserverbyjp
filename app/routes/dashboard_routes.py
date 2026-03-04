@@ -118,6 +118,16 @@ def register_routes(app, state):
         """Runtime helper favicon."""
         return redirect(state["FAVICON_URL"])
 
+    # Route: /sw.js
+    @app.route("/sw.js")
+    def service_worker():
+        """Serve root-scoped service worker for offline shell/recovery."""
+        response = send_from_directory(str(app.static_folder), "service_worker.js")
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     # Route: /readme
     @app.route("/readme")
     def readme_page():

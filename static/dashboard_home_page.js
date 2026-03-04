@@ -17,6 +17,7 @@
     const http = window.MCWebHttp || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
     const METRICS_FALLBACK_POLL_INTERVAL_MS = 15000;
+    const METRICS_FAST_RUNNING_POLL_INTERVAL_MS = 1000;
     function sendHomePageHeartbeat() {
         if (document.hidden) return;
         fetch("/home-heartbeat", {
@@ -34,6 +35,11 @@
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
+    let idleCountdownDeadlineMs = null;
+    let sessionDurationSeconds = null;
+    let sessionDurationBaseSeconds = null;
+    let sessionDurationBaseAtMs = null;
+    let sessionDurationRunning = false;
     let pendingSudoForm = null;
     const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb", "mcweb_log"];
     const LOG_SOURCE_STREAM_PATHS = {
@@ -67,7 +73,7 @@
         mcweb: null,
         mcweb_log: null,
     };
-    const LOG_STREAM_BATCH_FLUSH_MS = 75;
+    const LOG_STREAM_BATCH_FLUSH_MS = 1000;
     let logStreams = {
         minecraft: null,
         backup: null,
@@ -78,10 +84,11 @@
     let logAutoScrollEnabled = true;
 
     // Refresh cadence configuration (milliseconds).
-    const ACTIVE_COUNTDOWN_INTERVAL_MS = 5000;
+    const TIMER_REBASE_TOLERANCE_SECONDS = 2;
 
     let metricsEventSource = null;
     let metricsPollTimer = null;
+    let metricsFastPollTimer = null;
     let countdownTimer = null;
     const operationPollTimers = {};
     let lowStorageModalShown = false;
@@ -300,6 +307,13 @@
         return (parseInt(match[1], 10) * 60) + parseInt(match[2], 10);
     }
 
+    function parseSessionDuration(text) {
+        if (!text || text === "--") return null;
+        const match = String(text).trim().match(/^([0-9]+):([0-9]{2}):([0-9]{2})$/);
+        if (!match) return null;
+        return (parseInt(match[1], 10) * 3600) + (parseInt(match[2], 10) * 60) + parseInt(match[3], 10);
+    }
+
     function formatCountdown(totalSeconds) {
         if (totalSeconds === null) return "--:--";
         const s = Math.max(0, totalSeconds);
@@ -308,17 +322,102 @@
         return `${mins}:${secs}`;
     }
 
-    function tickIdleCountdown() {
-        const idleCountdown = document.getElementById("idle-countdown");
-        if (!idleCountdown) return;
-        if (idleCountdownSeconds === null) {
-            idleCountdown.textContent = "--:--";
+    function formatSessionDuration(totalSeconds) {
+        if (totalSeconds === null) return "--";
+        const s = Math.max(0, totalSeconds);
+        const hours = Math.floor(s / 3600).toString().padStart(2, "0");
+        const mins = Math.floor((s % 3600) / 60).toString().padStart(2, "0");
+        const secs = (s % 60).toString().padStart(2, "0");
+        return `${hours}:${mins}:${secs}`;
+    }
+
+    function currentIdleCountdownSeconds() {
+        if (idleCountdownDeadlineMs === null) return null;
+        return Math.max(0, Math.ceil((idleCountdownDeadlineMs - Date.now()) / 1000));
+    }
+
+    function setIdleCountdownFromParsedSeconds(seconds, options = {}) {
+        const force = options.force === true;
+        if (seconds === null || Number.isNaN(seconds)) {
+            idleCountdownSeconds = null;
+            idleCountdownDeadlineMs = null;
             return;
         }
-        idleCountdown.textContent = formatCountdown(idleCountdownSeconds);
-        if (idleCountdownSeconds > 0) {
-            idleCountdownSeconds -= 1;
+        const next = Math.max(0, Math.floor(Number(seconds)));
+        const current = currentIdleCountdownSeconds();
+        if (!force && current !== null && Math.abs(next - current) <= TIMER_REBASE_TOLERANCE_SECONDS) {
+            idleCountdownSeconds = current;
+            return;
         }
+        idleCountdownSeconds = next;
+        idleCountdownDeadlineMs = Date.now() + (next * 1000);
+    }
+
+    function currentSessionDurationSeconds() {
+        if (sessionDurationBaseSeconds === null || sessionDurationBaseAtMs === null) return null;
+        const elapsed = Math.max(0, Math.floor((Date.now() - sessionDurationBaseAtMs) / 1000));
+        return sessionDurationBaseSeconds + elapsed;
+    }
+
+    function setSessionDurationFromParsedSeconds(seconds, options = {}) {
+        const force = options.force === true;
+        if (seconds === null || Number.isNaN(seconds)) {
+            sessionDurationSeconds = null;
+            sessionDurationBaseSeconds = null;
+            sessionDurationBaseAtMs = null;
+            return;
+        }
+        const normalized = Math.max(0, Math.floor(Number(seconds)));
+        const current = currentSessionDurationSeconds();
+        if (!force && current !== null && normalized <= (current + TIMER_REBASE_TOLERANCE_SECONDS)) {
+            // Keep a monotonic local timer unless backend is meaningfully ahead.
+            sessionDurationSeconds = current;
+            return;
+        }
+        sessionDurationSeconds = normalized;
+        sessionDurationBaseSeconds = normalized;
+        sessionDurationBaseAtMs = Date.now();
+    }
+
+    function tickRuntimeSimulation() {
+        const idleCountdown = document.getElementById("idle-countdown");
+        if (idleCountdown) {
+            if (idleCountdownDeadlineMs === null) {
+                idleCountdown.textContent = "--:--";
+            } else {
+                const remaining = currentIdleCountdownSeconds();
+                idleCountdownSeconds = remaining;
+                idleCountdown.textContent = formatCountdown(remaining);
+            }
+        }
+
+        const sessionDuration = document.getElementById("session-duration");
+        if (
+            sessionDurationRunning &&
+            sessionDuration &&
+            sessionDurationBaseSeconds !== null &&
+            sessionDurationBaseAtMs !== null
+        ) {
+            const current = currentSessionDurationSeconds();
+            sessionDurationSeconds = current;
+            sessionDuration.textContent = formatSessionDuration(current);
+        }
+    }
+
+    function scheduleRuntimeSimulationTick() {
+        if (refreshMode !== "active") return;
+        tickRuntimeSimulation();
+        const now = Date.now();
+        const driftToNextSecond = 1000 - (now % 1000);
+        const delay = Math.max(250, Math.min(1250, driftToNextSecond));
+        countdownTimer = window.setTimeout(scheduleRuntimeSimulationTick, delay);
+    }
+
+    function isServiceRunningInMetrics(data) {
+        const explicitStatus = String(data && data.service_status ? data.service_status : "").trim().toLowerCase();
+        if (explicitStatus) return explicitStatus === "running";
+        const fallback = String(data && data.service_running_status ? data.service_running_status : "").trim().toLowerCase();
+        return fallback === "active";
     }
 
     function ensureLogStreamStarted(source) {
@@ -640,11 +739,16 @@
         if (players && data.players_online) players.textContent = data.players_online;
         if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
         if (data.idle_countdown !== undefined) {
-            idleCountdownSeconds = parseCountdown(data.idle_countdown);
-            if (idleCountdown) idleCountdown.textContent = data.idle_countdown;
+            setIdleCountdownFromParsedSeconds(parseCountdown(data.idle_countdown));
+            if (idleCountdown && idleCountdownSeconds === null) idleCountdown.textContent = data.idle_countdown;
         }
         if (sessionDuration && data.session_duration !== undefined) {
-            sessionDuration.textContent = data.session_duration;
+            setSessionDurationFromParsedSeconds(parseSessionDuration(data.session_duration));
+            if (sessionDurationSeconds !== null) {
+                sessionDuration.textContent = formatSessionDuration(sessionDurationSeconds);
+            } else {
+                sessionDuration.textContent = data.session_duration;
+            }
         }
         if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
         if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
@@ -664,6 +768,10 @@
                 sessionDuration.style.display = "none";
                 serviceDurationPrefix.textContent = "";
             }
+        }
+        sessionDurationRunning = isServiceRunningInMetrics(data);
+        if (!sessionDurationRunning && (!data.session_duration || data.session_duration === "--")) {
+            setSessionDurationFromParsedSeconds(null);
         }
         const rconEnabled = data.rcon_enabled === true;
         const lowStorageBlocked = data.low_storage_blocked === true;
@@ -707,6 +815,28 @@
             lastBackupWarningSeq = backupWarningSeq;
         }
         applyRefreshMode(data.service_status);
+        applyFastMetricsMode(sessionDurationRunning);
+    }
+
+    function applyFastMetricsData(data) {
+        const ram = document.getElementById("ram-usage");
+        const cpu = document.getElementById("cpu-per-core");
+        const freq = document.getElementById("cpu-frequency");
+        const players = document.getElementById("players-online");
+        const tickRate = document.getElementById("tick-rate");
+        if (ram && data.ram_usage) ram.textContent = data.ram_usage;
+        if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
+        if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
+        if (players && data.players_online) players.textContent = data.players_online;
+        if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
+        if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
+        if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
+        if (data.idle_countdown !== undefined) {
+            setIdleCountdownFromParsedSeconds(parseCountdown(data.idle_countdown));
+        }
+        if (data.session_duration !== undefined) {
+            setSessionDurationFromParsedSeconds(parseSessionDuration(data.session_duration));
+        }
     }
 
     async function submitFormAjax(form, sudoPassword = undefined) {
@@ -804,6 +934,28 @@
         }
     }
 
+    async function refreshMetricsFast() {
+        if (document.hidden) return;
+        try {
+            const result = http
+                ? await http.getJson("/metrics")
+                : { response: await fetch("/metrics", { cache: "no-store" }), payload: null };
+            const response = result.response;
+            if (!response.ok) return;
+            let data = result.payload;
+            if (!data) {
+                data = await response.json().catch(() => ({}));
+            }
+            if (isServiceRunningInMetrics(data)) {
+                applyFastMetricsData(data);
+            } else {
+                applyMetricsData(data);
+            }
+        } catch (_) {
+            // Keep current metrics on network/read errors.
+        }
+    }
+
     function startMetricsStream() {
         if (metricsEventSource) return;
         metricsEventSource = new EventSource("/metrics-stream");
@@ -849,12 +1001,32 @@
         metricsPollTimer = null;
     }
 
+    function startFastMetricsPolling() {
+        if (metricsFastPollTimer) return;
+        refreshMetricsFast();
+        metricsFastPollTimer = window.setInterval(refreshMetricsFast, METRICS_FAST_RUNNING_POLL_INTERVAL_MS);
+    }
+
+    function stopFastMetricsPolling() {
+        if (!metricsFastPollTimer) return;
+        clearInterval(metricsFastPollTimer);
+        metricsFastPollTimer = null;
+    }
+
     function clearRefreshTimers() {
         // Prevent duplicate interval loops when switching modes.
         if (countdownTimer) {
-            clearInterval(countdownTimer);
+            clearTimeout(countdownTimer);
             countdownTimer = null;
         }
+    }
+
+    function applyFastMetricsMode(isRunning) {
+        if (isRunning) {
+            startFastMetricsPolling();
+            return;
+        }
+        stopFastMetricsPolling();
     }
 
     function applyRefreshMode(serviceStatusText) {
@@ -867,11 +1039,13 @@
         clearRefreshTimers();
 
         if (refreshMode === "off") {
+            sessionDurationRunning = false;
+            stopFastMetricsPolling();
             return;
         }
 
-        // In Active mode, restore countdown.
-        countdownTimer = setInterval(tickIdleCountdown, ACTIVE_COUNTDOWN_INTERVAL_MS);
+        // In Active mode, locally simulate countdown/session duration.
+        scheduleRuntimeSimulationTick();
     }
 
     function initSidebarNav() {
@@ -914,6 +1088,7 @@
         });
         stopMetricsStream();
         stopMetricsPolling();
+        stopFastMetricsPolling();
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
@@ -927,6 +1102,7 @@
             LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
             stopMetricsStream();
             stopMetricsPolling();
+            stopFastMetricsPolling();
             return;
         }
         activateLogStream(selectedLogSource);
@@ -1039,7 +1215,11 @@
         scrollLogToBottom();
         const idleCountdown = document.getElementById("idle-countdown");
         if (idleCountdown) {
-            idleCountdownSeconds = parseCountdown(idleCountdown.textContent.trim());
+            setIdleCountdownFromParsedSeconds(parseCountdown(idleCountdown.textContent.trim()));
+        }
+        const existingSessionDuration = document.getElementById("session-duration");
+        if (existingSessionDuration) {
+            setSessionDurationFromParsedSeconds(parseSessionDuration(existingSessionDuration.textContent.trim()));
         }
         const logSource = document.getElementById("log-source");
         if (logSource) {
