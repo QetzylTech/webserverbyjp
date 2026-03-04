@@ -435,6 +435,14 @@ def register_file_routes(app, state):
             """Runtime helper generate."""
             state["_increment_log_stream_clients"](source_key)
             last_event_id = 0
+            db_path = _state_db_path()
+            if db_path is not None:
+                try:
+                    latest_event = state_store_service.get_latest_event(db_path, topic=db_topic)
+                except Exception:
+                    latest_event = None
+                if isinstance(latest_event, dict):
+                    last_event_id = int(latest_event.get("id", 0) or 0)
             try:
                 while True:
                     db_path = _state_db_path()
@@ -512,6 +520,19 @@ def register_file_routes(app, state):
                 state["metrics_stream_client_count"] += 1
                 state["metrics_cache_cond"].notify_all()
             last_event_id = 0
+            db_path = _state_db_path()
+            if db_path is not None:
+                try:
+                    latest_event = state_store_service.get_latest_event(db_path, topic="metrics_snapshot")
+                except Exception:
+                    latest_event = None
+                if isinstance(latest_event, dict):
+                    latest_payload = latest_event.get("payload", {})
+                    latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
+                    last_event_id = int(latest_event.get("id", 0) or 0)
+                    if isinstance(latest_snapshot, dict):
+                        payload = json.dumps(latest_snapshot, separators=(",", ":"))
+                        yield f"data: {payload}\n\n"
             try:
                 while True:
                     db_path = _state_db_path()
