@@ -229,6 +229,9 @@ def build_runtime_bindings(
     def get_observed_state():
         return dashboard_runtime_service.get_observed_state(_state())
 
+    def invalidate_observed_state_cache():
+        return dashboard_runtime_service.invalidate_observed_state_cache(_state())
+
     def get_consistency_report(auto_repair=False):
         return dashboard_runtime_service.get_consistency_report(_state(), auto_repair=bool(auto_repair))
 
@@ -340,6 +343,7 @@ def build_runtime_bindings(
         "reset_backup_schedule_state": reset_backup_schedule_state,
         "collect_dashboard_metrics": collect_dashboard_metrics,
         "get_observed_state": get_observed_state,
+        "invalidate_observed_state_cache": invalidate_observed_state_cache,
         "get_consistency_report": get_consistency_report,
         "_mark_home_page_client_active": _mark_home_page_client_active,
         "_collect_and_publish_metrics": _collect_and_publish_metrics,

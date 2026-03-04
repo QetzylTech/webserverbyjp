@@ -16,7 +16,9 @@
     const csrfToken = __MCWEB_HOME_CONFIG.csrfToken ?? "";
     const http = window.MCWebHttp || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
+    const METRICS_FALLBACK_POLL_INTERVAL_MS = 15000;
     function sendHomePageHeartbeat() {
+        if (document.hidden) return;
         fetch("/home-heartbeat", {
             method: "POST",
             headers: {
@@ -805,6 +807,7 @@
     function startMetricsStream() {
         if (metricsEventSource) return;
         metricsEventSource = new EventSource("/metrics-stream");
+        stopMetricsPolling();
         metricsEventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data || "{}");
@@ -813,8 +816,13 @@
                 // Ignore malformed stream payload.
             }
         };
+        metricsEventSource.onopen = () => {
+            stopMetricsPolling();
+        };
         metricsEventSource.onerror = () => {
-            // EventSource reconnects automatically.
+            if (!metricsEventSource || metricsEventSource.readyState === EventSource.CLOSED) {
+                startMetricsPolling();
+            }
         };
     }
 
@@ -829,9 +837,10 @@
     }
 
     function startMetricsPolling() {
+        if (metricsEventSource && metricsEventSource.readyState !== EventSource.CLOSED) return;
         if (metricsPollTimer) return;
         refreshMetrics();
-        metricsPollTimer = window.setInterval(refreshMetrics, 5000);
+        metricsPollTimer = window.setInterval(refreshMetrics, METRICS_FALLBACK_POLL_INTERVAL_MS);
     }
 
     function stopMetricsPolling() {
@@ -911,6 +920,20 @@
             homeHeartbeatTimer = null;
         }
         clearRefreshTimers();
+    }
+
+    function handleVisibilityRefreshMode() {
+        if (document.hidden) {
+            LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
+            stopMetricsStream();
+            stopMetricsPolling();
+            return;
+        }
+        activateLogStream(selectedLogSource);
+        startMetricsStream();
+        startMetricsPolling();
+        refreshMetrics();
+        sendHomePageHeartbeat();
     }
 
     window.addEventListener("load", async () => {
@@ -1051,6 +1074,8 @@
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
     });
+
+    document.addEventListener("visibilitychange", handleVisibilityRefreshMode);
 
     window.addEventListener("pagehide", teardownRealtimeConnections);
     window.addEventListener("beforeunload", teardownRealtimeConnections);

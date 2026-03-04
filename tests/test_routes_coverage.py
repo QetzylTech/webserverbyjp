@@ -308,7 +308,11 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
             _assert_rule_methods(self, app, "/maintenance/api/ack-non-normal", {"POST"})
 
             self.assertEqual(client.get("/maintenance").status_code, 200)
-            self.assertEqual(client.get("/maintenance/api/state").status_code, 200)
+            state_resp = client.get("/maintenance/api/state")
+            self.assertEqual(state_resp.status_code, 200)
+            state_body = state_resp.get_json() or {}
+            self.assertIn("freshness", state_body)
+            self.assertIn("computed_at_epoch", state_body.get("freshness", {}))
             self.assertEqual(
                 client.post("/maintenance/api/confirm-password", json={"action": "open_rules_edit", "sudo_password": "ok"}).status_code,
                 200,

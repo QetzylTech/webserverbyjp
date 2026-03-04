@@ -21,9 +21,15 @@ from app.core.state_store_restore import (
     restore_backup_records_match,
 )
 from app.core.state_store_files import replace_file_records_snapshot
+from app.core.state_store_events import (
+    append_event,
+    list_events_since,
+    get_latest_event,
+)
 from app.core.state_store_operations import (
     create_operation,
     update_operation,
+    update_operations_batch,
     get_operation,
     get_latest_operation_for_type,
     list_operations_by_status,
@@ -44,8 +50,12 @@ __all__ = [
     "append_restore_run",
     "restore_backup_records_match",
     "replace_file_records_snapshot",
+    "append_event",
+    "list_events_since",
+    "get_latest_event",
     "create_operation",
     "update_operation",
+    "update_operations_batch",
     "get_operation",
     "get_latest_operation_for_type",
     "list_operations_by_status",

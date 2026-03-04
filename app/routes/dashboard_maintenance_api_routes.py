@@ -2,9 +2,12 @@
 import copy
 import threading
 import time
+from datetime import datetime, timezone
 
 from flask import jsonify, render_template, request
 from app.core import profiling
+from app.core import state_store as state_store_service
+from app.core.rate_limit import InMemoryRateLimiter
 
 from app.services.maintenance_scheduler import start_cleanup_scheduler_once
 from app.services.maintenance_state_store import (
@@ -36,6 +39,15 @@ from app.services.maintenance_engine import (
 _MAINTENANCE_STATE_CACHE_TTL_SECONDS = 3.0
 _MAINTENANCE_STATE_CACHE_LOCK = threading.Lock()
 _MAINTENANCE_STATE_CACHE = {}
+_MAINTENANCE_RATE_LIMITER = InMemoryRateLimiter()
+_MAINTENANCE_ASYNC_REFRESH_INTERVAL_SECONDS = 2.0
+_MAINTENANCE_ASYNC_SCOPE_IDLE_SECONDS = 45.0
+_MAINTENANCE_ASYNC_LOCK = threading.Lock()
+_MAINTENANCE_ASYNC_STATE = {
+    "started": False,
+    "state_ref": None,
+    "scope_items": {},
+}
 
 
 def _maintenance_state_cache_get(scope):
@@ -70,6 +82,163 @@ def _maintenance_state_cache_invalidate(scope=None):
             _MAINTENANCE_STATE_CACHE.clear()
         else:
             _MAINTENANCE_STATE_CACHE.pop(scope, None)
+    with _MAINTENANCE_ASYNC_LOCK:
+        if scope is None:
+            _MAINTENANCE_ASYNC_STATE["scope_items"].clear()
+        else:
+            _MAINTENANCE_ASYNC_STATE["scope_items"].pop(scope, None)
+
+
+def _maintenance_client_key():
+    xff = (request.headers.get("X-Forwarded-For", "") or "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return str(request.remote_addr or "unknown")
+
+
+def _maintenance_enforce_rate_limit(route_key, *, limit, window_seconds):
+    allowed, retry_after = _MAINTENANCE_RATE_LIMITER.allow(
+        f"{route_key}:{_maintenance_client_key()}",
+        limit=limit,
+        window_seconds=window_seconds,
+    )
+    if allowed:
+        return None
+    response = jsonify({
+        "ok": False,
+        "error": "rate_limited",
+        "message": "Too many requests for this endpoint. Please retry shortly.",
+        "retry_after_seconds": retry_after,
+    })
+    response.status_code = 429
+    response.headers["Retry-After"] = str(int(retry_after))
+    return response
+
+
+def _maintenance_compute_state_payload(state, scope):
+    full_cfg = _cleanup_load_config(state)
+    cfg = _cleanup_get_scope_view(full_cfg, scope)
+    preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+    return {
+        "ok": True,
+        **_cleanup_state_snapshot(state, cfg),
+        "preview": preview,
+        "scope": scope,
+        "device_map": state["get_device_name_map"](),
+    }
+
+
+def _maintenance_payload_from_db(state, scope):
+    """Return worker-precomputed maintenance payload from sqlite events when available."""
+    db_path = state.get("APP_STATE_DB_PATH")
+    if db_path is None:
+        return None, 0.0
+    try:
+        event = state_store_service.get_latest_event(db_path, topic=f"maintenance_state:{scope}")
+    except Exception:
+        return None, 0.0
+    if not isinstance(event, dict):
+        return None, 0.0
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return None, 0.0
+    snapshot = payload.get("snapshot")
+    preview = payload.get("preview")
+    if not isinstance(snapshot, dict) or not isinstance(preview, dict):
+        return None, 0.0
+    data = {
+        "ok": True,
+        **snapshot,
+        "preview": preview,
+        "scope": scope,
+        "device_map": state["get_device_name_map"](),
+    }
+    try:
+        computed_at = float(event.get("id", 0) or 0)
+    except Exception:
+        computed_at = 0.0
+    return data, computed_at
+
+
+def _maintenance_payload_with_freshness(payload, *, computed_at, refreshing=False):
+    body = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+    computed_epoch = float(computed_at or 0.0)
+    stale_seconds = max(0.0, time.time() - computed_epoch) if computed_epoch > 0 else 0.0
+    body["freshness"] = {
+        "computed_at_epoch": computed_epoch,
+        "computed_at_iso": datetime.fromtimestamp(computed_epoch, tz=timezone.utc).isoformat() if computed_epoch > 0 else "",
+        "stale_seconds": stale_seconds,
+        "refreshing": bool(refreshing),
+    }
+    return body
+
+
+def _maintenance_async_worker():
+    while True:
+        time.sleep(_MAINTENANCE_ASYNC_REFRESH_INTERVAL_SECONDS)
+        with _MAINTENANCE_ASYNC_LOCK:
+            state = _MAINTENANCE_ASYNC_STATE.get("state_ref")
+            scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
+            scope_rows = [(k, dict(v)) for k, v in scope_items.items() if isinstance(v, dict)]
+        if state is None:
+            continue
+        now = time.time()
+        for scope, item in scope_rows:
+            last_requested_at = float(item.get("last_requested_at", 0.0) or 0.0)
+            if (now - last_requested_at) > _MAINTENANCE_ASYNC_SCOPE_IDLE_SECONDS:
+                continue
+            computed_at = float(item.get("computed_at", 0.0) or 0.0)
+            force_refresh = bool(item.get("force_refresh", False))
+            stale = (now - computed_at) > _MAINTENANCE_STATE_CACHE_TTL_SECONDS
+            if not (force_refresh or stale):
+                continue
+            with _MAINTENANCE_ASYNC_LOCK:
+                current = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+                if bool(current.get("refreshing", False)):
+                    continue
+                current["refreshing"] = True
+                if force_refresh:
+                    current["force_refresh"] = False
+            try:
+                payload = _maintenance_compute_state_payload(state, scope)
+                computed_now = time.time()
+                with _MAINTENANCE_ASYNC_LOCK:
+                    target = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+                    target["payload"] = payload
+                    target["computed_at"] = computed_now
+                    target["refreshing"] = False
+                _maintenance_state_cache_set(scope, _maintenance_payload_with_freshness(payload, computed_at=computed_now, refreshing=False))
+            except Exception:
+                with _MAINTENANCE_ASYNC_LOCK:
+                    target = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+                    target["refreshing"] = False
+
+
+def _maintenance_mark_scope_requested(state, scope, *, force_refresh=False):
+    with _MAINTENANCE_ASYNC_LOCK:
+        _MAINTENANCE_ASYNC_STATE["state_ref"] = state
+        item = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+        item["last_requested_at"] = time.time()
+        if force_refresh:
+            item["force_refresh"] = True
+        if not _MAINTENANCE_ASYNC_STATE["started"]:
+            worker = threading.Thread(target=_maintenance_async_worker, daemon=True)
+            worker.start()
+            _MAINTENANCE_ASYNC_STATE["started"] = True
+
+
+def _maintenance_get_async_item(scope):
+    with _MAINTENANCE_ASYNC_LOCK:
+        item = _MAINTENANCE_ASYNC_STATE["scope_items"].get(scope)
+        return dict(item) if isinstance(item, dict) else None
+
+
+def _maintenance_set_async_item(scope, payload, *, computed_at=None):
+    with _MAINTENANCE_ASYNC_LOCK:
+        item = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+        item["payload"] = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+        item["computed_at"] = float(computed_at or time.time())
+        item["refreshing"] = False
 
 
 def register_maintenance_routes(app, state):
@@ -130,29 +299,51 @@ def register_maintenance_routes(app, state):
     def maintenance_api_state():
         """Handle maintenance api state."""
         with profiling.timed("maintenance.route.api_state"):
+            limited = _maintenance_enforce_rate_limit("maintenance_api_state", limit=30, window_seconds=10.0)
+            if limited is not None:
+                return limited
             force_refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
             scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
+            _maintenance_mark_scope_requested(state, scope, force_refresh=force_refresh)
+            if not force_refresh:
+                db_payload, _db_id = _maintenance_payload_from_db(state, scope)
+                if isinstance(db_payload, dict):
+                    response_payload = _maintenance_payload_with_freshness(
+                        db_payload,
+                        computed_at=time.time(),
+                        refreshing=False,
+                    )
+                    _maintenance_state_cache_set(scope, response_payload)
+                    return jsonify(response_payload)
             if not force_refresh:
                 cached = _maintenance_state_cache_get(scope)
                 if isinstance(cached, dict):
                     return jsonify(cached)
-            full_cfg = _cleanup_load_config(state)
-            cfg = _cleanup_get_scope_view(full_cfg, scope)
-            preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
-            payload = {
-                "ok": True,
-                **_cleanup_state_snapshot(state, cfg),
-                "preview": preview,
-                "scope": scope,
-                "device_map": state["get_device_name_map"](),
-            }
-            _maintenance_state_cache_set(scope, payload)
-            return jsonify(payload)
+            async_item = _maintenance_get_async_item(scope)
+            if isinstance(async_item, dict) and isinstance(async_item.get("payload"), dict):
+                computed_at = float(async_item.get("computed_at", 0.0) or 0.0)
+                refreshing = bool(async_item.get("refreshing", False))
+                payload = _maintenance_payload_with_freshness(
+                    async_item.get("payload", {}),
+                    computed_at=computed_at,
+                    refreshing=refreshing or force_refresh,
+                )
+                _maintenance_state_cache_set(scope, payload)
+                return jsonify(payload)
+            payload = _maintenance_compute_state_payload(state, scope)
+            computed_at = time.time()
+            _maintenance_set_async_item(scope, payload, computed_at=computed_at)
+            response_payload = _maintenance_payload_with_freshness(payload, computed_at=computed_at, refreshing=False)
+            _maintenance_state_cache_set(scope, response_payload)
+            return jsonify(response_payload)
 
     # Route: /maintenance/api/confirm-password
     @app.route("/maintenance/api/confirm-password", methods=["POST"])
     def maintenance_api_confirm_password():
         """Validate maintenance password for protected UI actions."""
+        limited = _maintenance_enforce_rate_limit("maintenance_api_confirm_password", limit=15, window_seconds=30.0)
+        if limited is not None:
+            return limited
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
         action = str(payload.get("action", "")).strip().lower()
@@ -182,6 +373,9 @@ def register_maintenance_routes(app, state):
     @app.route("/maintenance/api/save-rules", methods=["POST"])
     def maintenance_api_save_rules():
         """Handle maintenance api save rules."""
+        limited = _maintenance_enforce_rate_limit("maintenance_api_save_rules", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
         ok_pw, err = _require_password(payload, what="save_rules", why="manual_save", trigger="manual", scope=scope)
@@ -251,6 +445,9 @@ def register_maintenance_routes(app, state):
     @app.route("/maintenance/api/run-rules", methods=["POST"])
     def maintenance_api_run_rules():
         """Handle maintenance api run rules."""
+        limited = _maintenance_enforce_rate_limit("maintenance_api_run_rules", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
         selected_rule = str(payload.get("rule_key", "")).strip().lower()
@@ -337,6 +534,9 @@ def register_maintenance_routes(app, state):
     @app.route("/maintenance/api/manual-delete", methods=["POST"])
     def maintenance_api_manual_delete():
         """Handle maintenance api manual delete."""
+        limited = _maintenance_enforce_rate_limit("maintenance_api_manual_delete", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
         raw_dry_run = payload.get("dry_run", False)
@@ -422,6 +622,9 @@ def register_maintenance_routes(app, state):
     @app.route("/maintenance/api/ack-non-normal", methods=["POST"])
     def maintenance_api_ack_non_normal():
         """Handle maintenance api ack non normal."""
+        limited = _maintenance_enforce_rate_limit("maintenance_api_ack_non_normal", limit=10, window_seconds=30.0)
+        if limited is not None:
+            return limited
         payload = request.get_json(silent=True) or {}
         scope = _cleanup_normalize_scope(payload.get("scope", "backups"))
 

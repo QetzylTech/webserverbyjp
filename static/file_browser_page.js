@@ -14,7 +14,9 @@
         const csrfToken = __MCWEB_FILES_CONFIG.csrfToken ?? "";
         const http = window.MCWebHttp || null;
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
+        const RESTORE_AVAILABILITY_INTERVAL_MS = 10000;
         function sendFilePageHeartbeat() {
+            if (document.hidden) return;
             fetch("/file-page-heartbeat", {
                 method: "POST",
                 headers: {
@@ -26,7 +28,7 @@
             }).catch(() => {});
         }
         sendFilePageHeartbeat();
-        window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
+        let fileHeartbeatTimer = window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
 
         const toggle = document.getElementById("nav-toggle");
         const sidebar = document.getElementById("side-nav");
@@ -103,6 +105,7 @@
         let restoreOperationOpId = "";
         let restorePaneAlertTimer = null;
         let restorePaneStatePollTimer = null;
+        let restoreAvailabilityPollTimer = null;
         let restoreServerIsOff = false;
         let activeViewedFilename = "";
         let activeRestoreFilename = "";
@@ -298,6 +301,7 @@
 
         async function refreshRestoreAvailability() {
             if (pageId !== "backups") return;
+            if (document.hidden) return;
             try {
                 const response = await fetch("/metrics", {
                     method: "GET",
@@ -492,6 +496,7 @@
 
         async function sendRestorePaneOpenSignal() {
             if (pageId !== "backups") return;
+            if (document.hidden) return;
             const filename = (selectedRestoreFilename || activeRestoreFilename || "").trim();
             try {
                 await fetch("/maintenance/nav-alert/restore-pane-open", {
@@ -531,6 +536,7 @@
 
         async function refreshRestorePaneSharedState() {
             if (pageId !== "backups") return;
+            if (document.hidden) return;
             try {
                 const response = await fetch("/maintenance/nav-alert/state", {
                     method: "GET",
@@ -565,6 +571,49 @@
             refreshRestorePaneSharedState();
             if (restorePaneStatePollTimer) return;
             restorePaneStatePollTimer = window.setInterval(refreshRestorePaneSharedState, 5000);
+        }
+
+        function stopRestoreAvailabilityPolling() {
+            if (!restoreAvailabilityPollTimer) return;
+            window.clearInterval(restoreAvailabilityPollTimer);
+            restoreAvailabilityPollTimer = null;
+        }
+
+        function startRestoreAvailabilityPolling() {
+            if (pageId !== "backups") return;
+            refreshRestoreAvailability();
+            if (restoreAvailabilityPollTimer) return;
+            restoreAvailabilityPollTimer = window.setInterval(refreshRestoreAvailability, RESTORE_AVAILABILITY_INTERVAL_MS);
+        }
+
+        function stopFileHeartbeatPolling() {
+            if (!fileHeartbeatTimer) return;
+            window.clearInterval(fileHeartbeatTimer);
+            fileHeartbeatTimer = null;
+        }
+
+        function startFileHeartbeatPolling() {
+            sendFilePageHeartbeat();
+            if (fileHeartbeatTimer) return;
+            fileHeartbeatTimer = window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
+        }
+
+        function handleVisibilityStateChange() {
+            if (document.hidden) {
+                stopFileHeartbeatPolling();
+                stopRestoreAvailabilityPolling();
+                stopRestorePaneStatePolling();
+                stopRestorePaneAlertHeartbeat();
+                return;
+            }
+            startFileHeartbeatPolling();
+            if (pageId === "backups") {
+                startRestorePaneStatePolling();
+                startRestoreAvailabilityPolling();
+                if (selectedRestoreFilename) {
+                    startRestorePaneAlertHeartbeat();
+                }
+            }
         }
 
         function sortKeyForItem(item, mode) {
@@ -1454,12 +1503,13 @@
         });
         if (pageId === "backups") {
             syncRestoreAvailabilityUi();
-            refreshRestoreAvailability();
+            startRestoreAvailabilityPolling();
             startRestorePaneStatePolling();
-            window.setInterval(refreshRestoreAvailability, 5000);
             window.addEventListener("beforeunload", stopRestorePaneStatePolling);
             window.addEventListener("beforeunload", stopRestoreOperationPolling);
+            window.addEventListener("beforeunload", stopRestoreAvailabilityPolling);
         }
+        document.addEventListener("visibilitychange", handleVisibilityStateChange);
         ensureFileListClickBinding();
         logSourceToggles.forEach((btn) => {
             btn.addEventListener("click", async () => {

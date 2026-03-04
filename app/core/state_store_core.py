@@ -9,6 +9,8 @@ from app.core import profiling
 
 
 _CLEANUP_CONFIG_KEY = "cleanup_config"
+_SQLITE_CONNECT_TIMEOUT_SECONDS = 8.0
+_SQLITE_BUSY_TIMEOUT_MS = 8000
 
 
 def _connect(db_path):
@@ -17,12 +19,13 @@ def _connect(db_path):
     started = 0.0
     if profiling.ENABLED:
         started = time.perf_counter()
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = sqlite3.connect(str(path), timeout=_SQLITE_CONNECT_TIMEOUT_SECONDS)
     if profiling.ENABLED:
         profiling.record_duration("sqlite.connect", time.perf_counter() - started)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
     return conn
 
 
@@ -138,6 +141,17 @@ def _create_tables(conn):
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_record_history_source_key ON file_record_history(source_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_record_history_observed_at ON file_record_history(observed_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_topic_id ON events(topic, id)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS operations (

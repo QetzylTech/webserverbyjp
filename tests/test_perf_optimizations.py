@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+import uuid
 from unittest.mock import patch
 
+from app.core import state_store as state_store_service
 from app.services import dashboard_runtime as runtime_service
 from app.services import maintenance_engine as maintenance_engine_service
 from app.services import maintenance_state_store as maintenance_store_service
@@ -19,6 +21,7 @@ class PerformanceOptimizationTests(unittest.TestCase):
                 "latest_restore": None,
             }
         )
+        runtime_service.invalidate_observed_state_cache(None)
         maintenance_store_service._CLEANUP_CONFIG_CACHE.clear()
 
     def test_observed_state_operation_aggregation_uses_short_ttl_cache(self):
@@ -141,6 +144,37 @@ class PerformanceOptimizationTests(unittest.TestCase):
             self.assertTrue(result.get("ok"))
             self.assertEqual(result.get("eligible_count"), 0)
             self.assertEqual(result.get("items"), [])
+
+    def test_operation_batch_update_applies_in_one_call(self):
+        db_path = Path("data") / f"test_state_batch_{uuid.uuid4().hex[:10]}.sqlite3"
+        state_store_service.create_operation(
+            db_path,
+            op_id="op-a",
+            op_type="backup",
+            status="intent",
+            checkpoint="intent_created",
+            payload={},
+        )
+        state_store_service.create_operation(
+            db_path,
+            op_id="op-b",
+            op_type="start",
+            status="intent",
+            checkpoint="intent_created",
+            payload={},
+        )
+        rows = state_store_service.update_operations_batch(
+            db_path,
+            updates=[
+                {"op_id": "op-a", "status": "failed", "error_code": "x", "finished": True, "checkpoint": "failed"},
+                {"op_id": "op-b", "status": "observed", "finished": True, "checkpoint": "observed"},
+            ],
+        )
+        self.assertEqual(len(rows), 2)
+        op_a = state_store_service.get_operation(db_path, "op-a")
+        op_b = state_store_service.get_operation(db_path, "op-b")
+        self.assertEqual(op_a.get("status"), "failed")
+        self.assertEqual(op_b.get("status"), "observed")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ htmlcov/
 
 # Logs and runtime output
 logs/
+**/logs/
 *.log
 *.out
 *.err
@@ -43,7 +44,9 @@ logs/
 
 # Local runtime/server state and sensitive data
 data/
+**/data/
 data.old/
+**/data.old/
 mcweb.env
 *.env
 *.env.local

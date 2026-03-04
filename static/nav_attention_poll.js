@@ -4,6 +4,7 @@
     const navToggle = document.getElementById("nav-toggle");
     if (!homeLink && !backupsLink && !navToggle) return;
     const mobileQuery = window.matchMedia("(max-width: 1100px)");
+    let navAttentionTimer = null;
 
     function clearNavAttentionClasses(node) {
         if (!node) return;
@@ -40,6 +41,7 @@
     }
 
     async function refreshNavAttention() {
+        if (document.hidden) return;
         let restoreAttention = false;
         let homeAttention = "none";
         try {
@@ -66,5 +68,16 @@
     }
 
     refreshNavAttention();
-    window.setInterval(refreshNavAttention, 5000);
+    navAttentionTimer = window.setInterval(refreshNavAttention, 10000);
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            refreshNavAttention();
+        }
+    });
+    window.addEventListener("beforeunload", () => {
+        if (navAttentionTimer) {
+            window.clearInterval(navAttentionTimer);
+            navAttentionTimer = null;
+        }
+    });
 })();

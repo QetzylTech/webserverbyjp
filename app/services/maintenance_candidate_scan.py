@@ -3,13 +3,17 @@
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
 from app.services.maintenance_state_store import _cleanup_data_dir
+from app.services import file_inventory_index as file_inventory_index_service
 from app.core import profiling
 
 _RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
+_INDEX_LOCK = threading.Lock()
+_DIR_SIZE_CACHE = {}
 
 
 def _backup_bucket(name):
@@ -44,6 +48,13 @@ def _iter_backup_files(backup_dir):
             "bucket": _backup_bucket(path.name),
         })
     return items
+
+
+def _safe_dir_mtime_ns(path):
+    try:
+        return int(Path(path).stat().st_mtime_ns)
+    except OSError:
+        return -1
 
 
 def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, keep_session_days, keep_pre_restore_days, dry_run):
@@ -238,6 +249,13 @@ def _cleanup_active_world_path(state):
 def _cleanup_dir_size(path):
     """Handle cleanup dir size."""
     with profiling.timed("maintenance.fs.dir_size"):
+        target_path = Path(path)
+        key = str(target_path.resolve())
+        mtime_ns = _safe_dir_mtime_ns(target_path)
+        with _INDEX_LOCK:
+            cached = _DIR_SIZE_CACHE.get(key)
+            if isinstance(cached, dict) and int(cached.get("mtime_ns", -1)) == mtime_ns:
+                return int(cached.get("size", 0))
         total = 0
         for root, _, files in os.walk(path):
             for name in files:
@@ -246,6 +264,8 @@ def _cleanup_dir_size(path):
                     total += int(target.stat().st_size)
                 except OSError:
                     continue
+        with _INDEX_LOCK:
+            _DIR_SIZE_CACHE[key] = {"mtime_ns": mtime_ns, "size": int(total)}
         return total
 
 
@@ -255,6 +275,12 @@ def _cleanup_collect_candidates(state, cfg):
         backup_dir = Path(state["BACKUP_DIR"]).resolve()
         data_dir = _cleanup_data_dir(state).resolve()
         old_worlds_dir = (data_dir / "old_worlds").resolve()
+        snapshot_root = Path(state.get("AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
+        inventory = file_inventory_index_service.get_inventory(
+            backup_root=backup_dir,
+            snapshot_root=snapshot_root,
+            old_worlds_root=old_worlds_dir,
+        )
         allowed_roots = [backup_dir, old_worlds_dir]
         with profiling.timed("maintenance.candidate_discovery.active_world_probe"):
             active_world = _cleanup_active_world_path(state)
@@ -306,19 +332,19 @@ def _cleanup_collect_candidates(state, cfg):
 
         if backup_dir.exists() and backup_dir.is_dir():
             with profiling.timed("maintenance.candidate_discovery.scan_backup_dir"):
-                for entry in backup_dir.glob("*.zip"):
+                for entry in inventory.get("backup_zip_paths", []):
                     _append(entry, "backup_zip", is_dir=False)
 
         if old_worlds_dir.exists() and old_worlds_dir.is_dir():
             with profiling.timed("maintenance.candidate_discovery.scan_old_worlds"):
-                for entry in old_worlds_dir.iterdir():
+                top_entries = inventory.get("old_world_top_entries", [])
+                nested_zip_paths = inventory.get("old_world_nested_zip_paths", [])
+                for entry in top_entries:
                     if entry.is_dir():
                         _append(entry, "stale_world_dir", is_dir=True)
                     elif entry.is_file() and entry.suffix.lower() == ".zip":
                         _append(entry, "old_world_zip", is_dir=False)
-                for entry in old_worlds_dir.rglob("*.zip"):
-                    if entry.parent == old_worlds_dir:
-                        continue
+                for entry in nested_zip_paths:
                     _append(entry, "old_world_zip", is_dir=False)
 
         candidates.sort(key=lambda row: row["mtime"], reverse=True)

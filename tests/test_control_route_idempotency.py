@@ -21,6 +21,15 @@ class _ImmediateThread:
             self._target()
 
 
+class _NoopThread:
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+        self.daemon = daemon
+
+    def start(self):
+        return None
+
+
 class ControlRouteIdempotencyTests(unittest.TestCase):
     def _db_path(self, stem):
         return Path("data") / f"{stem}_{uuid.uuid4().hex[:8]}.sqlite3"
@@ -81,6 +90,33 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
             "APP_STATE_DB_PATH": Path(db_path),
             "SERVICE": "minecraft",
         }
+
+    def test_web_role_enqueues_start_without_local_worker_thread(self):
+        db_path = self._db_path("test_web_role_enqueue_start")
+        app = Flask(__name__)
+        state = self._base_state(db_path)
+        state["PROCESS_ROLE"] = "web"
+        started = {"count": 0}
+
+        class _FailIfStartedThread:
+            def __init__(self, target=None, daemon=None):
+                self._target = target
+                self.daemon = daemon
+
+            def start(self):
+                started["count"] += 1
+                raise AssertionError("web role should not start local worker thread")
+
+        with patch.object(dashboard_control_routes.threading, "Thread", _FailIfStartedThread):
+            dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+            client = app.test_client()
+            resp = client.post("/start")
+        body = resp.get_json() or {}
+        self.assertEqual(resp.status_code, 202)
+        self.assertTrue(body.get("queued"))
+        self.assertEqual(started["count"], 0)
+        op = state_store_service.get_operation(db_path, body.get("op_id", ""))
+        self.assertEqual(op.get("status"), "intent")
 
     def test_start_idempotency_reuses_existing_operation(self):
         db_path = self._db_path("test_start_idempotency_reuse")
@@ -275,6 +311,24 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
         self.assertEqual(second_body.get("op_id"), op_id)
         self.assertEqual(after["status"], "observed")
         self.assertEqual(after["attempt"], 2)
+
+    def test_backup_dedupes_in_flight_without_idempotency_key(self):
+        db_path = self._db_path("test_backup_dedupe_without_idempotency")
+        app = Flask(__name__)
+        state = self._base_state(db_path)
+        with patch.object(dashboard_control_routes.threading, "Thread", _NoopThread):
+            dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+            client = app.test_client()
+            first = client.post("/backup")
+            second = client.post("/backup")
+
+        first_body = first.get_json() or {}
+        second_body = second.get_json() or {}
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(first_body.get("op_id"), second_body.get("op_id"))
+        self.assertTrue(second_body.get("existing"))
+        self.assertFalse(second_body.get("resumed"))
 
 
 if __name__ == "__main__":

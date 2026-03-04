@@ -4,6 +4,7 @@ import threading
 import time
 import re
 from app.platform import get_calls
+from app.core import state_store as state_store_service
 
 _calls = get_calls()
 
@@ -103,7 +104,19 @@ def publish_log_stream_line(ctx, source, line):
     if state is None:
         return
     with state["cond"]:
-        state["seq"] += 1
+        db_event_id = 0
+        try:
+            db_event_id = int(
+                state_store_service.append_event(
+                    ctx.APP_STATE_DB_PATH,
+                    topic=f"log:{normalized}",
+                    payload={"line": str(line or "")},
+                )
+                or 0
+            )
+        except Exception:
+            db_event_id = 0
+        state["seq"] = int(db_event_id or (state["seq"] + 1))
         state["events"].append((state["seq"], line))
         state["cond"].notify_all()
     appenders = {

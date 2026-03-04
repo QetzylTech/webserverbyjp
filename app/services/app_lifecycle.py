@@ -8,6 +8,7 @@ def install_flask_hooks(
     *,
     ensure_session_tracking_initialized,
     ensure_metrics_collector_started,
+    enable_metrics_collector_autostart=True,
     ensure_csrf_token,
     is_csrf_valid,
     csrf_rejected_response,
@@ -19,7 +20,8 @@ def install_flask_hooks(
     @app.before_request
     def _initialize_session_tracking_before_request():
         ensure_session_tracking_initialized()
-        ensure_metrics_collector_started()
+        if enable_metrics_collector_autostart:
+            ensure_metrics_collector_started()
         ensure_csrf_token()
         csrf_exempt_paths = {"/home-heartbeat", "/file-page-heartbeat", "/setup", "/setup/submit", "/setup/validate"}
         if (
@@ -62,6 +64,8 @@ def build_run_server(
     start_idle_player_watcher,
     start_backup_session_watcher,
     start_storage_safety_watcher,
+    enable_background_workers=True,
+    enable_boot_runtime_tasks=True,
 ):
         # Return the app startup runner from explicit boot-step dependencies.
 
@@ -69,6 +73,17 @@ def build_run_server(
         def _load_backup_log_cache_boot_step():
             if not is_backup_running():
                 load_backup_log_cache_from_disk()
+
+        if not enable_boot_runtime_tasks:
+            bootstrap_service.run_server(
+                app,
+                cfg_get_str,
+                cfg_get_int,
+                log_mcweb_log,
+                log_mcweb_exception,
+                boot_steps=[],
+            )
+            return
 
         boot_steps = [
             ("prepare_debug_server_properties_bootup", prepare_debug_server_properties_bootup),
@@ -79,11 +94,16 @@ def build_run_server(
             ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
             ("ensure_metrics_collector_started", ensure_metrics_collector_started),
             ("collect_and_publish_metrics", collect_and_publish_metrics),
-            ("start_operation_reconciler", start_operation_reconciler),
-            ("start_idle_player_watcher", start_idle_player_watcher),
-            ("start_backup_session_watcher", start_backup_session_watcher),
-            ("start_storage_safety_watcher", start_storage_safety_watcher),
         ]
+        if enable_background_workers:
+            boot_steps.extend(
+                [
+                    ("start_operation_reconciler", start_operation_reconciler),
+                    ("start_idle_player_watcher", start_idle_player_watcher),
+                    ("start_backup_session_watcher", start_backup_session_watcher),
+                    ("start_storage_safety_watcher", start_storage_safety_watcher),
+                ]
+            )
 
         bootstrap_service.run_server(
             app,

@@ -43,6 +43,7 @@ from app.services import session_watchers as session_watchers_service
 from app.services import state_builder as state_builder_service
 from app.services import runtime_wiring as runtime_wiring_service
 from app.services import status_cache as status_cache_service
+from app.services import worker_runtime as worker_runtime_service
 from app.services import system_bindings as system_bindings_service
 from app.services.system_metrics import (
     get_cpu_frequency,
@@ -317,6 +318,9 @@ CRASH_STOP_MARKERS = (
     "Preparing crash report with UUID",
     "This crash report has been saved to:",
 )
+PROCESS_ROLE = _cfg_str("MCWEB_PROCESS_ROLE", "all").strip().lower() or "all"
+if PROCESS_ROLE not in {"all", "web", "worker"}:
+    PROCESS_ROLE = "all"
 metrics_collector_started = False
 metrics_collector_start_lock = threading.Lock()
 metrics_cache_cond = threading.Condition()
@@ -455,6 +459,26 @@ if _setup_required():
     run_server = _setup_run_server
 
 
+def run_worker():
+    """Run background worker loops without starting the Flask web server."""
+    log_mcweb_log("worker-boot-start", command=f"role={PROCESS_ROLE}")
+    ctx = RUNTIME_CONTEXT
+    boot_steps = [
+        ("ensure_session_tracking_initialized", ctx["ensure_session_tracking_initialized"]),
+        ("start_worker_loops", lambda: worker_runtime_service.start_worker_loops(STATE)),
+    ]
+    for step_name, step_func in boot_steps:
+        try:
+            step_func()
+        except Exception as exc:
+            log_mcweb_exception(f"worker_step/{step_name}", exc)
+            raise
+    log_mcweb_log("worker-boot-ready", command="background loops active")
+    while True:
+        # Keep worker process alive while daemon loops run.
+        time.sleep(60)
+
+
 @app.context_processor
 def inject_asset_helpers():
     """Expose per-file static version helper to templates.
@@ -479,4 +503,7 @@ Runtime helper inject_asset_helpers."""
 
 
 if __name__ == "__main__":
-    run_server()
+    if PROCESS_ROLE == "worker":
+        run_worker()
+    else:
+        run_server()

@@ -5,23 +5,105 @@ import uuid
 
 from flask import jsonify, request
 from app.core import state_store as state_store_service
+from app.core.rate_limit import InMemoryRateLimiter
+
+
+_CONTROL_RATE_LIMITER = InMemoryRateLimiter()
 
 
 def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     """Register start/stop/backup/restore/RCON control routes."""
+    process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
 
     def _new_operation_id(prefix):
         return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+    def _invalidate_observed_cache():
+        invalidate_fn = state.get("invalidate_observed_state_cache")
+        if callable(invalidate_fn):
+            try:
+                invalidate_fn()
+            except Exception:
+                pass
 
     def _idempotency_key_from_request():
         header_value = (request.headers.get("X-Idempotency-Key", "") or "").strip()
         form_value = (request.form.get("idempotency_key", "") or "").strip()
         return header_value or form_value
 
+    def _enqueue_control_intent(op_type, op_id, *, target=""):
+        try:
+            state_store_service.append_event(
+                state["APP_STATE_DB_PATH"],
+                topic="control_intent",
+                payload={
+                    "op_type": str(op_type or ""),
+                    "op_id": str(op_id or ""),
+                    "target": str(target or ""),
+                },
+            )
+            return True
+        except Exception as exc:
+            state["log_mcweb_exception"](f"append_event/control_intent/{op_type}", exc)
+            return False
+
+    def _client_key():
+        getter = state.get("_get_client_ip")
+        if callable(getter):
+            try:
+                return str(getter() or "unknown")
+            except Exception:
+                pass
+        xff = (request.headers.get("X-Forwarded-For", "") or "").strip()
+        if xff:
+            return xff.split(",")[0].strip()
+        return str(request.remote_addr or "unknown")
+
+    def _enforce_rate_limit(route_key, *, limit, window_seconds):
+        allowed, retry_after = _CONTROL_RATE_LIMITER.allow(
+            f"{route_key}:{_client_key()}",
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        if allowed:
+            return None
+        response = jsonify({
+            "ok": False,
+            "error": "rate_limited",
+            "message": "Too many requests for this action. Please retry shortly.",
+            "retry_after_seconds": retry_after,
+        })
+        response.status_code = 429
+        response.headers["Retry-After"] = str(int(retry_after))
+        return response
+
+    def _find_active_operation(op_type, *, target=None):
+        try:
+            rows = state_store_service.list_operations_by_status(
+                state["APP_STATE_DB_PATH"],
+                statuses=("intent", "in_progress"),
+                limit=40,
+            )
+        except Exception:
+            return None
+        target_text = str(target or "")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("op_type", "") or "").strip().lower() != str(op_type or "").strip().lower():
+                continue
+            if target is not None and str(row.get("target", "") or "") != target_text:
+                continue
+            return row
+        return None
+
     # Route: /start
     @app.route("/start", methods=["POST"])
     def start():
         """Runtime helper start."""
+        limited = _enforce_rate_limit("start", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         if state["is_storage_low"]():
             message = state["low_storage_error_message"]()
             state["log_mcweb_action"]("start", rejection_message=message)
@@ -30,6 +112,18 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         op_id = ""
         existing = None
         resumed = False
+        if not idempotency_key:
+            active = _find_active_operation("start")
+            if isinstance(active, dict):
+                state["log_mcweb_action"]("start")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": str(active.get("op_id", "") or ""),
+                    "status": str(active.get("status", "") or "intent"),
+                }), 202
         if idempotency_key:
             try:
                 existing = state_store_service.get_operation_by_idempotency_key(
@@ -85,8 +179,22 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             except Exception as exc:
                 state["log_mcweb_exception"]("create_operation/start", exc)
                 return state["_start_failed_response"]("Failed to create start operation record.")
+        _enqueue_control_intent("start", op_id, target=state.get("SERVICE", "minecraft"))
+        _invalidate_observed_cache()
         state["set_service_status_intent"]("starting")
         state["invalidate_status_cache"]()
+
+        if process_role == "web":
+            state["log_mcweb_action"]("start")
+            return jsonify({
+                "ok": True,
+                "accepted": True,
+                "queued": True,
+                "existing": resumed,
+                "resumed": resumed,
+                "op_id": op_id,
+                "status": "intent",
+            }), 202
 
         def _start_worker():
             try:
@@ -147,7 +255,8 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                     finished=True,
                 )
             except Exception as exc:
-                state["log_mcweb_exception"]("update_operation/start_observed", exc)
+                    state["log_mcweb_exception"]("update_operation/start_observed", exc)
+            _invalidate_observed_cache()
 
         try:
             threading.Thread(target=_start_worker, daemon=True).start()
@@ -184,6 +293,9 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     @app.route("/stop", methods=["POST"])
     def stop():
         """Runtime helper stop."""
+        limited = _enforce_rate_limit("stop", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         sudo_password = request.form.get("sudo_password", "")
         idempotency_key = _idempotency_key_from_request()
         if not state["validate_sudo_password"](sudo_password):
@@ -194,6 +306,18 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         op_id = ""
         existing = None
         resumed = False
+        if not idempotency_key:
+            active = _find_active_operation("stop")
+            if isinstance(active, dict):
+                state["log_mcweb_action"]("stop")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": str(active.get("op_id", "") or ""),
+                    "status": str(active.get("status", "") or "intent"),
+                }), 202
         if idempotency_key:
             try:
                 existing = state_store_service.get_operation_by_idempotency_key(
@@ -249,9 +373,23 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             except Exception as exc:
                 state["log_mcweb_exception"]("create_operation/stop", exc)
                 return state["_start_failed_response"]("Failed to create stop operation record.")
+        _enqueue_control_intent("stop", op_id, target=state.get("SERVICE", "minecraft"))
+        _invalidate_observed_cache()
 
         state["set_service_status_intent"]("shutting")
         state["invalidate_status_cache"]()
+
+        if process_role == "web":
+            state["log_mcweb_action"]("stop")
+            return jsonify({
+                "ok": True,
+                "accepted": True,
+                "queued": True,
+                "existing": resumed,
+                "resumed": resumed,
+                "op_id": op_id,
+                "status": "intent",
+            }), 202
 
         def _stop_worker():
             try:
@@ -307,6 +445,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 )
             except Exception as exc:
                 state["log_mcweb_exception"]("update_operation/stop_observed", exc)
+            _invalidate_observed_cache()
 
         try:
             threading.Thread(target=_stop_worker, daemon=True).start()
@@ -343,10 +482,25 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     @app.route("/backup", methods=["POST"])
     def backup():
         """Runtime helper backup."""
+        limited = _enforce_rate_limit("backup", limit=8, window_seconds=30.0)
+        if limited is not None:
+            return limited
         idempotency_key = _idempotency_key_from_request()
         op_id = ""
         existing = None
         resumed = False
+        if not idempotency_key:
+            active = _find_active_operation("backup")
+            if isinstance(active, dict):
+                state["log_mcweb_action"]("backup")
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": str(active.get("op_id", "") or ""),
+                    "status": str(active.get("status", "") or "intent"),
+                }), 202
         if idempotency_key:
             try:
                 existing = state_store_service.get_operation_by_idempotency_key(
@@ -402,6 +556,20 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             except Exception as exc:
                 state["log_mcweb_exception"]("create_operation/backup", exc)
                 return state["_backup_failed_response"]("Failed to create backup operation record.")
+        _enqueue_control_intent("backup", op_id, target="manual")
+        _invalidate_observed_cache()
+
+        if process_role == "web":
+            state["log_mcweb_action"]("backup")
+            return jsonify({
+                "ok": True,
+                "accepted": True,
+                "queued": True,
+                "existing": resumed,
+                "resumed": resumed,
+                "op_id": op_id,
+                "status": "intent",
+            }), 202
 
         def _backup_worker():
             try:
@@ -449,6 +617,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 )
             except Exception as exc:
                 state["log_mcweb_exception"]("update_operation/backup_observed", exc)
+            _invalidate_observed_cache()
 
         try:
             threading.Thread(target=_backup_worker, daemon=True).start()
@@ -482,6 +651,9 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     @app.route("/restore-backup", methods=["POST"])
     def restore_backup():
         """Runtime helper restore_backup."""
+        limited = _enforce_rate_limit("restore-backup", limit=6, window_seconds=30.0)
+        if limited is not None:
+            return limited
         sudo_password = request.form.get("sudo_password", "")
         filename = (request.form.get("filename", "") or "").strip()
         idempotency_key = _idempotency_key_from_request()
@@ -496,6 +668,25 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         op_id = ""
         existing = None
         resumed = False
+        if not idempotency_key:
+            active_same_target = _find_active_operation("restore", target=filename)
+            if isinstance(active_same_target, dict):
+                return jsonify({
+                    "ok": True,
+                    "accepted": True,
+                    "message": "Restore accepted.",
+                    "existing": True,
+                    "resumed": False,
+                    "op_id": str(active_same_target.get("op_id", "") or ""),
+                    "status": str(active_same_target.get("status", "") or "intent"),
+                }), 202
+            any_restore = _find_active_operation("restore")
+            if isinstance(any_restore, dict):
+                return jsonify({
+                    "ok": False,
+                    "error": "restore_in_progress",
+                    "message": "Another restore operation is already in progress.",
+                }), 409
         if idempotency_key:
             try:
                 existing = state_store_service.get_operation_by_idempotency_key(
@@ -558,6 +749,20 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
             except Exception as exc:
                 state["log_mcweb_exception"]("create_operation/restore", exc)
                 return jsonify({"ok": False, "error": "restore_failed", "message": "Failed to create restore operation record."}), 500
+        _enqueue_control_intent("restore", op_id, target=filename)
+        _invalidate_observed_cache()
+
+        if process_role == "web":
+            return jsonify({
+                "ok": True,
+                "accepted": True,
+                "queued": True,
+                "message": "Restore accepted.",
+                "existing": resumed,
+                "resumed": resumed,
+                "op_id": op_id,
+                "status": "intent",
+            }), 202
 
         def _restore_worker():
             try:
@@ -627,6 +832,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 except Exception as exc:
                     state["log_mcweb_exception"]("update_operation/restore_observed", exc)
                 state["log_mcweb_action"]("restore-backup", command=f"{filename} (started)")
+                _invalidate_observed_cache()
                 return
 
             message = "Restore failed."
@@ -647,6 +853,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
                 )
             except Exception as exc:
                 state["log_mcweb_exception"]("update_operation/restore_terminal_failed", exc)
+            _invalidate_observed_cache()
 
         try:
             threading.Thread(target=_restore_worker, daemon=True).start()
@@ -689,6 +896,9 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     @app.route("/operation-status/<op_id>")
     def operation_status(op_id):
         """Return one async control-plane operation status by operation id."""
+        limited = _enforce_rate_limit("operation-status", limit=90, window_seconds=15.0)
+        if limited is not None:
+            return limited
         item = state_store_service.get_operation(state["APP_STATE_DB_PATH"], op_id)
         if item is None:
             return jsonify({"ok": False, "error": "not_found", "message": "Operation not found."}), 404
@@ -698,6 +908,9 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
     @app.route("/rcon", methods=["POST"])
     def rcon():
         """Runtime helper rcon."""
+        limited = _enforce_rate_limit("rcon", limit=20, window_seconds=30.0)
+        if limited is not None:
+            return limited
         command = request.form.get("rcon_command", "").strip()
         sudo_password = request.form.get("sudo_password", "")
         if not command:
