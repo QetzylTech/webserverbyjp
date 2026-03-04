@@ -928,21 +928,24 @@ def collect_and_publish_metrics(ctx):
 
 def metrics_collector_loop(ctx):
     """Background metrics loop that idles when there are no consumers."""
+    process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
+    always_collect = process_role == "worker"
     while True:
-        with ctx.metrics_cache_cond:
-            # Wait until either SSE consumers exist or the page heartbeat is active.
-            ctx.metrics_cache_cond.wait_for(
-                lambda: ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx),
-                timeout=1,
-            )
-            should_collect = ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx)
-        if not should_collect:
-            continue
+        if not always_collect:
+            with ctx.metrics_cache_cond:
+                # Wait until either SSE consumers exist or the page heartbeat is active.
+                ctx.metrics_cache_cond.wait_for(
+                    lambda: ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx),
+                    timeout=1,
+                )
+                should_collect = ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx)
+            if not should_collect:
+                continue
         collect_and_publish_metrics(ctx)
         service_status = ctx.get_status()
         interval = ctx.METRICS_COLLECT_INTERVAL_SECONDS if service_status == "active" else ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS
         with ctx.metrics_cache_cond:
-            if ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx):
+            if always_collect or ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx):
                 ctx.metrics_cache_cond.wait(timeout=interval)
 
 
