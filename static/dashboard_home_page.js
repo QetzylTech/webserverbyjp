@@ -777,6 +777,41 @@
         return "Action completed successfully.";
     }
 
+    function applyOptimisticStatus(action) {
+        const service = document.getElementById("service-status");
+        const serviceDurationPrefix = document.getElementById("service-status-duration-prefix");
+        const sessionDuration = document.getElementById("session-duration");
+        const startBtn = document.getElementById("start-btn");
+        const stopBtn = document.getElementById("stop-btn");
+        const rconInput = document.getElementById("rcon-command");
+        const rconSubmit = document.getElementById("rcon-submit");
+        if (action === "/start") {
+            if (service) {
+                service.textContent = "Starting";
+                service.className = "stat-yellow";
+            }
+            if (serviceDurationPrefix) serviceDurationPrefix.textContent = "";
+            if (sessionDuration) sessionDuration.style.display = "none";
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = false;
+            if (rconInput) rconInput.disabled = true;
+            if (rconSubmit) rconSubmit.disabled = true;
+            applyRefreshMode("Starting");
+            return;
+        }
+        if (action === "/stop") {
+            if (service) {
+                service.textContent = "Shutting Down";
+                service.className = "stat-orange";
+            }
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = true;
+            if (rconInput) rconInput.disabled = true;
+            if (rconSubmit) rconSubmit.disabled = true;
+            applyRefreshMode("Shutting Down");
+        }
+    }
+
     function stopOperationPoll(opId) {
         const key = String(opId || "").trim();
         if (!key) return;
@@ -1111,6 +1146,9 @@
 
             showSuccessModal(summarizeSuccess(action, payload));
             if (payload && payload.accepted === true && payload.op_id) {
+                if (action === "/start" || action === "/stop") {
+                    applyOptimisticStatus(action);
+                }
                 const opId = String(payload.op_id || "").trim();
                 if (opId) {
                     stopOperationPoll(opId);

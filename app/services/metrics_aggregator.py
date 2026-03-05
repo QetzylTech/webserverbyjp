@@ -65,6 +65,39 @@ def get_cpu_frequency_class(ctx, cpu_frequency):
     return "stat-red" if cpu_frequency == "unknown" else "stat-green"
 
 
+def _tick_is_known(tick_rate):
+    text = str(tick_rate or "").strip().lower()
+    if not text or text in {"--", "unknown", "n/a"}:
+        return False
+    return any(ch.isdigit() for ch in text)
+
+
+def _resolve_service_status_display(ctx, service_status, players_online, tick_rate, observed_display):
+    raw = str(service_status or "").strip().lower()
+    observed = str(observed_display or "").strip()
+
+    if raw in getattr(ctx, "OFF_STATES", {"inactive", "failed"}):
+        return "Off"
+    if raw in {"deactivating", "shutting_down"}:
+        return "Shutting Down"
+    if raw in {"activating", "starting"}:
+        return "Starting"
+    if raw != "active":
+        return observed or "Off"
+
+    intent = ""
+    try:
+        intent = str(ctx.get_service_status_intent() or "").strip().lower()
+    except Exception:
+        intent = ""
+    if intent == "shutting":
+        return "Shutting Down"
+
+    players_known = str(players_online or "").strip().isdigit()
+    tick_known = _tick_is_known(tick_rate)
+    return "Running" if (players_known and tick_known) else "Starting"
+
+
 def slow_metrics_ttl_seconds(ctx, service_status):
     """Return slow-metric cache TTL for current service state."""
     if service_status == "active":
@@ -111,7 +144,13 @@ def collect_dashboard_metrics(ctx):
     players_online = observed.get("players_online", ctx.get_players_online())
     tick_rate = ctx.get_tick_rate()
     session_duration = ctx.get_session_duration_text()
-    service_status_display = str(observed.get("service_status_display", "") or ctx.get_service_status_display(service_status, players_online))
+    service_status_display = _resolve_service_status_display(
+        ctx,
+        service_status,
+        players_online,
+        tick_rate,
+        observed.get("service_status_display", ""),
+    )
     backup_schedule = ctx.get_backup_schedule_times(service_status)
     backup_status, backup_status_class = ctx.get_backup_status()
     backup_warning = ctx.get_backup_warning_state(ctx.BACKUP_WARNING_TTL_SECONDS)
