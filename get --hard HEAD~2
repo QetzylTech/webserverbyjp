@@ -1,0 +1,56 @@
+* [33mde24298[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m refactor architecture boundaries, ports, and boot paths
+* [33m8ca2e94[m feat: harden offline recovery, stabilize live timers, and platformize backup execution
+* [33m8f5a4d0[m feat(ui/runtime): harden offline recovery and stabilize live timers
+* [33m1134713[m feat(ui): stabilize live timers and add offline recovery shell
+* [33mbe50e0a[m live stat redo
+* [33m63e4a26[m live stats bugfix
+* [33ma76a3c8[m feat(runtime): split web/worker roles and DB-first event model
+* [33m2e43c1d[m feat(control-plane): phase 1+2 split roles and DB-backed events/SSE
+* [33m929bd19[m Delete rule_list.txt
+* [33m9a98252[m Delete key.key.pub
+* [33me2863e4[m Delete key.key
+* [33m08e7bdc[m temp key removal
+* [33me38a924[m feat: performance, maintenance caching, snapshot scan fix, and dark-mode prepaint
+* [33m6cd92ca[m feat(perf): add load/profiling framework and stabilize hot paths
+* [33m770b4ed[m refactor: reduce spaghetti and clarify setup/runtime modules
+* [33m4c115fa[m feat(platform+setup): add OS adapters and improve setup path handling
+* [33md9bef94[m feat(platform): add OS adapter layer and route core system calls through it
+* [33m6da2dfd[m refactor(setup+services): clean stale code, stabilize setup wizard, and improve validation
+* [33mf9a24ec[m Cleanup
+* [33md6673f8[m Delete data directory
+* [33md4e565b[m Delete data.old directory
+* [33md105b9b[m Cleanup
+* [33m8ca4563[m Ignore log files
+* [33m90dc03b[m feat(setup): convert initial setup to validated wizard and simplify env/runtime assumptions
+* [33m9afdb57[m Backup log bugfix
+* [33ma7c7d95[m Update to error messages
+* [33mc658699[m Fixed UI bugs
+* [33mac1a17b[m refactor: rename modules/assets and normalize dashboard/docs UI
+* [33m9246ceb[m feat: migrate dashboard state to sqlite and improve maintenance/log workflows
+* [33ma4f9cc3[m Fix Gitignore
+* [33mef1212b[m Apply a broad stabilization and cleanup pass across the modular codebase (including main wiring and service/core internals), finalizing the current architecture with consistency-focused refactors.
+* [33m6267c5f[m Replace real-instance config artifacts with documented sample files (mcweb.env.sample, server.properties.sample) and update supporting config/state handling for safer sharing and onboarding.
+* [33mfac109f[m Remove legacy power.py and consolidate maintenance logic into the modular service stack, reducing duplication and eliminating obsolete control entry points.
+* [33m6b266bf[m Iterate on maintenance subsystems by updating rules/runtime behavior and associated documentation, focusing on more predictable maintenance execution paths and cleaner operator-facing flow.
+* [33m952570c[m Split dashboard route handling into focused route modules (control, debug, file, maintenance API) and broaden supporting internals, significantly improving separation of concerns and long-term maintainability.
+* [33m532c403[m Refine runtime state management and control-plane behavior, tightening maintenance/session-related service logic and reducing ambiguity in how background automation and request-time actions coordinate.
+* [33m6af9fa3[m Expand modular internals with stronger core configuration/security/logging helpers and integrate server properties handling, improving environment control, privileged action safeguards, and operational consistency.
+* [33mf4725ac[m Perform the major modularization pass by introducing the app/ package (application factory, routed modules, service layer, core utilities, and tests) while keeping a thin mcweb.py launcher to preserve run semantics.
+* [33m085141b[m Reorganize runtime files into clearer folders (data, doc, scripts) and adopt web.conf-style configuration loading, replacing ad hoc top-level placement with a cleaner deploy-oriented layout.
+* [33mad1cac6[m Introduce structured frontend/documentation assets by adding static CSS/JS and HTML docs/templates, improving UI maintainability and separating presentation resources from backend logic.
+* [33m992fc48[m Establish the first split-line baseline by carrying forward the stable monolith and preserving core operational behaviors (start/stop/backup/status/session handling) as the reference point for structural refactoring.
+* [33m81653f1[m Update mcweb.py
+* [33m922bce6[m Update mcweb.py
+* [33m942a462[m Update mcweb.py
+* [33m223397c[m Update mcweb.py
+* [33mf307470[m Update mcweb.py
+* [33m16a7853[m Update mcweb.py
+* [33md831c36[m Update mcweb.py
+* [33mfb3115d[m Update mcweb.py
+* [33md20742d[m Update mcweb.py
+* [33m7d9fd75[m Update mcweb.py
+* [33m9dc80e9[m Update mcweb.py
+* [33m7a77d8e[m Update mcweb.py
+* [33m414d6b3[m Update mcweb.py
+* [33ma198930[m Update mcweb.py
+* [33m7563394[m 1st fully operational version
