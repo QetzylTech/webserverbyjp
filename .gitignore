@@ -37,6 +37,7 @@ htmlcov/
 # Logs and runtime output
 logs/
 **/logs/
+app/logs/
 *.log
 *.out
 *.err
@@ -45,8 +46,12 @@ logs/
 # Local runtime/server state and sensitive data
 data/
 **/data/
+app/data/
 data.old/
 **/data.old/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 mcweb.env
 *.env
 *.env.local

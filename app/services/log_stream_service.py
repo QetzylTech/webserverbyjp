@@ -167,6 +167,7 @@ def log_source_fetcher_loop(ctx, source):
         return
     normalized = settings["source"]
     file_poll_offset = 0
+    follow_from_end_initialized = False
 
     while True:
         state = ctx.log_stream_states.get(normalized)
@@ -190,6 +191,12 @@ def log_source_fetcher_loop(ctx, source):
                     file_size = int(path.stat().st_size)
                 except OSError:
                     file_size = 0
+                if not follow_from_end_initialized and file_poll_offset == 0:
+                    # Initial "live follow" should not replay the entire existing file.
+                    file_poll_offset = file_size
+                    follow_from_end_initialized = True
+                    time.sleep(1)
+                    continue
                 if file_poll_offset > file_size:
                     file_poll_offset = 0
                 with path.open("r", encoding="utf-8", errors="ignore") as fh:
@@ -219,7 +226,14 @@ def log_source_fetcher_loop(ctx, source):
                 if not path.exists():
                     time.sleep(1)
                     continue
-                if file_poll_offset > int(path.stat().st_size if path.exists() else 0):
+                file_size = int(path.stat().st_size if path.exists() else 0)
+                if not follow_from_end_initialized and file_poll_offset == 0:
+                    # Keep /log-text as the history source; stream endpoint should emit only new lines.
+                    file_poll_offset = file_size
+                    follow_from_end_initialized = True
+                    time.sleep(1)
+                    continue
+                if file_poll_offset > file_size:
                     file_poll_offset = 0
                 with path.open("r", encoding="utf-8", errors="ignore") as fh:
                     fh.seek(file_poll_offset)

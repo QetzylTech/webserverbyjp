@@ -6,6 +6,7 @@ from app.services import backup_usecase as _backup
 from app.services import restore_usecase as _restore
 from app.services import start_usecase as _start
 from app.services import stop_usecase as _stop
+from app.services import restore_workflow_helpers as _workflow
 from app.services.restore_workflow_helpers import is_backup_running
 
 ensure_startup_rcon_settings = _restore.ensure_startup_rcon_settings
@@ -19,7 +20,9 @@ get_restore_status = _restore.get_restore_status
 set_service_status_intent = _start.set_service_status_intent
 get_service_status_intent = _start.get_service_status_intent
 validate_sudo_password = _start.validate_sudo_password
+ensure_session_file = _workflow.ensure_session_file
 read_session_start_time = _start.read_session_start_time
+clear_session_start_time = _workflow.clear_session_start_time
 get_session_start_time = _start.get_session_start_time
 get_session_duration_text = _start.get_session_duration_text
 

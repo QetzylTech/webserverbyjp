@@ -56,7 +56,7 @@ from app.routes.dashboard_routes import register_routes
 from app.routes.setup_routes import register_setup_routes
 from app.state import BackupState, SessionState, REQUIRED_STATE_KEY_SET
 
-APP_DIR = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent.parent.parent
 app = Flask(
     __name__,
     template_folder=str(APP_DIR / "templates"),

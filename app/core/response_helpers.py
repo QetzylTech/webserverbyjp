@@ -79,4 +79,9 @@ def internal_error_response(request):
     """Return generic internal-error response payload/redirect."""
     if is_ajax_request(request):
         return jsonify({"ok": False, "error": "internal_error", "message": "Internal server error."}), 500
+    path = str(getattr(request, "path", "") or "").strip()
+    msg = str(getattr(request, "args", {}).get("msg", "") or "").strip().lower()
+    # Avoid redirect loops for setup/root failures and repeated internal_error redirects.
+    if path.startswith("/setup") or path == "/" or msg == "internal_error":
+        return ("Internal server error.", 500)
     return redirect("/?msg=internal_error")
