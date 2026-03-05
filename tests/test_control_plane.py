@@ -69,16 +69,15 @@ class ControlPlaneTests(unittest.TestCase):
         fake_result = Mock(returncode=0, stdout="", stderr="")
 
         with patch.object(control_plane, "is_backup_running", return_value=False), \
-             patch.object(control_plane.subprocess, "run", return_value=fake_result) as run_mock, \
+             patch.object(control_plane._calls, "run_backup_script", return_value=fake_result) as run_mock, \
              patch.object(control_plane, "get_backup_zip_snapshot", side_effect=[{}, {}]), \
              patch.object(control_plane, "backup_snapshot_changed", return_value=False) as snapshot_changed:
             ok = control_plane.run_backup_script(ctx, count_skip_as_success=False, trigger="auto")
 
         self.assertTrue(ok)
         run_mock.assert_called_once_with(
-            [ctx.BACKUP_SCRIPT, "auto"],
-            capture_output=True,
-            text=True,
+            ctx.BACKUP_SCRIPT,
+            "auto",
             timeout=600,
         )
         snapshot_changed.assert_called_once_with(ctx, {}, {})

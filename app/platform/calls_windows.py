@@ -60,3 +60,12 @@ def run_mcrcon(host, port, password, command, *, timeout=4):
         text=True,
         timeout=timeout,
     )
+
+
+def run_backup_script(script_path, trigger, *, timeout=600):
+    return subprocess.run(
+        [str(script_path), str(trigger)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )

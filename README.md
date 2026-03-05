@@ -1,6 +1,7 @@
 Minecraft Web Dashboard Setup
 
-This project is a Flask dashboard (`mcweb.py`) that controls a systemd Minecraft service, runs backups through `scripts/backup.sh`, and sends RCON commands.
+This project is a Flask dashboard (`mcweb.py`) that controls a Minecraft service, runs backups through `scripts/backup.sh`, and sends RCON commands.
+The app now uses a platform call layer (`app/platform/*`) for OS-specific command execution (service control, backup script invocation, etc.).
 
 1. Project layout
 
@@ -84,7 +85,7 @@ Notes:
 - privileged dashboard actions validate against `MCWEB_ADMIN_PASSWORD_HASH` from `mcweb.env`.
 - `rcon.port` from `server.properties` overrides base/default RCON port behavior.
 
-4. `backup.sh` behavior
+4. Backup behavior
 
 `scripts/backup.sh` reads tunables from `mcweb.env` (`MINECRAFT_ROOT_DIR`, `BACKUP_DIR`, `AUTO_SNAPSHOT_DIR`, `RCON_HOST`, `RCON_PORT`, `DEBUG`).
 
@@ -104,6 +105,10 @@ Optional override:
 
 Make executable:
 `chmod +x /opt/Minecraft/webserverbyjp/scripts/backup.sh`
+
+Execution path:
+- app logic calls a generic backup runner (`run_backup_script(...)`)
+- the platform module (`app/platform/calls_*.py`) executes the script with OS-specific command handling
 
 5. Debug mode behavior
 
@@ -153,7 +158,35 @@ From the project folder:
 
 Bind address and port come from `mcweb.env` (`WEB_HOST`, `WEB_PORT`).
 
-8. Nginx reverse proxy (optional, no `:8080` in URL)
+Process role:
+- `MCWEB_PROCESS_ROLE=all|web|worker` (default `all`)
+- `web`: routes/API only
+- `worker`: background loops (metrics/reconciler/maintenance precompute/index refresh)
+- `all`: both in one process
+
+8. Live update model
+
+The UI uses a hybrid model (push + pull):
+- `/metrics-stream` (SSE): continuous push of metrics snapshots
+- `/metrics` (HTTP): one-shot snapshot (initial hydration/fallback polling)
+- `/log-stream/<source>` (SSE): continuous log push
+- additional polling endpoints exist for specific workflows (operation status, nav attention, etc.)
+
+So it is not a single massive broadcast-only channel.
+
+9. Offline/recovery behavior
+
+The app includes an offline shell + recovery flow:
+- Service worker route: `/sw.js`
+- Static offline fallback page: `static/offline.html`
+- Client recovery helper: `static/offline_recovery.js`
+
+Behavior:
+- if server/network is unavailable, a red offline banner appears
+- when signal is restored, banner turns green (`Signal restored. Reconnecting...`) for ~1 second, then page reloads
+- service worker caches static/offline assets; dynamic HTML pages are not cached
+
+10. Nginx reverse proxy (optional, no `:8080` in URL)
 
 Example server block:
 
@@ -174,11 +207,11 @@ Then reload Nginx:
 sudo nginx -t
 sudo systemctl reload nginx
 
-9. Optional: run `mcweb.py` as a service
+11. Optional: run `mcweb.py` as a service
 
 For production, run `mcweb.py` with a process manager (systemd, supervisor, etc.) so it restarts automatically.
 
-10. Systemd + sudoers (recommended)
+12. Systemd + sudoers (recommended)
 
 If `mcweb.py` runs under systemd and uses `sudo` for service/backup actions, add a sudoers rule (via `visudo`) for the service account.
 
@@ -192,17 +225,22 @@ Notes:
 - Verify your actual `systemctl` path (`/bin/systemctl` vs `/usr/bin/systemctl`) with:
   `command -v systemctl`
 
-11. Tests
+13. Tests
 
-Current test files:
-- `tests/test_config.py`
-- `tests/test_file_utils.py`
-- `tests/test_control_plane.py`
+Run full suite:
+`python -m pytest -q tests`
 
-Run tests:
+If `pytest` is unavailable:
 `python -m unittest discover -s tests -p "test_*.py"`
 
-12. Safety and restore notes
+Notable coverage areas include:
+- control-plane operation semantics/idempotency/reconciliation
+- snapshot backup/restore/download routes
+- maintenance candidate scan/state behavior
+- performance optimization guards
+- template/route contract checks
+
+14. Safety and restore notes
 
 Low storage protection:
 - startup is blocked when storage is below configured safe threshold
@@ -223,7 +261,7 @@ Restore behavior:
 - pre-restore snapshot creation is required; restore is canceled if snapshot creation fails
 - undo restore is available using the latest pre-restore snapshot
 
-13. Maintenance page (cleanup)
+15. Maintenance page (cleanup)
 
 Maintenance is scope-based and keeps separate rule/schedule/history metadata per scope:
 - `backups`
@@ -257,7 +295,7 @@ History and audit UI:
 - timestamps are rendered in a human-readable local format
 - `Next run` is shown in the same readable time format
 
-14. TODO
+16. TODO
 
 
 - [ ] Add integration tests for debug auth gates (`/debug/server-properties`, `/debug/env`, `/debug/stop`)

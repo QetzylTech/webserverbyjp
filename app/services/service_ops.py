@@ -159,12 +159,7 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
 
         before_snapshot = get_backup_zip_snapshot(ctx)
         try:
-            direct_result = subprocess.run(
-                [ctx.BACKUP_SCRIPT, trigger],
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
+            direct_result = _calls.run_backup_script(ctx.BACKUP_SCRIPT, trigger, timeout=600)
         except OSError as exc:
             # Missing/non-executable backup script should return a handled backup error,
             # not bubble up as a generic internal_error.
