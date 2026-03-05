@@ -10,6 +10,11 @@ def install_flask_hooks(
     ensure_session_tracking_initialized,
     ensure_metrics_collector_started,
     enable_metrics_collector_autostart=True,
+    start_operation_reconciler=None,
+    start_idle_player_watcher=None,
+    start_backup_session_watcher=None,
+    start_storage_safety_watcher=None,
+    enable_background_watchers_autostart=False,
     ensure_csrf_token,
     is_csrf_valid,
     csrf_rejected_response,
@@ -23,6 +28,15 @@ def install_flask_hooks(
         ensure_session_tracking_initialized()
         if enable_metrics_collector_autostart:
             ensure_metrics_collector_started()
+        if enable_background_watchers_autostart:
+            if callable(start_operation_reconciler):
+                start_operation_reconciler()
+            if callable(start_idle_player_watcher):
+                start_idle_player_watcher()
+            if callable(start_backup_session_watcher):
+                start_backup_session_watcher()
+            if callable(start_storage_safety_watcher):
+                start_storage_safety_watcher()
         ensure_csrf_token()
         csrf_exempt_paths = {"/home-heartbeat", "/file-page-heartbeat", "/setup", "/setup/submit", "/setup/validate"}
         if (

@@ -73,26 +73,24 @@ def _execute_start(ctx, op_id):
         )
         return
     if ctx.write_session_start_time() is None:
-        ctx.set_service_status_intent(None)
-        ctx.invalidate_status_cache()
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="failed",
-            error_code="session_write_failed",
-            checkpoint="session_write_failed",
-            message="Session file write failed.",
-            finished=True,
-        )
-        return
+        try:
+            ctx.log_mcweb_log(
+                "start-session-warning",
+                command="write_session_start_time",
+                rejection_message="Session file write failed; continuing startup tracking via operation state.",
+            )
+        except Exception:
+            pass
     ctx.reset_backup_schedule_state()
+    # Do not mark observed yet: startup completion is reconciled from live
+    # runtime status to avoid flipping back to Off during warm-up.
     state_store_service.update_operation(
         ctx.APP_STATE_DB_PATH,
         op_id=op_id,
-        status="observed",
-        checkpoint="observed",
-        message="Service start observed.",
-        finished=True,
+        status="in_progress",
+        checkpoint="start_dispatched",
+        message="Start dispatched; awaiting observed active state.",
+        finished=False,
     )
 
 

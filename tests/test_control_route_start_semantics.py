@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import uuid
 
 from flask import Flask
 
@@ -48,13 +49,13 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
             "is_rcon_enabled": lambda: True,
             "get_status": lambda: "active",
             "_run_mcrcon": lambda command, timeout=8: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
-            "APP_STATE_DB_PATH": Path(db_path or "data/test_state.sqlite3"),
+            "APP_STATE_DB_PATH": Path(db_path or f"data/test_state_{uuid.uuid4().hex}.sqlite3"),
         }
 
     def test_start_writes_session_only_after_successful_start_command(self):
         app = Flask(__name__)
         events = []
-        state = self._build_state(events, start_ok=True, session_ok=True, db_path=Path("data/test_app_state_start_semantics.sqlite3"))
+        state = self._build_state(events, start_ok=True, session_ok=True)
         with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
             response = app.test_client().post("/start")
@@ -66,7 +67,7 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
     def test_start_does_not_write_session_when_start_command_fails(self):
         app = Flask(__name__)
         events = []
-        state = self._build_state(events, start_ok=False, session_ok=True, db_path=Path("data/test_app_state_start_semantics.sqlite3"))
+        state = self._build_state(events, start_ok=False, session_ok=True)
         with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
             response = app.test_client().post("/start")

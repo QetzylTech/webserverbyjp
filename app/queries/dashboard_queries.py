@@ -90,4 +90,6 @@ def get_home_attention_level(observed):
         return "red"
     if service_status in {"starting", "shutting down"}:
         return "yellow"
+    if service_status == "running":
+        return "green"
     return "none"

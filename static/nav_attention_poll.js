@@ -8,15 +8,18 @@
 
     function clearNavAttentionClasses(node) {
         if (!node) return;
-        node.classList.remove("nav-attention", "nav-attention-red", "nav-attention-yellow");
+        node.classList.remove("nav-attention", "nav-attention-red", "nav-attention-yellow", "nav-attention-green");
     }
 
     function applyHomeAttention(level) {
         clearNavAttentionClasses(homeLink);
+        const isHomePage = !!homeLink?.classList.contains("active");
         if (level === "red") {
             homeLink?.classList.add("nav-attention-red");
         } else if (level === "yellow") {
             homeLink?.classList.add("nav-attention-yellow");
+        } else if (level === "green" && !isHomePage) {
+            homeLink?.classList.add("nav-attention-green");
         }
     }
 
@@ -37,6 +40,10 @@
         }
         if (homeLevel === "yellow") {
             navToggle?.classList.add("nav-attention-yellow");
+            return;
+        }
+        if (homeLevel === "green") {
+            navToggle?.classList.add("nav-attention-green");
         }
     }
 
@@ -54,7 +61,7 @@
                 const payload = await response.json().catch(() => ({}));
                 restoreAttention = !!payload.restore_pane_attention;
                 const level = String(payload.home_attention || "").trim().toLowerCase();
-                if (level === "red" || level === "yellow") {
+                if (level === "red" || level === "yellow" || level === "green") {
                     homeAttention = level;
                 }
             }

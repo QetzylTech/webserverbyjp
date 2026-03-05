@@ -299,6 +299,9 @@
         box-shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
         padding: 14px;
     }
+    .modal-card-wide {
+        width: min(960px, 100%);
+    }
 
     .modal-title {
         margin: 0 0 8px 0;
@@ -348,6 +351,11 @@
         line-height: 1.4;
         white-space: pre-wrap;
         word-break: break-word;
+    }
+    .metrics-live-details {
+        max-height: min(70vh, 640px);
+        overflow: auto;
+        font-size: 0.8rem;
     }
 
 
