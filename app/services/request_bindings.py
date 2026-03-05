@@ -21,7 +21,7 @@ def build_request_bindings(
     session_store_service,
     session_state,
     initialize_session_tracking,
-    status_debug_note,
+    status_state_note,
     low_storage_error_message,
     display_tz,
     get_device_name_map,
@@ -30,7 +30,7 @@ def build_request_bindings(
         # Return request-scoped callables with explicit runtime dependencies.
 
     def _session_write_failed_response():
-        return session_write_failed_response(request, status_debug_note())
+        return session_write_failed_response(request, status_state_note())
 
     def _ensure_csrf_token():
         return ensure_csrf_token(session, lambda: secrets.token_urlsafe(32))

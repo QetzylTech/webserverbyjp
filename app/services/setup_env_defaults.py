@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from app.platform import get_paths
-
-_paths = get_paths()
+from app.ports import ports
 
 ENV_DEFAULTS = {
     "SERVICE": "minecraft",
     "DISPLAY_TZ": "Asia/Manila",
     "DOC_README_URL": "/doc/server_setup_doc.md",
-    "MINECRAFT_ROOT_DIR": _paths.default_minecraft_root(),
-    "BACKUP_DIR": _paths.default_backup_dir(),
+    "MINECRAFT_ROOT_DIR": ports.service_control.default_minecraft_root(),
+    "BACKUP_DIR": ports.service_control.default_backup_dir(),
     "BACKUP_INTERVAL_HOURS": "3",
     "BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS": "15",
     "BACKUP_WATCH_INTERVAL_OFF_SECONDS": "45",
@@ -42,7 +40,6 @@ ENV_DEFAULTS = {
     "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS": "1",
     "SLOW_METRICS_INTERVAL_OFF_SECONDS": "15",
     "LOG_FETCHER_IDLE_SLEEP_SECONDS": "2",
-    "DEBUG": "false",
     "MAINTENANCE_SCOPE_BACKUP_ZIP": "true",
     "MAINTENANCE_SCOPE_STALE_WORLD_DIR": "true",
     "MAINTENANCE_SCOPE_OLD_WORLD_ZIP": "true",

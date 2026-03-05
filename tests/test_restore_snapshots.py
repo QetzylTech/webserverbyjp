@@ -62,14 +62,7 @@ class RestoreSnapshotTests(unittest.TestCase):
                 log_mcweb_exception=lambda *_args, **_kwargs: None,
             )
 
-            sudo_calls = []
-
-            def fake_run_sudo(_ctx, command):
-                sudo_calls.append(list(command))
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-            with patch.object(restore_workflow, "run_sudo", side_effect=fake_run_sudo), \
-                 patch.object(restore_workflow, "_archive_old_world_dir", return_value=(archived_world_dir, "")) as archive_mock, \
+            with patch.object(restore_workflow, "_archive_old_world_dir", return_value=(archived_world_dir, "")) as archive_mock, \
                  patch.object(restore_workflow, "_record_restore_history", return_value=True), \
                  patch.object(restore_workflow, "_new_restore_code", side_effect=["abc12", "def34"]), \
                  patch.object(restore_workflow, "is_backup_running", return_value=False), \
@@ -78,10 +71,7 @@ class RestoreSnapshotTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual("snapshot::snap_auto_01", result["backup_file"])
-
-            self.assertGreaterEqual(len(sudo_calls), 2)
-            self.assertEqual("zip", sudo_calls[0][0])
-            self.assertEqual("rsync", sudo_calls[1][0])
+            self.assertTrue(Path(result["pre_restore_snapshot"]).exists())
             archive_mock.assert_called_once()
 
             updated_props = props_path.read_text(encoding="utf-8")
@@ -154,13 +144,15 @@ class RestoreSnapshotTests(unittest.TestCase):
             )
             calls = []
 
-            def fake_run_sudo(_ctx, command):
-                calls.append(list(command))
-                if command[:2] == ["rsync", "-a"]:
-                    return SimpleNamespace(returncode=1, stdout="", stderr="copy failed")
+            def _fail_copy(_source, _target):
+                raise RuntimeError("copy failed")
+
+            def _start_service(_ctx):
+                calls.append(["service_start", "minecraft"])
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            with patch.object(restore_workflow, "run_sudo", side_effect=fake_run_sudo), \
+            with patch.object(restore_workflow, "_copy_world_tree", side_effect=_fail_copy), \
+                 patch.object(restore_workflow, "start_service", side_effect=_start_service), \
                  patch.object(restore_workflow, "stop_service_systemd", return_value=True), \
                  patch.object(restore_workflow, "is_backup_running", return_value=False), \
                  patch.object(restore_workflow, "_new_restore_code", side_effect=["abc12", "def34"]), \
@@ -170,7 +162,7 @@ class RestoreSnapshotTests(unittest.TestCase):
                 result = restore_workflow.restore_world_backup(ctx, "snapshot::snap_auto_01")
 
             self.assertFalse(result["ok"])
-            self.assertTrue(any(cmd[:3] == ["systemctl", "start", "minecraft"] for cmd in calls))
+            self.assertTrue(any(cmd[:2] == ["service_start", "minecraft"] for cmd in calls))
             write_session_mock.assert_called()
 
 

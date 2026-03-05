@@ -8,19 +8,21 @@ import time
 import uuid
 
 from app.core import state_store as state_store_service
-from app.platform import get_calls
-
-_calls = get_calls()
+from app.ports import ports
 
 def run_sudo(ctx, cmd):
     """Run command via non-interactive sudo."""
-    return _calls.run_elevated(cmd)
+    return ports.service_control.run_elevated(cmd)
 
 
 def stop_service_systemd(ctx):
     """Stop the systemd service and wait briefly for an off-state."""
     try:
-        run_sudo(ctx, ["systemctl", "stop", ctx.SERVICE])
+        ports.service_control.service_stop(
+            ctx.SERVICE,
+            timeout=12,
+            minecraft_root=ctx.MINECRAFT_ROOT_DIR,
+        )
         ctx.invalidate_status_cache()
     except Exception as exc:
         ctx.log_mcweb_exception("stop_service_systemd", exc)
@@ -33,12 +35,21 @@ def stop_service_systemd(ctx):
     return False
 
 
+def start_service(ctx):
+    """Start the configured service and return command result object."""
+    return ports.service_control.service_start(
+        ctx.SERVICE,
+        timeout=12,
+        minecraft_root=ctx.MINECRAFT_ROOT_DIR,
+    )
+
+
 def ensure_session_file(ctx):
     """Ensure the session tracking file exists and is writable."""
     try:
         session_file = ctx.session_state.session_file
-        session_file.parent.mkdir(parents=True, exist_ok=True)
-        session_file.touch(exist_ok=True)
+        ports.filesystem.ensure_dir(session_file.parent)
+        ports.filesystem.touch(session_file)
         return True
     except OSError:
         return False
@@ -50,7 +61,7 @@ def write_session_start_time(ctx, timestamp=None):
         return None
     ts = time.time() if timestamp is None else float(timestamp)
     try:
-        ctx.session_state.session_file.write_text(f"{ts:.6f}\n", encoding="utf-8")
+        ports.filesystem.write_text(ctx.session_state.session_file, f"{ts:.6f}\n", encoding="utf-8")
     except OSError:
         return None
     return ts
@@ -61,7 +72,7 @@ def clear_session_start_time(ctx):
     if not ensure_session_file(ctx):
         return False
     try:
-        ctx.session_state.session_file.write_text("", encoding="utf-8")
+        ports.filesystem.write_text(ctx.session_state.session_file, "", encoding="utf-8")
     except OSError:
         return False
     return True
@@ -76,8 +87,8 @@ def reset_backup_schedule_state(ctx):
 def is_backup_running(ctx):
     """Return whether backup script reports active run via state file."""
     try:
-        ctx.BACKUP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        raw = ctx.BACKUP_STATE_FILE.read_text(encoding="utf-8").strip().lower()
+        ports.filesystem.ensure_dir(ctx.BACKUP_STATE_FILE.parent)
+        raw = ports.filesystem.read_text(ctx.BACKUP_STATE_FILE, encoding="utf-8").strip().lower()
     except OSError:
         return False
     return raw == "true"
@@ -132,7 +143,7 @@ def ensure_startup_rcon_settings(ctx):
     if props_path is None:
         return {"ok": False, "message": "server.properties not found."}
     try:
-        original_text = props_path.read_text(encoding="utf-8", errors="ignore")
+        original_text = ports.filesystem.read_text(props_path, encoding="utf-8", errors="ignore")
     except OSError:
         return {"ok": False, "message": "Failed to read server.properties."}
 
@@ -148,7 +159,7 @@ def ensure_startup_rcon_settings(ctx):
     updated = _update_property_text(updated, "rcon.port", port_value)
     updated = _update_property_text(updated, "rcon.password", password_value)
     try:
-        props_path.write_text(updated, encoding="utf-8")
+        ports.filesystem.write_text(props_path, updated, encoding="utf-8")
     except OSError:
         return {"ok": False, "message": "Failed to write server.properties."}
 
@@ -164,7 +175,7 @@ def _record_restore_history(ctx, backup_name, old_world_dir, archived_old_world_
     """Append restore world switch reference to data/restore.history."""
     try:
         data_dir = Path(ctx.session_state.session_file).parent
-        data_dir.mkdir(parents=True, exist_ok=True)
+        ports.filesystem.ensure_dir(data_dir)
         log_file = data_dir / "restore.history"
         stamp = datetime.now(tz=ctx.DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
         line = (
@@ -203,7 +214,7 @@ def _derive_restore_base_name(backup_filename, restore_source):
     """Derive a readable base name from selected backup filename and extracted source."""
     stem = Path(str(backup_filename or "")).stem.strip()
     stem = re.sub(
-        r"(?i)_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_debug)?(?:_pre_restore|_prerestore)?$",
+        r"(?i)_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_pre_restore|_prerestore)?$",
         "",
         stem,
     )
@@ -243,8 +254,9 @@ def _archive_old_world_dir(ctx, old_world_dir, archived_world_name):
     """Move previous world directory to data/old_worlds and return destination."""
     data_dir = Path(ctx.session_state.session_file).parent
     old_worlds_dir = data_dir / "old_worlds"
-    mkdir_result = run_sudo(ctx, ["mkdir", "-p", str(old_worlds_dir)])
-    if mkdir_result.returncode != 0:
+    try:
+        ports.filesystem.ensure_dir(old_worlds_dir)
+    except OSError:
         return None, "Failed to create old_worlds archive directory."
 
     base_name = str(archived_world_name or old_world_dir.name).strip() or old_world_dir.name
@@ -254,8 +266,9 @@ def _archive_old_world_dir(ctx, old_world_dir, archived_world_name):
         archived_old_world_dir = old_worlds_dir / f"{base_name}_{suffix}"
         suffix += 1
 
-    move_result = run_sudo(ctx, ["mv", str(old_world_dir), str(archived_old_world_dir)])
-    if move_result.returncode != 0:
+    try:
+        ports.filesystem.move(old_world_dir, archived_old_world_dir)
+    except Exception:
         return None, "Failed to archive previous world directory."
     return archived_old_world_dir, ""
 

@@ -9,11 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app.platform import get_paths
+from app.ports import ports
 from app.services.setup_env_defaults import ENV_DEFAULTS, REQUIRED_KEYS
 from app.services import setup_runtime_validation as _setup_validation
 
-_paths = get_paths()
 validate_runtime_locations = _setup_validation.validate_runtime_locations
 validate_service_name = _setup_validation.validate_service_name
 validate_minecraft_root = _setup_validation.validate_minecraft_root
@@ -52,7 +51,7 @@ def assess_setup_requirement(config_path, values):
 
     for key in path_keys:
         text = str(raw.get(key, "")).strip()
-        if text and not _paths.is_valid_env_path(text):
+        if text and not ports.service_control.is_valid_env_path(text):
             message = f"Invalid {key} path format for detected OS."
             reasons.append(message)
             path_reasons.append(message)
@@ -70,15 +69,15 @@ def setup_form_defaults(existing_values):
         or str(getpass.getuser() or "").strip()
     )
     base = dict(ENV_DEFAULTS)
-    base["MINECRAFT_ROOT_DIR"] = _paths.default_minecraft_root(user_name=user_name)
-    base["BACKUP_DIR"] = _paths.default_backup_dir(user_name=user_name)
+    base["MINECRAFT_ROOT_DIR"] = ports.service_control.default_minecraft_root(user_name=user_name)
+    base["BACKUP_DIR"] = ports.service_control.default_backup_dir(user_name=user_name)
     raw = existing_values if isinstance(existing_values, dict) else {}
     for key, value in raw.items():
         if value is None:
             continue
         text = str(value).strip()
         if text:
-            if key in {"MINECRAFT_ROOT_DIR", "BACKUP_DIR"} and not _paths.is_valid_env_path(text):
+            if key in {"MINECRAFT_ROOT_DIR", "BACKUP_DIR"} and not ports.service_control.is_valid_env_path(text):
                 continue
             base[key] = text
     if not str(base.get("MCWEB_SECRET_KEY", "")).strip():

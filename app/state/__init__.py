@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from collections.abc import Iterator, MutableMapping
 from typing import Any
 
+from app.state.contexts import ConfigContext, RuntimeContext, ServicePorts, UnifiedServiceContext
+
 
 @dataclass
 class BackupState:
@@ -34,10 +36,6 @@ _STATE_CORE_KEYS = (
     "CRASH_REPORTS_DIR",
     "CRASH_STOP_GRACE_SECONDS",
     "CRASH_STOP_MARKERS",
-    "DEBUG_ENABLED",
-    "DEBUG_PAGE_VISIBLE",
-    "DEBUG_SERVER_PROPERTIES_KEYS",
-    "DEBUG_PAGE_LOG_FILE",
     "DISPLAY_TZ",
     "DOCS_DIR",
     "DOC_README_URL",
@@ -75,6 +73,7 @@ _STATE_CORE_KEYS = (
     "METRICS_COLLECT_INTERVAL_OFF_SECONDS",
     "METRICS_COLLECT_INTERVAL_SECONDS",
     "METRICS_STREAM_HEARTBEAT_SECONDS",
+    "MINECRAFT_ROOT_DIR",
     "MINECRAFT_LOGS_DIR",
     "MAINTENANCE_SCOPE_BACKUP_ZIP",
     "MAINTENANCE_SCOPE_STALE_WORLD_DIR",
@@ -133,7 +132,6 @@ _STATE_BINDING_KEYS = (
     "_safe_filename_in_dir",
     "_session_write_failed_response",
     "_start_failed_response",
-    "apply_debug_env_overrides",
     "backup_log_cache_lines",
     "backup_log_cache_loaded",
     "backup_log_cache_lock",
@@ -141,14 +139,6 @@ _STATE_BINDING_KEYS = (
     "clear_session_start_time",
     "crash_stop_lock",
     "crash_stop_timer_active",
-    "debug_env_lock",
-    "debug_env_original_values",
-    "debug_env_overrides",
-    "debug_explorer_list",
-    "debug_run_backup",
-    "debug_schedule_backup",
-    "debug_start_service",
-    "debug_stop_service",
     "device_name_map_lock",
     "device_name_map_cache",
     "device_name_map_mtime_ns_ref",
@@ -169,8 +159,6 @@ _STATE_BINDING_KEYS = (
     "get_cached_file_page_items",
     "get_cpu_frequency",
     "get_cpu_usage_per_core",
-    "get_debug_env_rows",
-    "get_debug_server_properties_rows",
     "get_idle_countdown",
     "get_log_source_text",
     "get_device_name_map",
@@ -195,7 +183,6 @@ _STATE_BINDING_KEYS = (
     "log_mcweb_action",
     "log_mcweb_log",
     "log_mcweb_exception",
-    "log_debug_page_action",
     "log_stream_states",
     "mc_cached_players_online",
     "mc_cached_tick_rate",
@@ -226,7 +213,6 @@ _STATE_BINDING_KEYS = (
     "re",
     "read_session_start_time",
     "reset_backup_schedule_state",
-    "reset_all_debug_overrides",
     "restore_lock",
     "restore_status_lock",
     "restore_status",
@@ -242,7 +228,6 @@ _STATE_BINDING_KEYS = (
     "service_status_intent",
     "service_status_intent_lock",
     "set_service_status_intent",
-    "set_debug_server_properties_values",
     "slow_metrics_cache",
     "slow_metrics_cache_at",
     "slow_metrics_cache_status",
@@ -263,18 +248,40 @@ _STATE_BINDING_KEYS = (
 
 REQUIRED_STATE_KEYS = _STATE_CORE_KEYS + _STATE_BINDING_KEYS
 REQUIRED_STATE_KEY_SET = frozenset(REQUIRED_STATE_KEYS)
+_STATE_BINDING_KEY_SET = frozenset(_STATE_BINDING_KEYS)
+_STATE_RUNTIME_CORE_MUTABLE_KEYS = frozenset(
+    {
+        "WORLD_DIR",
+        "backup_state",
+        "session_state",
+    }
+)
 
 
 class AppState(MutableMapping[str, Any]):
     """Strict runtime mapping with attribute and dict-style access."""
 
-    __slots__ = ("_data",)
+    __slots__ = ("_data", "config", "runtime", "ports", "ctx")
 
     def __init__(self, data: dict[str, Any]):
         missing = [key for key in REQUIRED_STATE_KEYS if key not in data]
         if missing:
             raise KeyError(f"Missing state members: {', '.join(missing)}")
-        self._data = {key: data[key] for key in REQUIRED_STATE_KEYS}
+        normalized = {key: data[key] for key in REQUIRED_STATE_KEYS}
+        object.__setattr__(self, "_data", normalized)
+
+        port_keys = {k for k, v in normalized.items() if callable(v)}
+        runtime_keys = (set(_STATE_BINDING_KEY_SET) - port_keys) | set(_STATE_RUNTIME_CORE_MUTABLE_KEYS)
+        config_keys = set(REQUIRED_STATE_KEY_SET) - runtime_keys - port_keys
+
+        config_values = {k: normalized[k] for k in sorted(config_keys)}
+        runtime_values = {k: normalized[k] for k in sorted(runtime_keys)}
+        port_values = {k: normalized[k] for k in sorted(port_keys)}
+
+        object.__setattr__(self, "config", ConfigContext(config_values))
+        object.__setattr__(self, "runtime", RuntimeContext(runtime_values))
+        object.__setattr__(self, "ports", ServicePorts(port_values))
+        object.__setattr__(self, "ctx", UnifiedServiceContext(self.config, self.runtime, self.ports))
 
     @classmethod
     def from_namespace(cls, namespace: dict[str, Any]) -> "AppState":
@@ -296,7 +303,11 @@ class AppState(MutableMapping[str, Any]):
         """Dunder method __setitem__."""
         if key not in REQUIRED_STATE_KEY_SET:
             raise KeyError(key)
+        if key in self.config.values:
+            raise TypeError(f"ConfigContext is immutable: {key}")
         self._data[key] = value
+        if key in self.runtime.values:
+            self.runtime.values[key] = value
 
     def __delitem__(self, key: str) -> None:
         """Dunder method __delitem__."""
@@ -318,11 +329,11 @@ class AppState(MutableMapping[str, Any]):
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Support attribute-style state writes for known keys only."""
-        if name == "_data":
+        if name in {"_data", "config", "runtime", "ports", "ctx"}:
             object.__setattr__(self, name, value)
             return
         if name in REQUIRED_STATE_KEY_SET:
-            self._data[name] = value
+            self.__setitem__(name, value)
             return
         raise AttributeError(name)
 

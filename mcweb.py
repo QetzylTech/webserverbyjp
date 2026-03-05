@@ -1,6 +1,6 @@
 """Thin launcher for the Minecraft web dashboard."""
 from app.application_factory import create_app
-from app.main import run_server
+from app.bootstrap.web_app import run_server
 
 app = create_app()
 

@@ -2,13 +2,12 @@
 
 from datetime import datetime
 from pathlib import Path
-import shutil
-import tempfile
-import threading
 import uuid
 import zipfile
 
 from app.core import state_store as state_store_service
+from app.ports import ports
+from app.services.worker_scheduler import WorkerSpec, start_worker
 from app.services.restore_workflow_helpers import (
     _archive_old_world_dir,
     _compose_restore_world_name,
@@ -24,7 +23,7 @@ from app.services.restore_workflow_helpers import (
     clear_session_start_time,
     is_backup_running,
     reset_backup_schedule_state,
-    run_sudo,
+    start_service,
     stop_service_systemd,
     write_session_start_time,
 )
@@ -45,6 +44,30 @@ def _safe_extract_zip(zip_file, destination):
         except ValueError as exc:
             raise ValueError("Unsafe path in zip archive.") from exc
     zip_file.extractall(dest_resolved)
+
+
+def _create_pre_restore_snapshot(world_path, snapshot_zip_path):
+    source = Path(world_path)
+    target = Path(snapshot_zip_path)
+    if not source.exists() or not source.is_dir():
+        return False, "World directory not found for snapshot."
+    target.parent.mkdir(parents=True, exist_ok=True)
+    archive_path = ports.filesystem.make_zip_archive(
+        target.with_suffix(""),
+        root_dir=source.parent,
+        base_dir=source.name,
+    )
+    if Path(archive_path).resolve() != target.resolve():
+        Path(archive_path).replace(target)
+    return True, ""
+
+
+def _copy_world_tree(source_dir, target_dir):
+    src = Path(source_dir)
+    dst = Path(target_dir)
+    if dst.exists():
+        ports.filesystem.rmtree(dst, ignore_errors=True)
+    ports.filesystem.copytree(src, dst)
 
 
 def restore_world_backup(ctx, backup_filename, progress_callback=None):
@@ -69,7 +92,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         def fail(message, error="restore_failed"):
             nonlocal service_stopped_for_restore
             if was_active and service_stopped_for_restore:
-                restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+                restart_result = start_service(ctx)
                 ctx.invalidate_status_cache()
                 if restart_result.returncode == 0:
                     write_session_start_time(ctx)
@@ -141,7 +164,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             restore_source = snapshot_dir
             progress(f"Restore source detected: {restore_source}")
         else:
-            extract_root = Path(tempfile.mkdtemp(prefix="restore_"))
+            extract_root = ports.filesystem.mkdtemp(prefix="restore_")
             progress("Extracting backup zip.")
             with zipfile.ZipFile(backup_zip, "r") as zf:
                 _safe_extract_zip(zf, extract_root)
@@ -161,15 +184,13 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
 
         stamp = datetime.now(tz=ctx.DISPLAY_TZ).strftime("%Y-%m-%d_%H-%M-%S")
         snapshot_base = _sanitize_backup_name_component(stored_world_name)
-        debug_suffix = "_debug" if bool(getattr(ctx, "DEBUG_ENABLED", False)) else ""
-        pre_restore_snapshot = ctx.BACKUP_DIR / f"{snapshot_base}_{stamp}_prerestore{debug_suffix}.zip"
+        pre_restore_snapshot = ctx.BACKUP_DIR / f"{snapshot_base}_{stamp}_prerestore.zip"
         progress("Creating pre-restore snapshot.")
-        snapshot_result = run_sudo(ctx, ["zip", "-r", str(pre_restore_snapshot), str(world_dir)])
-        if snapshot_result.returncode != 0:
-            detail = ((snapshot_result.stderr or "") + "\n" + (snapshot_result.stdout or "")).strip()
+        snapshot_ok, snapshot_err = _create_pre_restore_snapshot(world_dir, pre_restore_snapshot)
+        if not snapshot_ok:
             message = "Failed to create pre-restore snapshot. Restore cancelled."
-            if detail:
-                message = f"{message} {detail[:400]}"
+            if snapshot_err:
+                message = f"{message} {snapshot_err[:400]}"
             ctx.log_mcweb_action("restore-backup", command=safe_name, rejection_message=message[:700])
             return fail(message, error="pre_restore_snapshot_failed")
         progress(f"Pre-restore snapshot saved: {pre_restore_snapshot.name}")
@@ -184,11 +205,9 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             new_world_dir = world_dir.parent / new_level_name
 
         progress(f"Applying restore data to new world directory: {new_world_dir.name}.")
-        restore_result = run_sudo(
-            ctx,
-            ["rsync", "-a", "--delete", f"{restore_source}/", f"{new_world_dir}/"],
-        )
-        if restore_result.returncode != 0:
+        try:
+            _copy_world_tree(restore_source, new_world_dir)
+        except Exception:
             return fail("Restore copy failed while applying backup data.")
         progress("Restore data applied to new world directory.")
 
@@ -201,8 +220,9 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             next_props = _update_property_text(props_text, "level-name", new_world_dir.name)
             props_path.write_text(next_props, encoding="utf-8")
         except OSError:
-            rollback_result = run_sudo(ctx, ["mv", str(archived_old_world_dir), str(world_dir)])
-            if rollback_result.returncode != 0:
+            try:
+                ports.filesystem.move(archived_old_world_dir, world_dir)
+            except Exception:
                 return fail(
                     "Restore applied, but failed to update server.properties level-name and failed to rollback archived world."
                 )
@@ -242,7 +262,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         restarted = False
         if was_active:
             progress("Restarting Minecraft service.")
-            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            restart_result = start_service(ctx)
             ctx.invalidate_status_cache()
             if restart_result.returncode != 0:
                 return fail(
@@ -271,7 +291,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         }
     except zipfile.BadZipFile:
         if was_active and service_stopped_for_restore and not restore_succeeded:
-            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            restart_result = start_service(ctx)
             ctx.invalidate_status_cache()
             if restart_result.returncode == 0:
                 write_session_start_time(ctx)
@@ -279,7 +299,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         return _restore_failed("Backup zip is invalid or corrupted.")
     except ValueError:
         if was_active and service_stopped_for_restore and not restore_succeeded:
-            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            restart_result = start_service(ctx)
             ctx.invalidate_status_cache()
             if restart_result.returncode == 0:
                 write_session_start_time(ctx)
@@ -288,7 +308,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
     except Exception as exc:
         ctx.log_mcweb_exception("restore_world_backup", exc)
         if was_active and service_stopped_for_restore and not restore_succeeded:
-            restart_result = run_sudo(ctx, ["systemctl", "start", ctx.SERVICE])
+            restart_result = start_service(ctx)
             ctx.invalidate_status_cache()
             if restart_result.returncode == 0:
                 write_session_start_time(ctx)
@@ -296,7 +316,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         return _restore_failed("Restore failed due to an internal error.")
     finally:
         if extract_root is not None:
-            shutil.rmtree(extract_root, ignore_errors=True)
+            ports.filesystem.rmtree(extract_root, ignore_errors=True)
         ctx.restore_lock.release()
 
 
@@ -385,8 +405,16 @@ def _start_restore_job_locked(ctx, backup_filename):
         else:
             emit(result.get("message", "Restore failed."))
 
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name=f"restore-job-{job_id}",
+            target=worker,
+            interval_source=None,
+            stop_signal_name=f"restore_job_stop_event_{job_id}",
+            health_marker="restore_job",
+        ),
+    )
     return {"ok": True, "job_id": job_id}
 
 

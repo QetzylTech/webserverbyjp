@@ -300,3 +300,9 @@ History and audit UI:
 
 - [ ] Add integration tests for debug auth gates (`/debug/server-properties`, `/debug/env`, `/debug/stop`)
 - [ ] Add end-to-end tests for low-storage startup block and emergency shutdown path
+
+17. Quality gates and review contract
+
+- Architecture contract: `ARCHITECTURE.md`
+- CI gate order and commands: `doc/CI_QUALITY_GATES.md`
+- PR acceptance checklist (priority-ordered): `doc/PR_ACCEPTANCE_CHECKLIST.md`

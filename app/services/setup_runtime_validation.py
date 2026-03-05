@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 
-from app.platform import get_calls, get_paths
-
-_calls = get_calls()
-_paths = get_paths()
+from app.ports import ports
 
 
-def validate_runtime_locations(values):
+def validate_runtime_locations(values, *, allow_create_backup_missing=False):
     """Validate setup runtime paths/service and return field-level errors."""
     errors = {}
     service_name = str(values.get("SERVICE", "")).strip()
@@ -21,34 +16,41 @@ def validate_runtime_locations(values):
     mc_root = Path(mc_root_text)
     backup_dir = Path(backup_dir_text)
 
-    if not _is_service_loadable(service_name):
+    if not _is_service_loadable(service_name, minecraft_root=mc_root_text):
         errors["SERVICE"] = "service not found."
 
     root_result = validate_minecraft_root(str(mc_root))
     if root_result["errors"]:
         errors["MINECRAFT_ROOT_DIR"] = "\n".join(root_result["errors"])
 
-    backup_result = validate_backup_location(str(backup_dir), allow_create_missing=False)
+    backup_result = validate_backup_location(
+        str(backup_dir),
+        allow_create_missing=bool(allow_create_backup_missing),
+    )
     if backup_result["errors"]:
         errors["BACKUP_DIR"] = "\n".join(backup_result["errors"])
 
     return errors
 
 
-def validate_service_name(service_name):
+def validate_service_name(service_name, minecraft_root=None):
     """Return service validation error string or empty string."""
     name = str(service_name or "").strip()
     if not name:
         return "service not found."
-    if not _is_service_loadable(name):
+    if not _is_service_loadable(name, minecraft_root=minecraft_root):
         return "service not found."
     return ""
 
 
-def _is_service_loadable(service_name):
+def _is_service_loadable(service_name, *, minecraft_root=None):
     """Probe OS service manager and return whether the named service is loadable."""
     try:
-        probe = _calls.service_show_load_state(service_name, timeout=5)
+        probe = ports.service_control.service_show_load_state(
+            service_name,
+            timeout=5,
+            minecraft_root=minecraft_root,
+        )
         load_state = str(probe.stdout or "").strip().lower()
         return probe.returncode == 0 and load_state not in {"", "not-found", "error"}
     except Exception:
@@ -69,14 +71,7 @@ def _existing_parent(path_obj):
 def _can_write_existing_dir(path_obj):
     """Check effective write permission by creating a short-lived temp file."""
     probe_dir = Path(path_obj)
-    if not probe_dir.exists() or not probe_dir.is_dir() or not os.access(str(probe_dir), os.W_OK):
-        return False
-    try:
-        with tempfile.NamedTemporaryFile(dir=str(probe_dir), prefix=".mcweb_write_test_", delete=True):
-            pass
-        return True
-    except Exception:
-        return False
+    return ports.filesystem.can_write_dir(probe_dir)
 
 
 def _directory_state(path_value):
@@ -104,7 +99,7 @@ def _directory_state(path_value):
 
 def validate_minecraft_root(path_value):
     """Return minecraft-root validation details."""
-    if not _paths.is_valid_env_path(path_value):
+    if not ports.service_control.is_valid_env_path(path_value):
         return {"errors": ["invalid path for detected OS."], "missing": False}
     state = _directory_state(path_value)
     errors = []
@@ -121,13 +116,13 @@ def validate_minecraft_root(path_value):
 
 def validate_backup_location(path_value, allow_create_missing=False):
     """Return backup-location validation details."""
-    if not _paths.is_valid_env_path(path_value):
+    if not ports.service_control.is_valid_env_path(path_value):
         return {"errors": ["invalid path for detected OS."], "missing": False}
     state = _directory_state(path_value)
     errors = []
     if state["missing"]:
-        errors.append("location does not exist.")
         if not allow_create_missing:
+            errors.append("location does not exist.")
             errors.append("Enable 'Create folder' to continue.")
     if state["not_writable"]:
         errors.append("backup location not writable.")

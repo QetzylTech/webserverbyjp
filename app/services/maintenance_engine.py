@@ -1,12 +1,12 @@
 """Maintenance execution/runtime helpers."""
 
 import math
-import shutil
 import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from app.ports import ports
 from app.services.maintenance_state_store import (
     _cleanup_load_history,
     _cleanup_load_non_normal,
@@ -17,6 +17,24 @@ from app.services.maintenance_candidate_scan import _backup_bucket, _cleanup_col
 from app.core import profiling
 
 _cleanup_run_lock = threading.Lock()
+
+
+class _MappingCtx:
+    def __init__(self, data):
+        self._data = data if isinstance(data, dict) else {}
+
+    def __getattr__(self, name):
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(name)
+
+
+def _as_ctx(value):
+    if hasattr(value, "ctx"):
+        return value.ctx
+    if isinstance(value, dict):
+        return _MappingCtx(value)
+    return value
 
 
 def _group_by_category(candidates):
@@ -103,15 +121,16 @@ def _add_count_targets(by_category, rules, reasons_map, to_delete):
                 _mark(reasons_map, row["path"], "count_rule")
 
 
-def _add_space_targets(state, cfg, eligible, rules, reasons_map, to_delete):
+def _add_space_targets(ctx, cfg, eligible, rules, reasons_map, to_delete):
     """Add space targets."""
+    ctx = _as_ctx(ctx)
     space_rule = rules.get("space", {})
     used_trigger = _safe_int(space_rule.get("used_trigger_percent", 80), 80, minimum=50, maximum=100)
     hysteresis = _safe_int(space_rule.get("hysteresis_percent", 5), 5, minimum=1, maximum=30)
     cooldown_seconds = _safe_int(space_rule.get("cooldown_seconds", 600), 600, minimum=0, maximum=86400)
     meta = cfg.setdefault("meta", {})
 
-    used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(state["BACKUP_DIR"])
+    used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(ctx.BACKUP_DIR)
     armed = bool(meta.get("last_space_trigger_armed", True))
     now_unix = int(time.time())
     cooldown_until = _safe_int(meta.get("cooldown_until_unix", 0), 0, minimum=0, maximum=2_147_483_647)
@@ -155,8 +174,9 @@ def _add_space_targets(state, cfg, eligible, rules, reasons_map, to_delete):
     meta["cooldown_until_unix"] = now_unix + cooldown_seconds
 
 
-def _space_rule_gate(state, cfg, rules):
+def _space_rule_gate(ctx, cfg, rules):
     """Return whether space-based cleanup gate is open."""
+    ctx = _as_ctx(ctx)
     space_rule = rules.get("space", {})
     if not space_rule.get("enabled", True):
         return True
@@ -166,7 +186,7 @@ def _space_rule_gate(state, cfg, rules):
     cooldown_seconds = _safe_int(space_rule.get("cooldown_seconds", 600), 600, minimum=0, maximum=86400)
     meta = cfg.setdefault("meta", {})
 
-    used_percent, _, _ = _cleanup_safe_used_percent(state["BACKUP_DIR"])
+    used_percent, _, _ = _cleanup_safe_used_percent(ctx.BACKUP_DIR)
     armed = bool(meta.get("last_space_trigger_armed", True))
     now_unix = int(time.time())
     cooldown_until = _safe_int(meta.get("cooldown_until_unix", 0), 0, minimum=0, maximum=2_147_483_647)
@@ -199,8 +219,9 @@ def _bucket_keep_limit(bucket, count_rule):
     return default_limit
 
 
-def _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete):
+def _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete):
     """Add backup targets that satisfy all enabled rules."""
+    ctx = _as_ctx(ctx)
     backup_rows = [row for row in candidates if row["eligible"] and row.get("category") == "backup_zip"]
     if not backup_rows:
         return
@@ -210,7 +231,7 @@ def _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, re
     age_enabled = bool(age_rule.get("enabled", True))
     count_enabled = bool(count_rule.get("enabled", True))
     space_enabled = bool(rules.get("space", {}).get("enabled", True))
-    space_ok = _space_rule_gate(state, cfg, rules) if space_enabled else True
+    space_ok = _space_rule_gate(ctx, cfg, rules) if space_enabled else True
 
     cutoff = None
     if age_enabled:
@@ -267,7 +288,7 @@ def _cleanup_delete_target(path, is_dir):
     """Handle cleanup delete target."""
     target = Path(path)
     if is_dir:
-        shutil.rmtree(target)
+        ports.filesystem.rmtree(target)
     else:
         target.unlink(missing_ok=True)
 
@@ -308,13 +329,14 @@ def _build_deleted_output_items(rows):
     return deleted_items
 
 
-def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
+def _cleanup_evaluate(ctx, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
     """Handle cleanup evaluate."""
+    ctx = _as_ctx(ctx)
     with profiling.timed("maintenance.evaluate.total"):
         selected_paths = set(selected_paths or [])
         rules = cfg.get("rules", {})
         with profiling.timed("maintenance.evaluate.candidate_discovery"):
-            candidates = _cleanup_collect_candidates(state, cfg)
+            candidates = _cleanup_collect_candidates(ctx, cfg)
         if not isinstance(candidates, list):
             profiling.incr_error("maintenance.evaluate.candidate_discovery.invalid_result")
             candidates = []
@@ -335,14 +357,14 @@ def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_cha
                     elif row["path"] in selected_paths and not row["eligible"]:
                         _mark(reasons_map, row["path"], "ineligible_selection")
             else:
-                _add_backup_targets_all_rules(state, cfg, candidates, by_category, rules, reasons_map, to_delete)
+                _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete)
 
                 non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
                 if non_backup_eligible:
                     non_backup_by_category = _group_by_category([row for row in candidates if row.get("category") != "backup_zip"])
                     _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
                     _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
-                    _add_space_targets(state, cfg, non_backup_eligible, rules, reasons_map, to_delete)
+                    _add_space_targets(ctx, cfg, non_backup_eligible, rules, reasons_map, to_delete)
 
         with profiling.timed("maintenance.evaluate.dedup_and_blast_cap"):
             ordered = _dedupe_oldest_first(to_delete)
@@ -388,11 +410,12 @@ def _cleanup_evaluate(state, cfg, *, mode="rule", selected_paths=None, apply_cha
         }
 
 
-def _cleanup_state_snapshot(state, cfg):
+def _cleanup_state_snapshot(ctx, cfg):
     """Handle cleanup state snapshot."""
+    ctx = _as_ctx(ctx)
     with profiling.timed("maintenance.state_snapshot.total"):
         def _next_time_schedule_run():
-            tz = state.get("DISPLAY_TZ")
+            tz = getattr(ctx, "DISPLAY_TZ", None)
             now_local = datetime.now(tz) if tz else datetime.now()
             schedules = cfg.get("schedules", [])
             next_candidates = []
@@ -459,11 +482,11 @@ def _cleanup_state_snapshot(state, cfg):
                 return "On event trigger"
             return "-"
 
-        used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(state["BACKUP_DIR"])
+        used_percent, total_bytes, free_bytes = _cleanup_safe_used_percent(ctx.BACKUP_DIR)
         with profiling.timed("maintenance.state_snapshot.non_normal_load"):
-            non_normal = _cleanup_load_non_normal(state)
+            non_normal = _cleanup_load_non_normal(ctx)
         with profiling.timed("maintenance.state_snapshot.history_load"):
-            history = _cleanup_load_history(state)
+            history = _cleanup_load_history(ctx)
         return {
             "config": cfg,
             "non_normal": non_normal,
@@ -477,13 +500,14 @@ def _cleanup_state_snapshot(state, cfg):
         }
 
 
-def _cleanup_run_with_lock(state, cfg, *, mode, selected_paths=None, trigger="manual_rule"):
+def _cleanup_run_with_lock(ctx, cfg, *, mode, selected_paths=None, trigger="manual_rule"):
     """Handle cleanup run with lock."""
+    ctx = _as_ctx(ctx)
     if not _cleanup_run_lock.acquire(blocking=False):
         return None
     try:
         return _cleanup_evaluate(
-            state,
+            ctx,
             cfg,
             mode=mode,
             selected_paths=selected_paths,

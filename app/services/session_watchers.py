@@ -1,6 +1,6 @@
 """Session lifecycle and background watcher services."""
-import threading
 import time
+from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
 def format_countdown(seconds):
@@ -57,8 +57,17 @@ def idle_player_watcher(ctx):
 
 def start_idle_player_watcher(ctx):
     """Start the idle watcher daemon thread once per process."""
-    watcher = threading.Thread(target=idle_player_watcher, args=(ctx,), daemon=True)
-    watcher.start()
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="idle-player-watcher",
+            target=idle_player_watcher,
+            args=(ctx,),
+            interval_source=getattr(ctx, "IDLE_CHECK_INTERVAL_ACTIVE_SECONDS", None),
+            stop_signal_name="idle_player_watcher_stop_event",
+            health_marker="idle_player_watcher",
+        ),
+    )
 
 
 def backup_session_watcher(ctx):
@@ -106,8 +115,17 @@ def backup_session_watcher(ctx):
 
 def start_backup_session_watcher(ctx):
     """Start the backup session watcher daemon thread."""
-    watcher = threading.Thread(target=backup_session_watcher, args=(ctx,), daemon=True)
-    watcher.start()
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="backup-session-watcher",
+            target=backup_session_watcher,
+            args=(ctx,),
+            interval_source=getattr(ctx, "BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS", None),
+            stop_signal_name="backup_session_watcher_stop_event",
+            health_marker="backup_session_watcher",
+        ),
+    )
 
 
 def _run_low_storage_emergency_shutdown(ctx):
@@ -152,7 +170,16 @@ def storage_safety_watcher(ctx):
                         should_start = True
                 if should_start:
                     ctx.log_mcweb_action("emergency-shutdown", rejection_message=ctx.low_storage_error_message())
-                    threading.Thread(target=_run_low_storage_emergency_shutdown, args=(ctx,), daemon=True).start()
+                    start_worker(
+                        ctx,
+                        WorkerSpec(
+                            name="storage-emergency-shutdown",
+                            target=_run_low_storage_emergency_shutdown,
+                            args=(ctx,),
+                            exception_policy="log_and_continue",
+                            health_marker="storage_emergency_shutdown",
+                        ),
+                    )
             elif not low_storage:
                 with ctx.storage_emergency_lock:
                     ctx.storage_emergency_active = False
@@ -169,8 +196,17 @@ def storage_safety_watcher(ctx):
 
 def start_storage_safety_watcher(ctx):
     """Start the low-storage safety watcher daemon thread."""
-    watcher = threading.Thread(target=storage_safety_watcher, args=(ctx,), daemon=True)
-    watcher.start()
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="storage-safety-watcher",
+            target=storage_safety_watcher,
+            args=(ctx,),
+            interval_source=getattr(ctx, "STORAGE_SAFETY_CHECK_INTERVAL_ACTIVE_SECONDS", None),
+            stop_signal_name="storage_safety_watcher_stop_event",
+            health_marker="storage_safety_watcher",
+        ),
+    )
 
 
 def initialize_session_tracking(ctx):
@@ -194,7 +230,7 @@ def initialize_session_tracking(ctx):
         backup_state.periodic_runs = int(max(0, time.time() - session_start) // ctx.BACKUP_INTERVAL_SECONDS)
 
 
-def status_debug_note(ctx):
+def status_state_note(ctx):
     """Return compact status note for session-state related error responses."""
     try:
         service_status = ctx.get_status()
@@ -203,6 +239,6 @@ def status_debug_note(ctx):
             session_raw = ctx.session_state.session_file.read_text(encoding="utf-8").strip()
         return f"service={service_status}, session_file={'<empty>' if not session_raw else session_raw}"
     except Exception as exc:
-        ctx.log_mcweb_exception("_status_debug_note", exc)
+        ctx.log_mcweb_exception("_status_state_note", exc)
         return "service=unknown, session_file=unreadable"
 

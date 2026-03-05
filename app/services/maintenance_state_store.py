@@ -3,7 +3,6 @@
 import copy
 from datetime import datetime
 import json
-import shutil
 import threading
 import time
 from zoneinfo import ZoneInfo
@@ -11,6 +10,7 @@ from pathlib import Path
 
 from flask import jsonify, request
 from app.core import state_store as state_store_service
+from app.ports import ports
 
 _CLEANUP_SCHEMA_VERSION = 1
 _CLEANUP_SCOPE_CHOICES = {"backups", "stale_worlds"}
@@ -30,6 +30,24 @@ _CLEANUP_CONFIG_CACHE_LOCK = threading.Lock()
 _CLEANUP_CONFIG_CACHE = {}
 
 
+class _MappingCtx:
+    def __init__(self, data):
+        self._data = data if isinstance(data, dict) else {}
+
+    def __getattr__(self, name):
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(name)
+
+
+def _as_ctx(value):
+    if hasattr(value, "ctx"):
+        return value.ctx
+    if isinstance(value, dict):
+        return _MappingCtx(value)
+    return value
+
+
 def _safe_int(value, default_value, minimum=0, maximum=10_000):
     """Handle safe int."""
     try:
@@ -43,30 +61,35 @@ def _safe_int(value, default_value, minimum=0, maximum=10_000):
     return parsed
 
 
-def _cleanup_data_dir(state):
+def _cleanup_data_dir(ctx):
     """Handle cleanup data dir."""
-    return Path(state["session_state"].session_file).parent
+    ctx = _as_ctx(ctx)
+    return Path(ctx.session_state.session_file).parent
 
 
-def _cleanup_db_path(state):
+def _cleanup_db_path(ctx):
     """Return sqlite state-db path for structured maintenance records."""
-    return Path(state["APP_STATE_DB_PATH"])
+    ctx = _as_ctx(ctx)
+    return Path(ctx.APP_STATE_DB_PATH)
 
 
-def _cleanup_non_normal_path(state):
+def _cleanup_non_normal_path(ctx):
     """Handle cleanup non normal path."""
-    return _cleanup_data_dir(state) / "cleanup_non_normal.txt"
+    ctx = _as_ctx(ctx)
+    return _cleanup_data_dir(ctx) / "cleanup_non_normal.txt"
 
 
-def _cleanup_log_path(state):
+def _cleanup_log_path(ctx):
     """Handle cleanup log path."""
-    return Path(state["MCWEB_LOG_FILE"]).parent / "cleanup.log"
+    ctx = _as_ctx(ctx)
+    return Path(ctx.MCWEB_LOG_FILE).parent / "cleanup.log"
 
 
-def _cleanup_now_iso(state):
+def _cleanup_now_iso(ctx):
     """Handle cleanup now iso."""
+    ctx = _as_ctx(ctx)
     try:
-        tz = state["DISPLAY_TZ"]
+        tz = ctx.DISPLAY_TZ
     except Exception:
         tz = ZoneInfo("UTC")
     return datetime.now(tz).isoformat(timespec="seconds")
@@ -194,8 +217,9 @@ def _cleanup_get_scope_view(cfg, scope):
     return profile
 
 
-def _cleanup_migrate_config_dict(state, loaded, default_cfg):
+def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
     """Normalize cleanup config into the current schema."""
+    ctx = _as_ctx(ctx)
     cfg = default_cfg
     loaded_rules = loaded.get("rules") if isinstance(loaded, dict) else None
     if isinstance(loaded_rules, dict):
@@ -259,7 +283,7 @@ def _cleanup_migrate_config_dict(state, loaded, default_cfg):
     for scope_name in _CLEANUP_SCOPE_CHOICES:
         scoped = _cleanup_get_scope_view(cfg, scope_name)
         scoped_rules = scoped.setdefault("rules", {})
-        scoped_rules = _cleanup_apply_scope_from_state(state, scoped_rules, scope=scope_name)
+        scoped_rules = _cleanup_apply_scope_from_state(ctx, scoped_rules, scope=scope_name)
         scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
         scoped.setdefault("schedules", [])
         scoped.setdefault("meta", {})
@@ -276,25 +300,27 @@ def _cleanup_default_history():
     return {"runs": []}
 
 
-def _cleanup_apply_scope_from_state(state, rules, scope=""):
+def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
     """Apply environment-defined safety/scope values onto rules."""
+    ctx = _as_ctx(ctx)
     categories = rules.setdefault("categories", {})
     guards = rules.setdefault("guards", {})
     if scope:
         _cleanup_apply_scope_categories(rules, _cleanup_normalize_scope(scope))
     else:
-        categories["backup_zip"] = bool(state["MAINTENANCE_SCOPE_BACKUP_ZIP"])
-        categories["stale_world_dir"] = bool(state["MAINTENANCE_SCOPE_STALE_WORLD_DIR"])
-        categories["old_world_zip"] = bool(state["MAINTENANCE_SCOPE_OLD_WORLD_ZIP"])
-    guards["never_delete_newest_n_per_category"] = _safe_int(state["MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N"], 1, minimum=1, maximum=1000)
-    guards["never_delete_last_backup_overall"] = bool(state["MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP"])
-    guards["protect_active_world"] = bool(state["MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD"])
+        categories["backup_zip"] = bool(ctx.MAINTENANCE_SCOPE_BACKUP_ZIP)
+        categories["stale_world_dir"] = bool(ctx.MAINTENANCE_SCOPE_STALE_WORLD_DIR)
+        categories["old_world_zip"] = bool(ctx.MAINTENANCE_SCOPE_OLD_WORLD_ZIP)
+    guards["never_delete_newest_n_per_category"] = _safe_int(ctx.MAINTENANCE_GUARD_NEVER_DELETE_NEWEST_N, 1, minimum=1, maximum=1000)
+    guards["never_delete_last_backup_overall"] = bool(ctx.MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP)
+    guards["protect_active_world"] = bool(ctx.MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD)
     return rules
 
 
-def _cleanup_load_config(state):
+def _cleanup_load_config(ctx):
     """Handle cleanup load config."""
-    db_path = _cleanup_db_path(state)
+    ctx = _as_ctx(ctx)
+    db_path = _cleanup_db_path(ctx)
     cache_key = str(db_path)
     now = time.time()
     with _CLEANUP_CONFIG_CACHE_LOCK:
@@ -317,17 +343,17 @@ def _cleanup_load_config(state):
                 "config": copy.deepcopy(default),
             }
         return copy.deepcopy(default)
-    cfg = _cleanup_migrate_config_dict(state, loaded, default)
+    cfg = _cleanup_migrate_config_dict(ctx, loaded, default)
     try:
         # Persist migrated config once so future loads are clean and stable.
         if loaded != cfg:
-            _cleanup_save_config(state, cfg)
+            _cleanup_save_config(ctx, cfg)
     except Exception:
         pass
-    cfg["rules"] = _cleanup_apply_scope_from_state(state, cfg.get("rules", {}))
+    cfg["rules"] = _cleanup_apply_scope_from_state(ctx, cfg.get("rules", {}))
     for scope_name in _CLEANUP_SCOPE_CHOICES:
         scoped = _cleanup_get_scope_view(cfg, scope_name)
-        scoped_rules = _cleanup_apply_scope_from_state(state, scoped.get("rules", {}), scope=scope_name)
+        scoped_rules = _cleanup_apply_scope_from_state(ctx, scoped.get("rules", {}), scope=scope_name)
         scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
     with _CLEANUP_CONFIG_CACHE_LOCK:
         _CLEANUP_CONFIG_CACHE[cache_key] = {
@@ -337,18 +363,20 @@ def _cleanup_load_config(state):
     return copy.deepcopy(cfg)
 
 
-def _cleanup_save_config(state, payload):
+def _cleanup_save_config(ctx, payload):
     """Persist cleanup config to sqlite."""
-    db_path = _cleanup_db_path(state)
+    ctx = _as_ctx(ctx)
+    db_path = _cleanup_db_path(ctx)
     state_store_service.save_cleanup_config(db_path, payload)
     cache_key = str(db_path)
     with _CLEANUP_CONFIG_CACHE_LOCK:
         _CLEANUP_CONFIG_CACHE.pop(cache_key, None)
 
 
-def _cleanup_load_non_normal(state):
+def _cleanup_load_non_normal(ctx):
     """Handle cleanup load non normal."""
-    path = _cleanup_non_normal_path(state)
+    ctx = _as_ctx(ctx)
+    path = _cleanup_non_normal_path(ctx)
     default = _cleanup_default_non_normal()
     if not path.exists():
         return default
@@ -367,11 +395,12 @@ def _cleanup_load_non_normal(state):
     return data
 
 
-def _cleanup_get_client_ip(state):
+def _cleanup_get_client_ip(ctx):
     """Handle cleanup get client ip."""
+    ctx = _as_ctx(ctx)
     client_ip = ""
     try:
-        client_ip = (state["_get_client_ip"]() or "").strip()
+        client_ip = (ctx._get_client_ip() or "").strip()
     except Exception:
         xff = (request.headers.get("X-Forwarded-For") or "").strip()
         if xff:
@@ -383,15 +412,16 @@ def _cleanup_get_client_ip(state):
     return client_ip
 
 
-def _cleanup_log(state, *, what, why, trigger, result, details=""):
+def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
     """Handle cleanup log."""
-    stamp = _cleanup_now_iso(state)
+    ctx = _as_ctx(ctx)
+    stamp = _cleanup_now_iso(ctx)
     line = f"{stamp} | what={what} | why={why} | trigger={trigger} | result={result}"
     if details:
         line += f" | details={details}"
     line += "\n"
     try:
-        path = _cleanup_log_path(state)
+        path = _cleanup_log_path(ctx)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(line)
@@ -402,35 +432,37 @@ def _cleanup_log(state, *, what, why, trigger, result, details=""):
 def _cleanup_safe_used_percent(path):
     """Handle cleanup safe used percent."""
     try:
-        usage = shutil.disk_usage(str(path))
+        total, _used, free = ports.filesystem.disk_usage(path)
     except OSError:
         return None, None, None
-    total = int(usage.total)
-    free = int(usage.free)
+    total = int(total)
+    free = int(free)
     used = total - free
     if total <= 0:
         return None, total, free
     return (100.0 * used / total), total, free
 
 
-def _cleanup_mark_missed_run(state, reason, schedule_id="", scope=""):
+def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):
     """Handle cleanup mark missed run."""
-    data = _cleanup_load_non_normal(state)
+    ctx = _as_ctx(ctx)
+    data = _cleanup_load_non_normal(ctx)
     event = {
-        "at": _cleanup_now_iso(state),
+        "at": _cleanup_now_iso(ctx),
         "reason": str(reason),
         "schedule_id": str(schedule_id),
         "scope": _cleanup_normalize_scope(scope) if scope else "",
     }
     data["missed_runs"].append(event)
     data["missed_runs"] = data["missed_runs"][-100:]
-    _cleanup_atomic_write_json(_cleanup_non_normal_path(state), data)
+    _cleanup_atomic_write_json(_cleanup_non_normal_path(ctx), data)
 
 
-def _cleanup_load_history(state):
+def _cleanup_load_history(ctx):
     """Handle cleanup load history."""
+    ctx = _as_ctx(ctx)
     default = _cleanup_default_history()
-    db_path = _cleanup_db_path(state)
+    db_path = _cleanup_db_path(ctx)
     try:
         runs = state_store_service.load_cleanup_history_runs(db_path, limit=500)
         return {"runs": runs[-500:]}
@@ -438,15 +470,16 @@ def _cleanup_load_history(state):
         return default
 
 
-def _cleanup_save_history(state, payload):
+def _cleanup_save_history(ctx, payload):
     """Persist cleanup history document to sqlite."""
-    db_path = _cleanup_db_path(state)
+    ctx = _as_ctx(ctx)
+    db_path = _cleanup_db_path(ctx)
     runs = payload.get("runs") if isinstance(payload, dict) else []
     state_store_service.save_cleanup_history_runs(db_path, runs, max_rows=500)
 
 
 def _cleanup_append_history(
-    state,
+    ctx,
     *,
     trigger,
     mode,
@@ -460,8 +493,9 @@ def _cleanup_append_history(
     scope="",
 ):
     """Append cleanup run history entry."""
+    ctx = _as_ctx(ctx)
     item = {
-        "at": _cleanup_now_iso(state),
+        "at": _cleanup_now_iso(ctx),
         "trigger": str(trigger),
         "mode": str(mode),
         "dry_run": bool(dry_run),
@@ -473,7 +507,7 @@ def _cleanup_append_history(
         "details": str(details or ""),
         "scope": _cleanup_normalize_scope(scope) if scope else "",
     }
-    db_path = _cleanup_db_path(state)
+    db_path = _cleanup_db_path(ctx)
     state_store_service.append_cleanup_history_run(db_path, item, max_rows=500)
 
 

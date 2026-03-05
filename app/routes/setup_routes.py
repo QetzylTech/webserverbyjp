@@ -196,7 +196,10 @@ def register_setup_routes(
             root = str(values.get("MINECRAFT_ROOT_DIR", "")).strip()
             if not root:
                 return _required_field_error("MINECRAFT_ROOT_DIR")
-            service_error = setup_service_service.validate_service_name(service_name)
+            service_error = setup_service_service.validate_service_name(
+                service_name,
+                minecraft_root=root,
+            )
             root_result = setup_service_service.validate_minecraft_root(root)
             messages = []
             if service_error:

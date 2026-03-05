@@ -171,23 +171,6 @@ def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcw
         old_dir=old_dir,
         log=_log,
     )
-    _ensure_text_file(
-        data_dir / "properties" / "debug_properties.state",
-        "{}\n",
-        _is_json_dict_valid,
-        data_dir=data_dir,
-        old_dir=old_dir,
-        log=_log,
-    )
-    _ensure_text_file(
-        data_dir / "properties" / "debug_properties.history",
-        "",
-        lambda _text: True,
-        data_dir=data_dir,
-        old_dir=old_dir,
-        log=_log,
-    )
-
     if db_path.exists() and not _is_db_compatible(db_path):
         archived = _archive_incompatible(db_path, data_dir=data_dir, old_dir=old_dir)
         _log("data-bootstrap-archive", f"{db_path} -> {archived} (incompatible sqlite schema)")
@@ -200,4 +183,3 @@ def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcw
     except Exception as exc:
         if callable(log_mcweb_exception):
             log_mcweb_exception("data-bootstrap/initialize-state-db", exc)
-

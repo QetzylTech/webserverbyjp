@@ -22,6 +22,7 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_
             active_ttl_seconds=_value("SERVICE_STATUS_CACHE_ACTIVE_SECONDS"),
             off_ttl_seconds=_value("SERVICE_STATUS_CACHE_OFF_SECONDS"),
             timeout_seconds=_value("SERVICE_STATUS_COMMAND_TIMEOUT_SECONDS"),
+            minecraft_root=_value("MINECRAFT_ROOT_DIR"),
             log_action=_value("log_mcweb_log"),
             log_exception=_value("log_mcweb_exception"),
         )

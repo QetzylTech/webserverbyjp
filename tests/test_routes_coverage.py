@@ -8,7 +8,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from app.routes import dashboard_control_routes as control_routes
-from app.routes import dashboard_debug_routes as debug_routes
+from debug import routes as debug_routes
 from app.routes import dashboard_file_routes as file_routes
 from app.routes import dashboard_maintenance_api_routes as maintenance_routes
 from app.routes import dashboard_routes as home_routes
@@ -442,7 +442,6 @@ class HomeRoutesCoverageTests(unittest.TestCase):
                 },
             }
             with patch.object(home_routes, "render_template", return_value="home-page"), \
-                 patch.object(home_routes, "register_debug_routes", lambda app, state: None), \
                  patch.object(home_routes, "register_file_routes", lambda app, state: None), \
                  patch.object(home_routes, "register_maintenance_routes", lambda app, state: None), \
                  patch.object(home_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):

@@ -2,11 +2,11 @@
 
 import os
 import re
-import shutil
 import threading
 import time
 from pathlib import Path
 
+from app.ports import ports
 from app.services.maintenance_state_store import _cleanup_data_dir
 from app.services import file_inventory_index as file_inventory_index_service
 from app.core import profiling
@@ -14,6 +14,24 @@ from app.core import profiling
 _RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
 _INDEX_LOCK = threading.Lock()
 _DIR_SIZE_CACHE = {}
+
+
+class _MappingCtx:
+    def __init__(self, data):
+        self._data = data if isinstance(data, dict) else {}
+
+    def __getattr__(self, name):
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(name)
+
+
+def _as_ctx(value):
+    if hasattr(value, "ctx"):
+        return value.ctx
+    if isinstance(value, dict):
+        return _MappingCtx(value)
+    return value
 
 
 def _backup_bucket(name):
@@ -178,7 +196,7 @@ def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_
             deleted.append(item)
             continue
         try:
-            shutil.rmtree(item["path"])
+            ports.filesystem.rmtree(item["path"])
             deleted.append(item)
         except OSError as exc:
             errors.append(f"{item['name']}: {exc}")
@@ -228,9 +246,10 @@ def _cleanup_read_level_name(path):
     return None
 
 
-def _cleanup_active_world_path(state):
+def _cleanup_active_world_path(ctx):
     """Handle cleanup active world path."""
-    for candidate in state["SERVER_PROPERTIES_CANDIDATES"]:
+    ctx = _as_ctx(ctx)
+    for candidate in ctx.SERVER_PROPERTIES_CANDIDATES:
         if not Path(candidate).exists():
             continue
         level_name = _cleanup_read_level_name(candidate)
@@ -269,13 +288,14 @@ def _cleanup_dir_size(path):
         return total
 
 
-def _cleanup_collect_candidates(state, cfg):
+def _cleanup_collect_candidates(ctx, cfg):
     """Handle cleanup collect candidates."""
+    ctx = _as_ctx(ctx)
     with profiling.timed("maintenance.candidate_discovery.total"):
-        backup_dir = Path(state["BACKUP_DIR"]).resolve()
-        data_dir = _cleanup_data_dir(state).resolve()
+        backup_dir = Path(ctx.BACKUP_DIR).resolve()
+        data_dir = _cleanup_data_dir(ctx).resolve()
         old_worlds_dir = (data_dir / "old_worlds").resolve()
-        snapshot_root = Path(state.get("AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
+        snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
         inventory = file_inventory_index_service.get_inventory(
             backup_root=backup_dir,
             snapshot_root=snapshot_root,
@@ -283,7 +303,7 @@ def _cleanup_collect_candidates(state, cfg):
         )
         allowed_roots = [backup_dir, old_worlds_dir]
         with profiling.timed("maintenance.candidate_discovery.active_world_probe"):
-            active_world = _cleanup_active_world_path(state)
+            active_world = _cleanup_active_world_path(ctx)
         categories = cfg.get("rules", {}).get("categories", {})
         candidates = []
 

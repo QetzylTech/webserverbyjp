@@ -4,8 +4,6 @@ import copy
 import gzip
 import json
 from pathlib import Path
-import shutil
-import tempfile
 import threading
 import tracemalloc
 import time
@@ -13,6 +11,7 @@ import time
 from flask import Response, abort, after_this_request, jsonify, render_template, request, send_file, send_from_directory, stream_with_context
 from app.core import profiling
 from app.core import state_store as state_store_service
+from app.ports import ports
 
 _METRICS_ROUTE_CACHE_LOCK = threading.Lock()
 _METRICS_ROUTE_CACHE_TTL_SECONDS = 1.0
@@ -156,7 +155,7 @@ def register_file_routes(app, state):
             current_page="crash_logs",
             page_title="Crash Reports",
             panel_title="Crash Reports",
-            panel_hint="Latest to oldest from /opt/Minecraft/crash-reports",
+            panel_hint=f"Latest to oldest from {state['CRASH_REPORTS_DIR']}",
             items=state["get_cached_file_page_items"]("crash_logs"),
             download_base="/download/crash-logs",
             empty_text="No crash reports found.",
@@ -175,7 +174,7 @@ def register_file_routes(app, state):
             current_page="minecraft_logs",
             page_title="Log Files",
             panel_title="Log Files",
-            panel_hint="Latest to oldest from /opt/Minecraft/logs",
+            panel_hint=f"Latest to oldest from {state['MINECRAFT_LOGS_DIR']}",
             items=state["get_cached_file_page_items"]("minecraft_logs"),
             download_base="/download/minecraft-logs",
             empty_text="No log files (.log/.gz) found.",
@@ -224,12 +223,12 @@ def register_file_routes(app, state):
 
         tracemalloc_started = False
         try:
-            tmp_root = Path(tempfile.mkdtemp(prefix="mcweb_snapshot_zip_"))
+            tmp_root = ports.filesystem.mkdtemp(prefix="mcweb_snapshot_zip_")
             if profiling.ENABLED and not tracemalloc.is_tracing():
                 tracemalloc.start()
                 tracemalloc_started = True
             started = time.perf_counter()
-            zip_path = Path(shutil.make_archive(str(tmp_root / safe_name), "zip", root_dir=snapshot_dir))
+            zip_path = ports.filesystem.make_zip_archive(tmp_root / safe_name, root_dir=snapshot_dir)
             elapsed = time.perf_counter() - started
             profiling.record_duration("snapshot_download.zip_build", elapsed)
             if profiling.ENABLED and tracemalloc.is_tracing():
@@ -241,7 +240,7 @@ def register_file_routes(app, state):
             @after_this_request
             def _cleanup_temp_zip(response):
                 try:
-                    shutil.rmtree(tmp_root, ignore_errors=True)
+                    ports.filesystem.rmtree(tmp_root, ignore_errors=True)
                 except OSError:
                     pass
                 return response

@@ -18,10 +18,6 @@
     <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Instructions</a>
     <a class="nav-link" href="https://github.com/QetzylTech/Marites" target="_blank" rel="noopener noreferrer">GitHub Repo</a>
 
-    {% if debug_page_visible %}
-    <hr class="nav-separator">
-    <a class="nav-link {% if current_page == 'debug' %}active{% endif %}" href="/debug">Debug</a>
-    {% endif %}
 </nav>
 <script src="{{ url_for('static', filename='nav_attention_poll.js', v=static_version('nav_attention_poll.js')) }}"></script>
 <script src="{{ url_for('static', filename='offline_recovery.js', v=static_version('offline_recovery.js')) }}"></script>

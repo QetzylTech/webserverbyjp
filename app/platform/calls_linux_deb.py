@@ -12,7 +12,43 @@ def run_elevated(cmd, *, timeout=None):
     )
 
 
-def service_show_load_state(service_name, *, timeout=5):
+def default_web_port():
+    return 8080
+
+
+def minecraft_log_stream_mode():
+    return "journal"
+
+
+def minecraft_load_recent_logs(service_name, logs_dir, *, tail_lines=1000, timeout=4):
+    _ = logs_dir
+    result = subprocess.run(
+        ["journalctl", "-u", service_name, "-n", str(int(tail_lines)), "--no-pager"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    return ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def minecraft_startup_probe_output(service_name, logs_dir, *, timeout=4):
+    _ = logs_dir
+    result = subprocess.run(
+        ["journalctl", "-u", service_name, "-n", "500", "--no-pager"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    return ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def minecraft_follow_logs_command(service_name, logs_dir):
+    _ = logs_dir
+    return ["journalctl", "-u", service_name, "-f", "-n", "0", "--no-pager"]
+
+
+def service_show_load_state(service_name, *, timeout=5, minecraft_root=None):
+    _ = minecraft_root
     return subprocess.run(
         ["systemctl", "show", service_name, "--property=LoadState", "--value"],
         capture_output=True,
@@ -21,7 +57,8 @@ def service_show_load_state(service_name, *, timeout=5):
     )
 
 
-def service_is_active(service_name, *, timeout=3):
+def service_is_active(service_name, *, timeout=3, minecraft_root=None):
+    _ = minecraft_root
     return subprocess.run(
         ["systemctl", "is-active", service_name],
         capture_output=True,
@@ -30,15 +67,18 @@ def service_is_active(service_name, *, timeout=3):
     )
 
 
-def service_start_no_block(service_name, *, timeout=12):
+def service_start_no_block(service_name, *, timeout=12, minecraft_root=None):
+    _ = minecraft_root
     return run_elevated(["systemctl", "start", "--no-block", service_name], timeout=timeout)
 
 
-def service_start(service_name, *, timeout=12):
+def service_start(service_name, *, timeout=12, minecraft_root=None):
+    _ = minecraft_root
     return run_elevated(["systemctl", "start", service_name], timeout=timeout)
 
 
-def service_stop(service_name, *, timeout=12):
+def service_stop(service_name, *, timeout=12, minecraft_root=None):
+    _ = minecraft_root
     return run_elevated(["systemctl", "stop", service_name], timeout=timeout)
 
 

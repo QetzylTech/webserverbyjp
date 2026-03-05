@@ -16,7 +16,7 @@ def build_runtime_bindings(
     ns = namespace
 
     def _state():
-        return ns["STATE"]
+        return ns["STATE"].ctx
 
     def _mark_file_page_client_active():
         return dashboard_runtime_service.mark_file_page_client_active(_state())
@@ -280,8 +280,8 @@ def build_runtime_bindings(
     def initialize_session_tracking():
         return session_watchers_service.initialize_session_tracking(_state())
 
-    def _status_debug_note():
-        return session_watchers_service.status_debug_note(_state())
+    def _status_state_note():
+        return session_watchers_service.status_state_note(_state())
 
     return {
         "_mark_file_page_client_active": _mark_file_page_client_active,
@@ -360,5 +360,5 @@ def build_runtime_bindings(
         "storage_safety_watcher": storage_safety_watcher,
         "start_storage_safety_watcher": start_storage_safety_watcher,
         "initialize_session_tracking": initialize_session_tracking,
-        "_status_debug_note": _status_debug_note,
+        "_status_state_note": _status_state_note,
     }

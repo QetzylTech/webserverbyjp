@@ -30,12 +30,18 @@ def save_setup_values(
     except Exception:
         return False, "DISPLAY_TZ is invalid.", {"DISPLAY_TZ": "DISPLAY_TZ is invalid."}
     try:
-        if _to_bool(values.get("CREATE_BACKUP_DIR")):
-            Path(str(values.get("BACKUP_DIR", "")).strip()).mkdir(parents=True, exist_ok=True)
+        create_backup_dir = _to_bool(values.get("CREATE_BACKUP_DIR"))
+        backup_dir_value = str(values.get("BACKUP_DIR", "")).strip()
+        backup_dir_path = Path(backup_dir_value)
+        if create_backup_dir and backup_dir_value and not backup_dir_path.exists():
+            backup_dir_path.mkdir(parents=True, exist_ok=True)
     except Exception:
-        pass
+        return False, "Failed to create backup folder.", {"BACKUP_DIR": "Failed to create backup folder."}
 
-    runtime_errors = setup_service.validate_runtime_locations(values)
+    runtime_errors = setup_service.validate_runtime_locations(
+        values,
+        allow_create_backup_missing=_to_bool(values.get("CREATE_BACKUP_DIR")),
+    )
     if runtime_errors:
         if "SERVICE" in runtime_errors:
             return False, "service not found.", runtime_errors

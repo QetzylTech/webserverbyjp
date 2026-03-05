@@ -422,7 +422,10 @@ class DebugTools:
 
     def debug_explorer_roots(self):
         """Return allowed root directories for debug file explorer browsing."""
-        return {"minecraft": Path("/opt/Minecraft")}
+        configured_root = self.namespace.get("MINECRAFT_ROOT_DIR")
+        if configured_root:
+            return {"minecraft": Path(configured_root)}
+        return {"minecraft": self.APP_DIR / "Minecraft"}
 
     def resolve_debug_explorer_target(self, root_key, rel_path):
         """Resolve and validate explorer target path while preventing root escape."""

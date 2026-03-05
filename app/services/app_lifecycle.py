@@ -1,5 +1,6 @@
 """Flask lifecycle hook and startup runner composition helpers."""
 from flask import has_request_context, request
+from werkzeug.exceptions import HTTPException
 from app.core.response_helpers import internal_error_response
 
 
@@ -38,6 +39,8 @@ def install_flask_hooks(
 
     @app.errorhandler(Exception)
     def _unhandled_exception_handler(exc):
+        if isinstance(exc, HTTPException):
+            return exc
         path = request.path if has_request_context() else "unknown-path"
         log_mcweb_exception(f"unhandled_exception path={path}", exc)
         return internal_error_response(request)
@@ -47,14 +50,11 @@ def build_run_server(
     *,
     bootstrap_service,
     app,
-    cfg_get_str,
-    cfg_get_int,
+    app_config,
     log_mcweb_log,
     log_mcweb_exception,
     is_backup_running,
     load_backup_log_cache_from_disk,
-    prepare_debug_server_properties_bootup,
-    log_mcweb_boot_diagnostics,
     load_minecraft_log_cache_from_journal,
     load_mcweb_log_cache_from_disk,
     ensure_session_tracking_initialized,
@@ -77,8 +77,7 @@ def build_run_server(
         if not enable_boot_runtime_tasks:
             bootstrap_service.run_server(
                 app,
-                cfg_get_str,
-                cfg_get_int,
+                app_config,
                 log_mcweb_log,
                 log_mcweb_exception,
                 boot_steps=[],
@@ -86,8 +85,6 @@ def build_run_server(
             return
 
         boot_steps = [
-            ("prepare_debug_server_properties_bootup", prepare_debug_server_properties_bootup),
-            ("log_mcweb_boot_diagnostics", log_mcweb_boot_diagnostics),
             ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
             ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
             ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
@@ -107,8 +104,7 @@ def build_run_server(
 
         bootstrap_service.run_server(
             app,
-            cfg_get_str,
-            cfg_get_int,
+            app_config,
             log_mcweb_log,
             log_mcweb_exception,
             boot_steps,

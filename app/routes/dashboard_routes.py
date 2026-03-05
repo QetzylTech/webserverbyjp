@@ -4,9 +4,9 @@ import time
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
 from app.core import profiling
+from app.queries import dashboard_queries as dashboard_queries_service
 
 from app.routes.dashboard_control_routes import register_control_routes
-from app.routes.dashboard_debug_routes import register_debug_routes
 from app.routes.dashboard_file_routes import register_file_routes
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
 from app.services.maintenance_scheduler import run_cleanup_event_if_enabled
@@ -32,30 +32,10 @@ def register_routes(app, state):
     @app.route("/")
     def index():
         """Runtime helper index."""
-        message_code = request.args.get("msg", "")
-        alert_message = ""
-        if message_code == "password_incorrect":
-            alert_message = "Password incorrect. Action rejected."
-        elif message_code == "csrf_invalid":
-            alert_message = "Security check failed. Please refresh and try again."
-        elif message_code == "session_write_failed":
-            alert_message = "Session file write failed."
-        elif message_code == "backup_failed":
-            alert_message = "Backup failed."
-        elif message_code == "internal_error":
-            alert_message = "Internal server error."
-        elif message_code == "low_storage_space":
-            alert_message = state["low_storage_error_message"]()
-        elif message_code == "start_failed":
-            alert_message = "Server failed to start."
-
-        state["_mark_home_page_client_active"]()
-        data = state["get_cached_dashboard_metrics"]()
-        if state["is_storage_low"]():
-            message_code = "low_storage_space"
-            alert_message = state["low_storage_error_message"]()
-            data["low_storage_blocked"] = True
-            data["low_storage_message"] = alert_message
+        home = dashboard_queries_service.get_dashboard_home_model(state, request.args.get("msg", ""))
+        message_code = home["message_code"]
+        alert_message = home["alert_message"]
+        data = home["metrics"]
         return render_template(
             state["HTML_TEMPLATE_NAME"],
             current_page="home",
@@ -134,8 +114,6 @@ def register_routes(app, state):
         """Runtime helper readme_page."""
         return render_template("documentation.html", current_page="readme")
 
-    register_debug_routes(app, state)
-
     # Route: /doc/server_setup_doc.md
     @app.route("/doc/server_setup_doc.md")
     def readme_markdown():
@@ -152,12 +130,12 @@ def register_routes(app, state):
     @app.route("/observed-state")
     def observed_state():
         """Return observed runtime state derived from service/filesystem probes."""
-        return jsonify({"ok": True, "observed": state["get_observed_state"]()})
+        return jsonify(dashboard_queries_service.get_observed_state_model(state))
 
     # Route: /consistency-check
     @app.route("/consistency-check")
     def consistency_check():
-        """Return runtime consistency/invariant report for debug/admin checks."""
+        """Return runtime consistency/invariant report for diagnostics/admin checks."""
         auto_repair_raw = str(request.args.get("auto_repair", "") or "").strip().lower()
         auto_repair = auto_repair_raw in {"1", "true", "yes", "on"}
         if auto_repair:
@@ -165,8 +143,7 @@ def register_routes(app, state):
             if not state["validate_sudo_password"](sudo_password):
                 return state["_password_rejected_response"]()
             state["record_successful_password_ip"]()
-        report = state["get_consistency_report"](auto_repair=auto_repair)
-        return jsonify({"ok": True, "report": report})
+        return jsonify(dashboard_queries_service.get_consistency_report_model(state, auto_repair=auto_repair))
 
     # Route: /profiling-summary
     @app.route("/profiling-summary")
@@ -240,13 +217,8 @@ def register_routes(app, state):
         device_map = state["get_device_name_map"]()
         opener_name = str(device_map.get(opener_ip, "") or "").strip()
         opener_identity = opener_name or opener_ip or "unknown"
-        observed = state["get_observed_state"]()
-        service_status = str(observed.get("service_status_display", "") or "").strip().lower()
-        home_attention = "none"
-        if service_status == "crashed":
-            home_attention = "red"
-        elif service_status in {"starting", "shutting down"}:
-            home_attention = "yellow"
+        observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
+        home_attention = dashboard_queries_service.get_home_attention_level(observed)
         return jsonify(
             {
                 "ok": True,

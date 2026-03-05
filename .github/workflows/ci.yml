@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest mypy flask
+
+      - name: Format Check (Placeholder)
+        run: |
+          python -m compileall -q app tests debug
+
+      - name: Type Check
+        run: |
+          mypy --config-file mypy.ini app/ports/interfaces.py app/bootstrap/config_loader.py app/state/contexts.py app/infrastructure/adapters.py
+
+      - name: Architecture Rules
+        run: |
+          pytest -q tests/test_architecture_boundaries.py
+
+      - name: Port Contracts
+        run: |
+          pytest -q tests/test_port_contracts.py
+
+      - name: Integration Smoke
+        run: |
+          pytest -q tests/test_boot_smoke.py
+
+      - name: Unit + Integration
+        run: |
+          pytest -q tests
+
+      - name: Topology Export
+        run: |
+          python scripts/export_import_topology.py
+
+      - name: Upload Topology Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-topology-dot
+          path: doc/import_topology.dot

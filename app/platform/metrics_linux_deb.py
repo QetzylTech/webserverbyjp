@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+
+def _read_proc_stat():
+    with open("/proc/stat", "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.startswith("cpu")]
+
+
+def _parse_cpu_times(line):
+    parts = line.split()
+    values = [int(v) for v in parts[1:]]
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    total = sum(values)
+    return total, idle
+
+
+def _format_bytes(value):
+    units = ["B", "K", "M", "G", "T", "P"]
+    v = float(max(0, value))
+    idx = 0
+    while v >= 1024 and idx < len(units) - 1:
+        v /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(v)}{units[idx]}"
+    return f"{v:.1f}{units[idx]}"
+
+
+def get_cpu_usage_per_core():
+    try:
+        first = _read_proc_stat()
+        time.sleep(0.15)
+        second = _read_proc_stat()
+    except OSError:
+        return ["unknown"]
+    usages = []
+    for i in range(1, min(len(first), len(second))):
+        total1, idle1 = _parse_cpu_times(first[i])
+        total2, idle2 = _parse_cpu_times(second[i])
+        total_delta = total2 - total1
+        idle_delta = idle2 - idle1
+        if total_delta <= 0:
+            usages.append("0.0")
+            continue
+        usage = 100.0 * (1.0 - (idle_delta / total_delta))
+        usages.append(f"{usage:.1f}")
+    return usages
+
+
+def get_ram_usage():
+    mem_total_kb = 0
+    mem_available_kb = 0
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    mem_total_kb = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    mem_available_kb = int(line.split()[1])
+    except OSError:
+        return "unknown"
+
+    if mem_total_kb <= 0:
+        return "unknown"
+
+    used_kb = mem_total_kb - mem_available_kb
+    used_gb = used_kb / (1024 * 1024)
+    total_gb = mem_total_kb / (1024 * 1024)
+    percent = (used_kb / mem_total_kb) * 100.0
+    return f"{used_gb:.2f} / {total_gb:.2f} GB ({percent:.1f}%)"
+
+
+def get_cpu_frequency():
+    freq_paths = sorted(Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq"))
+    freqs_khz = []
+    for path in freq_paths:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+            freqs_khz.append(int(value))
+        except (ValueError, OSError):
+            continue
+    if freqs_khz:
+        avg_ghz = (sum(freqs_khz) / len(freqs_khz)) / 1_000_000
+        return f"{avg_ghz:.2f} GHz"
+    return "unknown"
+
+
+def get_storage_usage():
+    try:
+        stat = os.statvfs("/")
+    except OSError:
+        return "unknown"
+    total = stat.f_blocks * stat.f_frsize
+    available = stat.f_bavail * stat.f_frsize
+    used = total - available
+    if total <= 0:
+        return "unknown"
+    percent = (used / total) * 100.0
+    return f"{_format_bytes(used)} / {_format_bytes(total)} ({percent:.0f}%)"

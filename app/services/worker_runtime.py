@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from app.services.maintenance_state_store import (
     _cleanup_get_scope_view,
     _cleanup_load_config,
 )
+from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
 def _interval_seconds(ctx, name, default_value):
@@ -341,6 +341,36 @@ def start_worker_loops(ctx):
         ctx.ensure_metrics_collector_started()
     except Exception as exc:
         ctx.log_mcweb_exception("worker_start_metrics_collector", exc)
-    threading.Thread(target=_control_intent_consumer_loop, args=(ctx,), daemon=True).start()
-    threading.Thread(target=_maintenance_precompute_loop, args=(ctx,), daemon=True).start()
-    threading.Thread(target=_index_refresh_loop, args=(ctx,), daemon=True).start()
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="worker-control-intent-consumer",
+            target=_control_intent_consumer_loop,
+            args=(ctx,),
+            interval_source=getattr(ctx, "WORKER_CONTROL_INTENT_POLL_SECONDS", None),
+            stop_signal_name="worker_control_intent_stop_event",
+            health_marker="worker_control_intent_consumer",
+        ),
+    )
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="worker-maintenance-precompute",
+            target=_maintenance_precompute_loop,
+            args=(ctx,),
+            interval_source=getattr(ctx, "WORKER_MAINTENANCE_PRECOMPUTE_INTERVAL_SECONDS", None),
+            stop_signal_name="worker_maintenance_precompute_stop_event",
+            health_marker="worker_maintenance_precompute",
+        ),
+    )
+    start_worker(
+        ctx,
+        WorkerSpec(
+            name="worker-index-refresh",
+            target=_index_refresh_loop,
+            args=(ctx,),
+            interval_source=getattr(ctx, "WORKER_INDEX_REFRESH_INTERVAL_SECONDS", None),
+            stop_signal_name="worker_index_refresh_stop_event",
+            health_marker="worker_index_refresh",
+        ),
+    )

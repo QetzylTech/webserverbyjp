@@ -1,6 +1,6 @@
 """Background worker entrypoint for split-role deployments."""
 
-from app.main import run_worker
+from app.bootstrap.worker_app import run_worker
 
 
 def main():

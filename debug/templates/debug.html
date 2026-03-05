@@ -3,16 +3,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Debug</title>
-{% include "partials/theme_init.html" %}
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard_home.css', v=static_version('dashboard_home.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='debug_page.css', v=static_version('debug_page.css')) }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
+<link rel="stylesheet" href="{{ url_for('debug_static', filename='debug_page.css', v=static_version('debug_page.css')) }}">
 </head>
 <body data-page="debug">
 <div class="layout">
-    {% include "partials/nav.html" %}
     <main class="content">
         <div class="debug-container">
+            <p><a href="/">Main App</a></p>
             <div id="debug-shell" class="debug-shell">
                 <div class="debug-main">
                     <section class="debug-panel debug-header-panel pane-primary">
@@ -149,6 +148,6 @@ window.__MCWEB_DEBUG_CONFIG = {
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
-<script src="{{ url_for('static', filename='debug_page.js', v=static_version('debug_page.js')) }}"></script>
+<script src="{{ url_for('debug_static', filename='debug_page.js', v=static_version('debug_page.js')) }}"></script>
 </body>
 </html>

@@ -72,5 +72,8 @@ Desktop.ini
 tmp/
 temp/
 
+# Generated architecture topology artifact
+doc/import_topology.dot
+
 # Local rules list
 rules_list.txt

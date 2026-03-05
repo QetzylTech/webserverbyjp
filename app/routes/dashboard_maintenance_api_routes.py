@@ -35,6 +35,7 @@ from app.services.maintenance_engine import (
     _cleanup_run_with_lock,
     _cleanup_state_snapshot,
 )
+from app.services.worker_scheduler import WorkerSpec, start_worker
 
 _MAINTENANCE_STATE_CACHE_TTL_SECONDS = 3.0
 _MAINTENANCE_STATE_CACHE_LOCK = threading.Lock()
@@ -46,6 +47,7 @@ _MAINTENANCE_ASYNC_LOCK = threading.Lock()
 _MAINTENANCE_ASYNC_STATE = {
     "started": False,
     "state_ref": None,
+    "ctx_ref": None,
     "scope_items": {},
 }
 
@@ -115,13 +117,13 @@ def _maintenance_enforce_rate_limit(route_key, *, limit, window_seconds):
     return response
 
 
-def _maintenance_compute_state_payload(state, scope):
-    full_cfg = _cleanup_load_config(state)
+def _maintenance_compute_state_payload(ctx, state, scope):
+    full_cfg = _cleanup_load_config(ctx)
     cfg = _cleanup_get_scope_view(full_cfg, scope)
-    preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+    preview = _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="preview")
     return {
         "ok": True,
-        **_cleanup_state_snapshot(state, cfg),
+        **_cleanup_state_snapshot(ctx, cfg),
         "preview": preview,
         "scope": scope,
         "device_map": state["get_device_name_map"](),
@@ -178,9 +180,10 @@ def _maintenance_async_worker():
         time.sleep(_MAINTENANCE_ASYNC_REFRESH_INTERVAL_SECONDS)
         with _MAINTENANCE_ASYNC_LOCK:
             state = _MAINTENANCE_ASYNC_STATE.get("state_ref")
+            ctx = _MAINTENANCE_ASYNC_STATE.get("ctx_ref")
             scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
             scope_rows = [(k, dict(v)) for k, v in scope_items.items() if isinstance(v, dict)]
-        if state is None:
+        if state is None or ctx is None:
             continue
         now = time.time()
         for scope, item in scope_rows:
@@ -200,7 +203,7 @@ def _maintenance_async_worker():
                 if force_refresh:
                     current["force_refresh"] = False
             try:
-                payload = _maintenance_compute_state_payload(state, scope)
+                payload = _maintenance_compute_state_payload(ctx, state, scope)
                 computed_now = time.time()
                 with _MAINTENANCE_ASYNC_LOCK:
                     target = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
@@ -214,16 +217,25 @@ def _maintenance_async_worker():
                     target["refreshing"] = False
 
 
-def _maintenance_mark_scope_requested(state, scope, *, force_refresh=False):
+def _maintenance_mark_scope_requested(ctx, state, scope, *, force_refresh=False):
     with _MAINTENANCE_ASYNC_LOCK:
         _MAINTENANCE_ASYNC_STATE["state_ref"] = state
+        _MAINTENANCE_ASYNC_STATE["ctx_ref"] = ctx
         item = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
         item["last_requested_at"] = time.time()
         if force_refresh:
             item["force_refresh"] = True
         if not _MAINTENANCE_ASYNC_STATE["started"]:
-            worker = threading.Thread(target=_maintenance_async_worker, daemon=True)
-            worker.start()
+            start_worker(
+                ctx,
+                WorkerSpec(
+                    name="maintenance-async-worker",
+                    target=_maintenance_async_worker,
+                    interval_source=1.0,
+                    stop_signal_name="maintenance_async_worker_stop_event",
+                    health_marker="maintenance_async_worker",
+                ),
+            )
             _MAINTENANCE_ASYNC_STATE["started"] = True
 
 
@@ -243,8 +255,9 @@ def _maintenance_set_async_item(scope, payload, *, computed_at=None):
 
 def register_maintenance_routes(app, state):
     """Register maintenance page and maintenance API routes."""
+    ctx = getattr(state, "ctx", state)
     _maintenance_state_cache_invalidate()
-    start_cleanup_scheduler_once(state)
+    start_cleanup_scheduler_once(ctx)
 
     def _require_password(payload, *, what, why, trigger, scope, details="", log_success=False):
         sudo_password = str(payload.get("sudo_password", ""))
@@ -275,11 +288,11 @@ def register_maintenance_routes(app, state):
     def maintenance_page():
         """Runtime helper maintenance_page."""
         with profiling.timed("maintenance.route.page"):
-            full_cfg = _cleanup_load_config(state)
+            full_cfg = _cleanup_load_config(ctx)
             scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
             cfg = _cleanup_get_scope_view(full_cfg, scope)
-            snapshot = _cleanup_state_snapshot(state, cfg)
-            eval_preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+            snapshot = _cleanup_state_snapshot(ctx, cfg)
+            eval_preview = _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="preview")
             return render_template(
                 "maintenance.html",
                 current_page="maintenance",
@@ -289,9 +302,9 @@ def register_maintenance_routes(app, state):
                 maintenance_scope=scope,
                 maintenance_device_map=state["get_device_name_map"](),
                 maintenance_timezone=str(state["DISPLAY_TZ"]),
-                maintenance_active_world=str(_cleanup_active_world_path(state) or state["WORLD_DIR"]),
+                maintenance_active_world=str(_cleanup_active_world_path(ctx) or state["WORLD_DIR"]),
                 maintenance_backup_dir=str(state["BACKUP_DIR"]),
-                maintenance_stale_dir=str((_cleanup_data_dir(state) / "old_worlds").resolve()),
+                maintenance_stale_dir=str((_cleanup_data_dir(ctx) / "old_worlds").resolve()),
             )
 
     # Route: /maintenance/api/state
@@ -304,7 +317,7 @@ def register_maintenance_routes(app, state):
                 return limited
             force_refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
             scope = _cleanup_normalize_scope(request.args.get("scope", "backups"))
-            _maintenance_mark_scope_requested(state, scope, force_refresh=force_refresh)
+            _maintenance_mark_scope_requested(ctx, state, scope, force_refresh=force_refresh)
             if not force_refresh:
                 db_payload, _db_id = _maintenance_payload_from_db(state, scope)
                 if isinstance(db_payload, dict):
@@ -330,7 +343,7 @@ def register_maintenance_routes(app, state):
                 )
                 _maintenance_state_cache_set(scope, payload)
                 return jsonify(payload)
-            payload = _maintenance_compute_state_payload(state, scope)
+            payload = _maintenance_compute_state_payload(ctx, state, scope)
             computed_at = time.time()
             _maintenance_set_async_item(scope, payload, computed_at=computed_at)
             response_payload = _maintenance_payload_with_freshness(payload, computed_at=computed_at, refreshing=False)
@@ -383,11 +396,11 @@ def register_maintenance_routes(app, state):
             return err
         ok, parsed = _cleanup_validate_rules(payload.get("rules", {}))
         if not ok:
-            _cleanup_log(state, what="save_rules", why="manual_save", trigger="manual", result="validation_failure", details=f"scope={scope};error={parsed}")
+            _cleanup_log(ctx, what="save_rules", why="manual_save", trigger="manual", result="validation_failure", details=f"scope={scope};error={parsed}")
             return _cleanup_error("validation_failure", parsed, status=400)
-        full_cfg = _cleanup_load_config(state)
+        full_cfg = _cleanup_load_config(ctx)
         cfg = _cleanup_get_scope_view(full_cfg, scope)
-        cfg["rules"] = _cleanup_apply_scope_from_state(state, parsed, scope=scope)
+        cfg["rules"] = _cleanup_apply_scope_from_state(ctx, parsed, scope=scope)
         time_based = cfg.get("rules", {}).get("time_based", {})
         time_enabled = bool(time_based.get("enabled", True))
         repeat_mode = str(time_based.get("repeat_mode", "does_not_repeat")).strip().lower()
@@ -420,15 +433,15 @@ def register_maintenance_routes(app, state):
                     "day_of_week": int(weekly_day_map.get(str(time_based.get("weekly_day", "Sunday")), 6)),
                     "day_of_month": int(time_based.get("monthly_date", 1)),
                     "every_n_days": int(time_based.get("every_n_days", 1)),
-                    "anchor_date": _cleanup_now_iso(state)[:10],
+                    "anchor_date": _cleanup_now_iso(ctx)[:10],
                 }
             ]
         meta = cfg.setdefault("meta", {})
         meta["rule_version"] = int(meta.get("rule_version", 0)) + 1
         meta["schedule_version"] = int(meta.get("schedule_version", 0)) + 1
-        meta["last_changed_by"] = _cleanup_get_client_ip(state)
-        meta["last_changed_at"] = _cleanup_now_iso(state)
-        _cleanup_save_config(state, full_cfg)
+        meta["last_changed_by"] = _cleanup_get_client_ip(ctx)
+        meta["last_changed_at"] = _cleanup_now_iso(ctx)
+        _cleanup_save_config(ctx, full_cfg)
         _maintenance_state_cache_invalidate(scope)
         _cleanup_log(
             state,
@@ -438,7 +451,7 @@ def register_maintenance_routes(app, state):
             result="ok",
             details=f"scope={scope};rule_version={meta['rule_version']}",
         )
-        preview = _cleanup_evaluate(state, cfg, mode="rule", apply_changes=False, trigger="preview")
+        preview = _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="preview")
         return jsonify({"ok": True, "config": cfg, "preview": preview, "scope": scope})
 
     # Route: /maintenance/api/run-rules
@@ -457,10 +470,10 @@ def register_maintenance_routes(app, state):
         dry_run = bool(raw_dry_run)
         if isinstance(raw_dry_run, str):
             dry_run = raw_dry_run.strip().lower() in {"1", "true", "yes", "on"}
-        full_cfg = _cleanup_load_config(state)
+        full_cfg = _cleanup_load_config(ctx)
         cfg = _cleanup_get_scope_view(full_cfg, scope)
         if not cfg.get("rules", {}).get("enabled", True):
-            _cleanup_log(state, what="run_rules", why="manual_apply", trigger="manual_rule", result="rules_disabled", details=f"scope={scope}")
+            _cleanup_log(ctx, what="run_rules", why="manual_apply", trigger="manual_rule", result="rules_disabled", details=f"scope={scope}")
             return _cleanup_error("rules_disabled", status=400)
         eval_cfg = cfg
         if selected_rule:
@@ -471,9 +484,9 @@ def register_maintenance_routes(app, state):
                 sub = rules.setdefault(key, {})
                 sub["enabled"] = key == selected_rule
         if dry_run:
-            preview = _cleanup_evaluate(state, eval_cfg, mode="rule", apply_changes=False, trigger="manual_rule")
+            preview = _cleanup_evaluate(ctx, eval_cfg, mode="rule", apply_changes=False, trigger="manual_rule")
             _cleanup_append_history(
-                state,
+                ctx,
                 trigger=f"manual_rule:{selected_rule or 'all'}",
                 mode="rule",
                 dry_run=True,
@@ -485,7 +498,7 @@ def register_maintenance_routes(app, state):
                 scope=scope,
             )
             _cleanup_log(
-                state,
+                ctx,
                 what="run_rules",
                 why="manual_apply_dry_run",
                 trigger="manual_rule",
@@ -496,20 +509,20 @@ def register_maintenance_routes(app, state):
         ok_pw, err = _require_password(payload, what="run_rules", why="manual_apply", trigger="manual", scope=scope)
         if not ok_pw:
             return err
-        result = _cleanup_run_with_lock(state, eval_cfg, mode="rule", trigger="manual_rule")
+        result = _cleanup_run_with_lock(ctx, eval_cfg, mode="rule", trigger="manual_rule")
         if result is None:
-            _cleanup_log(state, what="run_rules", why="manual_apply", trigger="manual_rule", result="lock_held", details=f"scope={scope}")
+            _cleanup_log(ctx, what="run_rules", why="manual_apply", trigger="manual_rule", result="lock_held", details=f"scope={scope}")
             return _cleanup_error("lock_held", status=409)
         meta = cfg.setdefault("meta", {})
-        meta["last_run_at"] = _cleanup_now_iso(state)
+        meta["last_run_at"] = _cleanup_now_iso(ctx)
         meta["last_run_trigger"] = "manual_rule"
         meta["last_run_result"] = "ok" if not result["errors"] else "partial"
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
-        _cleanup_save_config(state, full_cfg)
+        _cleanup_save_config(ctx, full_cfg)
         _maintenance_state_cache_invalidate(scope)
         _cleanup_append_history(
-            state,
+            ctx,
             trigger=f"manual_rule:{selected_rule or 'all'}",
             mode="rule",
             dry_run=False,
@@ -521,7 +534,7 @@ def register_maintenance_routes(app, state):
             scope=scope,
         )
         _cleanup_log(
-            state,
+            ctx,
             what="run_rules",
             why="manual_apply",
             trigger="manual_rule",
@@ -546,9 +559,9 @@ def register_maintenance_routes(app, state):
         selected = payload.get("selected_paths", [])
         if not isinstance(selected, list):
             return _cleanup_error("validation_failure", "selected_paths must be a list.", status=400)
-        full_cfg = _cleanup_load_config(state)
+        full_cfg = _cleanup_load_config(ctx)
         cfg = _cleanup_get_scope_view(full_cfg, scope)
-        preview = _cleanup_evaluate(state, cfg, mode="manual", selected_paths=selected, apply_changes=False, trigger="manual_selection")
+        preview = _cleanup_evaluate(ctx, cfg, mode="manual", selected_paths=selected, apply_changes=False, trigger="manual_selection")
         if preview["selected_ineligible"]:
             _cleanup_log(
                 state,
@@ -561,7 +574,7 @@ def register_maintenance_routes(app, state):
             return _cleanup_error("ineligible_selection", {"paths": preview["selected_ineligible"]}, status=409)
         if dry_run:
             _cleanup_append_history(
-                state,
+                ctx,
                 trigger="manual_selection",
                 mode="manual",
                 dry_run=True,
@@ -573,7 +586,7 @@ def register_maintenance_routes(app, state):
                 scope=scope,
             )
             _cleanup_log(
-                state,
+                ctx,
                 what="manual_delete",
                 why="manual_selection_dry_run",
                 trigger="manual_selection",
@@ -584,20 +597,20 @@ def register_maintenance_routes(app, state):
         ok_pw, err = _require_password(payload, what="manual_delete", why="manual_selection", trigger="manual", scope=scope)
         if not ok_pw:
             return err
-        result = _cleanup_run_with_lock(state, cfg, mode="manual", selected_paths=selected, trigger="manual_selection")
+        result = _cleanup_run_with_lock(ctx, cfg, mode="manual", selected_paths=selected, trigger="manual_selection")
         if result is None:
-            _cleanup_log(state, what="manual_delete", why="manual_selection", trigger="manual_selection", result="lock_held", details=f"scope={scope}")
+            _cleanup_log(ctx, what="manual_delete", why="manual_selection", trigger="manual_selection", result="lock_held", details=f"scope={scope}")
             return _cleanup_error("lock_held", status=409)
         meta = cfg.setdefault("meta", {})
-        meta["last_run_at"] = _cleanup_now_iso(state)
+        meta["last_run_at"] = _cleanup_now_iso(ctx)
         meta["last_run_trigger"] = "manual_selection"
         meta["last_run_result"] = "ok" if not result["errors"] else "partial"
         meta["last_run_deleted"] = result["deleted_count"]
         meta["last_run_errors"] = len(result["errors"])
-        _cleanup_save_config(state, full_cfg)
+        _cleanup_save_config(ctx, full_cfg)
         _maintenance_state_cache_invalidate(scope)
         _cleanup_append_history(
-            state,
+            ctx,
             trigger="manual_selection",
             mode="manual",
             dry_run=False,
@@ -609,7 +622,7 @@ def register_maintenance_routes(app, state):
             scope=scope,
         )
         _cleanup_log(
-            state,
+            ctx,
             what="manual_delete",
             why="manual_selection",
             trigger="manual_selection",
@@ -641,16 +654,16 @@ def register_maintenance_routes(app, state):
                 return "stale_worlds"
             return ""
 
-        data = _cleanup_load_non_normal(state)
+        data = _cleanup_load_non_normal(ctx)
         missed = data.get("missed_runs")
         if not isinstance(missed, list):
             missed = []
         # Remove current-scope events and unknown-scope events.
         data["missed_runs"] = [item for item in missed if (_entry_scope(item) not in {"", scope})]
-        data["last_ack_at"] = _cleanup_now_iso(state)
-        data["last_ack_by"] = _cleanup_get_client_ip(state)
-        _cleanup_atomic_write_json(_cleanup_non_normal_path(state), data)
+        data["last_ack_at"] = _cleanup_now_iso(ctx)
+        data["last_ack_by"] = _cleanup_get_client_ip(ctx)
+        _cleanup_atomic_write_json(_cleanup_non_normal_path(ctx), data)
         _maintenance_state_cache_invalidate(scope)
-        _cleanup_log(state, what="ack_non_normal", why="manual_ack", trigger="manual", result="ok", details=f"scope={scope}")
+        _cleanup_log(ctx, what="ack_non_normal", why="manual_ack", trigger="manual", result="ok", details=f"scope={scope}")
         return jsonify({"ok": True, "non_normal": data})
 

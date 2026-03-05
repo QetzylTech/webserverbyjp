@@ -1,9 +1,6 @@
 """Service status cache helpers."""
-import subprocess
 import time
-from app.platform import get_calls
-
-_calls = get_calls()
+from app.ports import ports
 
 
 def get_status(
@@ -15,6 +12,7 @@ def get_status(
     active_ttl_seconds,
     off_ttl_seconds,
     timeout_seconds,
+    minecraft_root,
     log_action,
     log_exception,
 ):
@@ -29,19 +27,22 @@ def get_status(
             return cached
 
     try:
-        result = _calls.service_is_active(service, timeout=timeout_seconds)
-        status = result.stdout.strip() or "unknown"
-    except subprocess.TimeoutExpired:
-        log_action(
-            "status-timeout",
-            command=f"systemctl is-active {service}",
-            rejection_message=f"Timed out after {timeout_seconds:.1f}s.",
+        result = ports.service_control.service_is_active(
+            service,
+            timeout=timeout_seconds,
+            minecraft_root=minecraft_root,
         )
-        status = "unknown"
+        status = result.stdout.strip() or "unknown"
     except Exception as exc:
-        log_exception("get_status", exc)
+        if ports.service_control.is_timeout_error(exc):
+            log_action(
+                "status-timeout",
+                command=f"service_is_active {service}",
+                rejection_message=f"Timed out after {timeout_seconds:.1f}s.",
+            )
+        else:
+            log_exception("get_status", exc)
         status = "unknown"
-
     with cache_lock:
         cache_value_ref[0] = status
         cache_at_ref[0] = now
