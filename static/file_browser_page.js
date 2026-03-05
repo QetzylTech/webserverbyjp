@@ -15,6 +15,9 @@
         const http = window.MCWebHttp || null;
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
         const RESTORE_AVAILABILITY_INTERVAL_MS = 10000;
+        const FILES_LOG_LIST_CACHE_KEY = "mcweb.files.logList.cache.v1";
+        const FILES_LOG_TEXT_CACHE_KEY = "mcweb.files.logText.cache.v1";
+        const FILES_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
         function sendFilePageHeartbeat() {
             if (document.hidden) return;
             fetch("/file-page-heartbeat", {
@@ -133,6 +136,34 @@
             return generated;
         }
         const restorePaneClientId = getRestorePaneClientId();
+
+        function readSessionJson(key) {
+            try {
+                const raw = window.sessionStorage.getItem(key);
+                if (!raw) return {};
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === "object" ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function writeSessionJson(key, payload) {
+            try {
+                window.sessionStorage.setItem(key, JSON.stringify(payload || {}));
+            } catch (_) {
+                // Ignore storage failures.
+            }
+        }
+
+        function getFreshCacheEntry(store, cacheKey) {
+            const entry = store && typeof store === "object" ? store[cacheKey] : null;
+            if (!entry || typeof entry !== "object") return null;
+            const ts = Number(entry.ts || 0);
+            if (!Number.isFinite(ts) || ts <= 0) return null;
+            if ((Date.now() - ts) > FILES_CACHE_MAX_AGE_MS) return null;
+            return entry;
+        }
 
         function setDownloadError(text) {
             if (!errorBox) return;
@@ -708,6 +739,13 @@
         async function loadLogFileSourceList(source) {
             const sourceKey = String(source || "").trim().toLowerCase();
             if (!sourceKey) return;
+            const listCache = readSessionJson(FILES_LOG_LIST_CACHE_KEY);
+            const cachedListEntry = getFreshCacheEntry(listCache, sourceKey);
+            if (cachedListEntry && cachedListEntry.payload) {
+                currentLogFileSource = String(cachedListEntry.payload.source || sourceKey);
+                setActiveLogSource(currentLogFileSource);
+                renderLogFileList(cachedListEntry.payload);
+            }
             let response;
             try {
                 response = await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
@@ -733,6 +771,8 @@
             currentLogFileSource = String(payload.source || sourceKey);
             setActiveLogSource(currentLogFileSource);
             renderLogFileList(payload);
+            listCache[sourceKey] = { ts: Date.now(), payload };
+            writeSessionJson(FILES_LOG_LIST_CACHE_KEY, listCache);
         }
 
         function backupCategoryFromName(name) {
@@ -1299,6 +1339,12 @@
             fileViewerContent.textContent = "Loading...";
             setViewerDownloadMode("", "Download", false, {});
             openViewer();
+            const textCache = readSessionJson(FILES_LOG_TEXT_CACHE_KEY);
+            const cachedTextEntry = getFreshCacheEntry(textCache, source);
+            if (cachedTextEntry && typeof cachedTextEntry.logs === "string") {
+                fileViewerContent.innerHTML = formatViewerLogHtml(cachedTextEntry.logs || "(no logs)");
+                fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
+            }
 
             let response;
             try {
@@ -1327,6 +1373,8 @@
             const logs = String(payload.logs || "(no logs)");
             fileViewerContent.innerHTML = formatViewerLogHtml(logs);
             fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
+            textCache[source] = { ts: Date.now(), logs };
+            writeSessionJson(FILES_LOG_TEXT_CACHE_KEY, textCache);
         }
 
         if (passwordCancel) {

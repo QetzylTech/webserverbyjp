@@ -45,6 +45,12 @@
     let serverTimeZoneLabel = "";
     let pendingSudoForm = null;
     const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb", "mcweb_log"];
+    const LOG_SOURCE_BUFFER_LIMITS = {
+        minecraft: 500,
+        backup: 200,
+        mcweb: 200,
+        mcweb_log: 200,
+    };
     const LOG_SOURCE_STREAM_PATHS = {
         minecraft: "/log-stream/minecraft",
         backup: "/log-stream/backup",
@@ -76,6 +82,9 @@
         mcweb: null,
         mcweb_log: null,
     };
+    const HOME_CACHE_KEY = "mcweb.home.cache.v1";
+    const HOME_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+    const HOME_CACHE_WRITE_INTERVAL_MS = 2000;
     const LOG_STREAM_BATCH_FLUSH_MS = 1000;
     let logStreams = {
         minecraft: null,
@@ -97,6 +106,8 @@
     const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
+    let cachedMetricsSnapshot = null;
+    let lastHomeCacheWriteAt = 0;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
@@ -142,12 +153,74 @@
     }
 
     function sourceBufferLimit(source) {
-        return source === "minecraft" ? 500 : 200;
+        return LOG_SOURCE_BUFFER_LIMITS[source] || 200;
+    }
+
+    function readHomeCache() {
+        try {
+            const raw = window.sessionStorage.getItem(HOME_CACHE_KEY);
+            if (!raw) return null;
+            const payload = JSON.parse(raw);
+            if (!payload || typeof payload !== "object") return null;
+            const ts = Number(payload.ts || 0);
+            if (!Number.isFinite(ts) || ts <= 0) return null;
+            if ((Date.now() - ts) > HOME_CACHE_MAX_AGE_MS) return null;
+            return payload;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writeHomeCache(force = false) {
+        const now = Date.now();
+        if (!force && (now - lastHomeCacheWriteAt) < HOME_CACHE_WRITE_INTERVAL_MS) return;
+        if (!cachedMetricsSnapshot) return;
+        const compactLogs = {};
+        LOG_SOURCE_KEYS.forEach((source) => {
+            const lines = (logSourceBuffers[source] || []).map((entry) => String(entry.raw || ""));
+            compactLogs[source] = capTail(lines, sourceBufferLimit(source));
+        });
+        const payload = {
+            v: 1,
+            ts: now,
+            selectedLogSource: selectedLogSource,
+            metrics: cachedMetricsSnapshot,
+            logs: compactLogs,
+        };
+        try {
+            window.sessionStorage.setItem(HOME_CACHE_KEY, JSON.stringify(payload));
+            lastHomeCacheWriteAt = now;
+        } catch (_) {
+            // Ignore storage quota/unavailable errors.
+        }
+    }
+
+    function restoreHomeCache() {
+        const cached = readHomeCache();
+        if (!cached) return false;
+        if (cached.logs && typeof cached.logs === "object") {
+            LOG_SOURCE_KEYS.forEach((source) => {
+                const lines = Array.isArray(cached.logs[source]) ? cached.logs[source] : [];
+                logSourceBuffers[source] = capTail(lines, sourceBufferLimit(source)).map((line) => buildLogEntry(source, line));
+            });
+        }
+        const cachedSource = String(cached.selectedLogSource || "").trim();
+        if (LOG_SOURCE_KEYS.includes(cachedSource)) {
+            selectedLogSource = cachedSource;
+            const select = document.getElementById("log-source");
+            if (select) select.value = cachedSource;
+        }
+        if (cached.metrics && typeof cached.metrics === "object") {
+            applyMetricsData(cached.metrics, { fromCache: true });
+        }
+        renderActiveLog();
+        return true;
     }
 
     function setSourceLogText(source, rawText) {
         const lines = capTail((rawText || "").split("\n"), sourceBufferLimit(source));
         logSourceBuffers[source] = lines.map((line) => buildLogEntry(source, line));
+        writeHomeCache();
     }
 
     function appendSourceLogLine(source, line) {
@@ -182,6 +255,7 @@
             droppedCount: overflow,
             currentLength: targetBuffer.length,
         });
+        writeHomeCache();
     }
 
     function appendRenderedEntriesToActiveLog(entries, meta) {
@@ -823,8 +897,9 @@
         }).join(" | ");
     }
 
-    function applyMetricsData(data) {
+    function applyMetricsData(data, options = {}) {
         if (!data) return;
+        const fromCache = options.fromCache === true;
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
         const freq = document.getElementById("cpu-frequency");
@@ -919,7 +994,7 @@
             if (rconInput) rconInput.disabled = true;
             if (rconSubmit) rconSubmit.disabled = true;
         }
-        if (lowStorageBlocked) {
+        if (!fromCache && lowStorageBlocked) {
             if (!lowStorageModalShown && lowStorageMessage) {
                 showErrorModal(lowStorageMessage, {
                     errorCode: "low_storage_space",
@@ -927,23 +1002,26 @@
                 });
                 lowStorageModalShown = true;
             }
-        } else {
+        } else if (!fromCache) {
             lowStorageModalShown = false;
         }
-        if (backupWarningMessage && backupWarningSeq > lastBackupWarningSeq) {
+        if (!fromCache && backupWarningMessage && backupWarningSeq > lastBackupWarningSeq) {
             showErrorModal(backupWarningMessage, {
                 errorCode: "backup_warning",
                 action: "/backup",
             });
             lastBackupWarningSeq = backupWarningSeq;
-        } else if (backupWarningSeq > lastBackupWarningSeq) {
+        } else if (!fromCache && backupWarningSeq > lastBackupWarningSeq) {
             lastBackupWarningSeq = backupWarningSeq;
         }
+        cachedMetricsSnapshot = data;
+        writeHomeCache();
         applyRefreshMode(data.service_status);
         applyFastMetricsMode(sessionDurationRunning);
     }
 
     function applyFastMetricsData(data) {
+        if (!data) return;
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
         const freq = document.getElementById("cpu-frequency");
@@ -967,6 +1045,8 @@
                 || setServerTimeFromText(data.server_time);
             tickServerClock();
         }
+        cachedMetricsSnapshot = data;
+        writeHomeCache();
     }
 
     async function submitFormAjax(form, sudoPassword = undefined) {
@@ -1359,6 +1439,7 @@
             setServerTimeFromText(existingServerTime.textContent.trim(), { force: true });
         }
         const logSource = document.getElementById("log-source");
+        restoreHomeCache();
         if (logSource) {
             logSource.addEventListener("change", async () => {
                 selectedLogSource = getLogSource();
@@ -1368,6 +1449,7 @@
                 }
                 renderActiveLog();
                 scrollLogToBottom();
+                writeHomeCache(true);
             });
         }
         const existingLog = document.getElementById("minecraft-log");
@@ -1379,7 +1461,9 @@
         }
         selectedLogSource = getLogSource();
         await loadDeviceNameMap();
-        setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
+        if ((logSourceBuffers.minecraft || []).length === 0) {
+            setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
+        }
         if (existingLog) {
             renderActiveLog();
             scrollLogToBottom();
@@ -1391,6 +1475,7 @@
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
+        writeHomeCache(true);
     });
 
     document.addEventListener("visibilitychange", handleVisibilityRefreshMode);
