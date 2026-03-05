@@ -81,6 +81,13 @@ def _tick_display(tick_rate):
     lowered = value.lower()
     if lowered in {"unknown", "--", "n/a", "none"}:
         return "-"
+    if lowered.endswith("ms"):
+        numeric = lowered[:-2].strip()
+        try:
+            float(numeric)
+            return value
+        except Exception:
+            return "-"
     try:
         float(value)
         return value

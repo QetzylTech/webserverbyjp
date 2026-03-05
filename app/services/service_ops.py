@@ -58,8 +58,6 @@ def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
 def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
     _backup._calls.run_backup_script = _calls.run_backup_script
     _backup.is_backup_running = is_backup_running
-    _backup.get_backup_zip_snapshot = get_backup_zip_snapshot
-    _backup.backup_snapshot_changed = backup_snapshot_changed
     return _backup.run_backup_script(ctx, count_skip_as_success=count_skip_as_success, trigger=trigger)
 
 

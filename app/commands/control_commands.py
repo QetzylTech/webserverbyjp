@@ -576,17 +576,8 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         _enqueue_control_intent("backup", op_id, target="manual")
         _invalidate_observed_cache()
 
-        if process_role == "web":
-            state["log_mcweb_action"]("backup")
-            return jsonify({
-                "ok": True,
-                "accepted": True,
-                "queued": True,
-                "existing": resumed,
-                "resumed": resumed,
-                "op_id": op_id,
-                "status": "intent",
-            }), 202
+        # Execute local worker path even in web role so single-process runs
+        # do not depend on an external worker process for backup actions.
 
         def _backup_worker():
             try:

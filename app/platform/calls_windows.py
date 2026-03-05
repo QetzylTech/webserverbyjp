@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import tempfile
+import shutil
 from collections import deque
 
 
@@ -302,9 +303,44 @@ def run_mcrcon(host, port, password, command, *, timeout=4):
 
 
 def run_backup_script(script_path, trigger, *, timeout=600):
+    script = Path(str(script_path))
+    cwd = str(script.parent) if script.parent else None
+    trigger_text = str(trigger)
+
+    # Prefer shell interpreters for .sh scripts on Windows.
+    if script.suffix.lower() == ".sh":
+        shell_candidates = []
+        for name in ("bash", "sh"):
+            found = shutil.which(name)
+            if found:
+                shell_candidates.append(found)
+        for fixed in (
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+        ):
+            if Path(fixed).exists():
+                shell_candidates.append(fixed)
+        seen = set()
+        for shell_path in shell_candidates:
+            key = str(shell_path).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                return subprocess.run(
+                    [str(shell_path), str(script), trigger_text],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=cwd,
+                )
+            except FileNotFoundError:
+                continue
+
     return subprocess.run(
-        [str(script_path), str(trigger)],
+        [str(script), trigger_text],
         capture_output=True,
         text=True,
         timeout=timeout,
+        cwd=cwd,
     )

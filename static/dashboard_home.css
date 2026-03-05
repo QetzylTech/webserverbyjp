@@ -352,13 +352,6 @@
         white-space: pre-wrap;
         word-break: break-word;
     }
-    .metrics-live-details {
-        max-height: min(70vh, 640px);
-        overflow: auto;
-        font-size: 0.8rem;
-    }
-
-
     html.theme-dark body {
         background: #0d1117;
         color: #e6edf3;

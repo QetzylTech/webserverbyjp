@@ -22,7 +22,6 @@
                 <div class="actions">
                     <span class="server-time">Server time: <strong id="server-time">{{ server_time }}</strong></span>
                     <div class="action-buttons">
-                        <button id="metrics-live-btn" class="btn-secondary" type="button">Live Metrics</button>
                         <form class="ajax-form" method="post" action="/start">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button id="start-btn" class="btn-start" type="submit" {% if service_running_status == "active" %}disabled{% endif %}>Start</button>
@@ -34,7 +33,7 @@
                         </form>
                         <form class="ajax-form" method="post" action="/backup">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status == "Running" %}disabled{% endif %}>Backup</button>
+                            <button id="backup-btn" class="btn-backup" type="submit" {% if backup_status in ["Running", "Queued"] %}disabled{% endif %}>Backup</button>
                         </form>
                     </div>
                 </div>
@@ -142,16 +141,6 @@
         <pre id="error-modal-details" class="modal-details" hidden></pre>
         <div class="modal-actions">
             <button id="error-modal-ok" type="button">OK</button>
-        </div>
-    </div>
-</div>
-<!-- Live metrics inspection modal (real-time payloads from /metrics + SSE). -->
-<div id="metrics-live-modal" class="modal-overlay" aria-hidden="true">
-    <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="metrics-live-modal-title">
-        <h3 id="metrics-live-modal-title" class="modal-title">Live Metrics (No Logs)</h3>
-        <pre id="metrics-live-json" class="modal-details metrics-live-details">{}</pre>
-        <div class="modal-actions">
-            <button id="metrics-live-close" type="button">Close</button>
         </div>
     </div>
 </div>

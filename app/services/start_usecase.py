@@ -14,8 +14,17 @@ _calls = SimpleNamespace(
 
 
 def set_service_status_intent(ctx, intent):
+    normalized_intent = str(intent or "").strip().lower()
+    if normalized_intent == "starting":
+        with ctx.rcon_startup_lock:
+            ctx.rcon_startup_ready = False
     with ctx.service_status_intent_lock:
         ctx.service_status_intent = intent
+    if normalized_intent == "starting":
+        try:
+            ctx.ensure_log_stream_fetcher_started("minecraft")
+        except Exception as exc:
+            ctx.log_mcweb_exception("set_service_status_intent/start_log_fetcher", exc)
 
 
 def get_service_status_intent(ctx):

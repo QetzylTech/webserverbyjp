@@ -113,12 +113,14 @@ html.theme-dark {
 }
 
 .nav-link.nav-attention-green {
-    animation: navAttentionPulseGreen 0.45s ease-in-out infinite;
+    animation: none;
+    background: #166534;
     color: #ffffff !important;
 }
 
 .nav-link.active.nav-attention-green {
-    animation: navAttentionPulseGreen 0.45s ease-in-out infinite;
+    animation: none;
+    background: #166534;
     color: #ffffff !important;
 }
 
@@ -238,7 +240,8 @@ html.theme-dark .nav-separator {
 }
 
 .nav-toggle.nav-attention-green {
-    animation: navToggleAttentionPulseGreen 0.45s ease-in-out infinite;
+    animation: none;
+    background: #166534;
 }
 
 @keyframes navToggleAttentionPulse {

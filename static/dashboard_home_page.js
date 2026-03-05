@@ -110,7 +110,6 @@
     let lastBackupWarningSeq = 0;
     let cachedMetricsSnapshot = null;
     let lastHomeCacheWriteAt = 0;
-    let metricsLiveModalOpen = false;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
@@ -742,51 +741,6 @@
         modal.classList.add("open");
     }
 
-    function stripLogFields(value) {
-        if (Array.isArray(value)) {
-            return value.map((item) => stripLogFields(item));
-        }
-        if (!value || typeof value !== "object") {
-            return value;
-        }
-        const out = {};
-        Object.keys(value).forEach((key) => {
-            if (/log/i.test(String(key || ""))) return;
-            out[key] = stripLogFields(value[key]);
-        });
-        return out;
-    }
-
-    function renderLiveMetricsModal(data) {
-        const target = document.getElementById("metrics-live-json");
-        if (!target || !data || typeof data !== "object") return;
-        const snapshot = stripLogFields(data);
-        try {
-            target.textContent = JSON.stringify(snapshot, null, 2);
-        } catch (_) {
-            target.textContent = "{}";
-        }
-    }
-
-    function openLiveMetricsModal() {
-        const modal = document.getElementById("metrics-live-modal");
-        if (!modal) return;
-        metricsLiveModalOpen = true;
-        modal.setAttribute("aria-hidden", "false");
-        modal.classList.add("open");
-        if (cachedMetricsSnapshot) {
-            renderLiveMetricsModal(cachedMetricsSnapshot);
-        }
-    }
-
-    function closeLiveMetricsModal() {
-        const modal = document.getElementById("metrics-live-modal");
-        if (!modal) return;
-        metricsLiveModalOpen = false;
-        modal.classList.remove("open");
-        modal.setAttribute("aria-hidden", "true");
-    }
-
     function summarizeError(errorCode, action) {
         if (errorCode === "csrf_invalid") {
             return "Security check failed. Refresh the page and try again.";
@@ -985,9 +939,6 @@
 
     function applyMetricsData(data, options = {}) {
         if (!data) return;
-        if (metricsLiveModalOpen) {
-            renderLiveMetricsModal(data);
-        }
         const fromCache = options.fromCache === true;
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
@@ -1033,7 +984,7 @@
         }
         if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
         if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
-        if (backupBtn && data.backup_status) backupBtn.disabled = data.backup_status === "Running";
+        if (backupBtn && data.backup_status) backupBtn.disabled = (data.backup_status === "Running" || data.backup_status === "Queued");
         if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
         if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
         if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
@@ -1111,9 +1062,6 @@
 
     function applyFastMetricsData(data) {
         if (!data) return;
-        if (metricsLiveModalOpen) {
-            renderLiveMetricsModal(data);
-        }
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
         const freq = document.getElementById("cpu-frequency");
@@ -1192,8 +1140,8 @@
         if (action === "/backup") {
             const backupStatus = document.getElementById("backup-status");
             if (backupStatus) {
-                backupStatus.textContent = "Running";
-                backupStatus.className = "stat-green";
+                backupStatus.textContent = "Queued";
+                backupStatus.className = "stat-yellow";
             }
         }
         const formData = new FormData(form);
@@ -1544,9 +1492,6 @@
         }
         const errorOk = document.getElementById("error-modal-ok");
         const errorMore = document.getElementById("error-modal-more");
-        const metricsLiveBtn = document.getElementById("metrics-live-btn");
-        const metricsLiveClose = document.getElementById("metrics-live-close");
-        const metricsLiveModal = document.getElementById("metrics-live-modal");
         if (errorOk) {
             errorOk.addEventListener("click", () => {
                 const modal = document.getElementById("error-modal");
@@ -1562,20 +1507,6 @@
                 errorMore.textContent = nextHidden ? "Show more" : "Show less";
             });
         }
-        if (metricsLiveBtn) {
-            metricsLiveBtn.addEventListener("click", () => openLiveMetricsModal());
-        }
-        if (metricsLiveClose) {
-            metricsLiveClose.addEventListener("click", () => closeLiveMetricsModal());
-        }
-        if (metricsLiveModal) {
-            metricsLiveModal.addEventListener("click", (event) => {
-                if (event.target === metricsLiveModal) {
-                    closeLiveMetricsModal();
-                }
-            });
-        }
-
         if (alertMessage) {
             if (alertMessageCode === "password_incorrect") {
                 showMessageModal(alertMessage);
