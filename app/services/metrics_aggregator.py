@@ -65,37 +65,56 @@ def get_cpu_frequency_class(ctx, cpu_frequency):
     return "stat-red" if cpu_frequency == "unknown" else "stat-green"
 
 
-def _tick_is_known(tick_rate):
-    text = str(tick_rate or "").strip().lower()
-    if not text or text in {"--", "unknown", "n/a"}:
-        return False
-    return any(ch.isdigit() for ch in text)
+def _players_is_int(players_online):
+    return str(players_online or "").strip().isdigit()
+
+
+def _players_display(players_online):
+    value = str(players_online or "").strip()
+    return value if value.isdigit() else "-"
+
+
+def _tick_display(tick_rate):
+    value = str(tick_rate or "").strip()
+    if not value:
+        return "-"
+    lowered = value.lower()
+    if lowered in {"unknown", "--", "n/a", "none"}:
+        return "-"
+    try:
+        float(value)
+        return value
+    except Exception:
+        return "-"
 
 
 def _resolve_service_status_display(ctx, service_status, players_online, tick_rate, observed_display):
     raw = str(service_status or "").strip().lower()
-    observed = str(observed_display or "").strip()
-
-    if raw in getattr(ctx, "OFF_STATES", {"inactive", "failed"}):
-        return "Off"
-    if raw in {"deactivating", "shutting_down"}:
-        return "Shutting Down"
-    if raw in {"activating", "starting"}:
-        return "Starting"
-    if raw != "active":
-        return observed or "Off"
-
     intent = ""
     try:
         intent = str(ctx.get_service_status_intent() or "").strip().lower()
     except Exception:
         intent = ""
+
+    if intent == "crashed":
+        return "Crashed"
+    off_states = getattr(ctx, "OFF_STATES", {"inactive", "failed"})
+    if raw in off_states:
+        return "Off"
+    if raw in {"activating", "starting"}:
+        return "Starting"
+    if raw in {"deactivating", "shutting_down"}:
+        return "Shutting Down"
+    if raw != "active":
+        observed = str(observed_display or "").strip()
+        return observed or "Off"
+
     if intent == "shutting":
         return "Shutting Down"
-
-    players_known = str(players_online or "").strip().isdigit()
-    tick_known = _tick_is_known(tick_rate)
-    return "Running" if (players_known and tick_known) else "Starting"
+    players_known = _players_is_int(players_online)
+    if players_known:
+        return "Running"
+    return "Starting"
 
 
 def slow_metrics_ttl_seconds(ctx, service_status):
@@ -141,16 +160,20 @@ def collect_dashboard_metrics(ctx):
     cpu_frequency = slow["cpu_frequency"]
     storage_usage = slow["storage_usage"]
     low_storage_blocked = ctx.is_storage_low(storage_usage)
-    players_online = observed.get("players_online", ctx.get_players_online())
-    tick_rate = ctx.get_tick_rate()
+    players_online_raw = observed.get("players_online", ctx.get_players_online())
+    players_online = _players_display(players_online_raw)
+    tick_rate = _tick_display(ctx.get_tick_rate())
     session_duration = ctx.get_session_duration_text()
-    service_status_display = _resolve_service_status_display(
-        ctx,
-        service_status,
-        players_online,
-        tick_rate,
-        observed.get("service_status_display", ""),
-    )
+    # Keep home card status aligned with nav-attention source of truth.
+    service_status_display = str(observed.get("service_status_display", "") or "").strip()
+    if not service_status_display:
+        service_status_display = _resolve_service_status_display(
+            ctx,
+            service_status,
+            players_online,
+            tick_rate,
+            observed.get("service_status_display", ""),
+        )
     backup_schedule = ctx.get_backup_schedule_times(service_status)
     backup_status, backup_status_class = ctx.get_backup_status()
     backup_warning = ctx.get_backup_warning_state(ctx.BACKUP_WARNING_TTL_SECONDS)
@@ -158,6 +181,11 @@ def collect_dashboard_metrics(ctx):
     server_time_text = now_display.strftime("%b %d, %Y %I:%M:%S %p %Z")
     server_time_epoch_ms = int(now_display.timestamp() * 1000)
     server_time_zone = str(now_display.tzname() or "").strip()
+
+    is_running_display = str(service_status_display or "").strip().lower() == "running"
+    idle_countdown = "--:--"
+    if is_running_display and str(players_online_raw or "").strip() == "0":
+        idle_countdown = ctx.get_idle_countdown("active", "0")
 
     return {
         "service_status": service_status_display,
@@ -176,7 +204,7 @@ def collect_dashboard_metrics(ctx):
         "players_online": players_online,
         "tick_rate": tick_rate,
         "session_duration": session_duration,
-        "idle_countdown": ctx.get_idle_countdown(service_status, players_online),
+        "idle_countdown": idle_countdown,
         "backup_status": backup_status,
         "backup_status_class": backup_status_class,
         "backup_warning_seq": int(backup_warning.get("seq", 0) or 0),

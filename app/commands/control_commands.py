@@ -27,6 +27,14 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
             except Exception:
                 pass
 
+    def _publish_metrics_now():
+        publish_fn = state.get("_collect_and_publish_metrics") or state.get("collect_and_publish_metrics")
+        if callable(publish_fn):
+            try:
+                publish_fn()
+            except Exception:
+                pass
+
     def _idempotency_key_from_request():
         header_value = (request.headers.get("X-Idempotency-Key", "") or "").strip()
         form_value = (request.form.get("idempotency_key", "") or "").strip()
@@ -184,18 +192,10 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         _invalidate_observed_cache()
         state["set_service_status_intent"]("starting")
         state["invalidate_status_cache"]()
+        _publish_metrics_now()
 
-        if process_role == "web":
-            state["log_mcweb_action"]("start")
-            return jsonify({
-                "ok": True,
-                "accepted": True,
-                "queued": True,
-                "existing": resumed,
-                "resumed": resumed,
-                "op_id": op_id,
-                "status": "intent",
-            }), 202
+        # Execute local worker path even in web role so single-process runs
+        # do not depend on an external worker process for control actions.
 
         def _start_worker():
             try:
@@ -214,6 +214,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
                 message = result.get("message", "Failed to start service.")
                 state["set_service_status_intent"](None)
                 state["invalidate_status_cache"]()
+                _publish_metrics_now()
                 state["log_mcweb_action"]("start-worker", rejection_message=message)
                 try:
                     state_store_service.update_operation(
@@ -229,35 +230,27 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
                     state["log_mcweb_exception"]("update_operation/start_failed", exc)
                 return
             if state["write_session_start_time"]() is None:
-                state["set_service_status_intent"](None)
-                state["invalidate_status_cache"]()
-                state["log_mcweb_action"]("start-worker", rejection_message="Session file write failed.")
                 try:
-                    state_store_service.update_operation(
-                        state["APP_STATE_DB_PATH"],
-                        op_id=op_id,
-                        status="failed",
-                        error_code="session_write_failed",
-                        checkpoint="session_write_failed",
-                        message="Session file write failed.",
-                        finished=True,
+                    state["log_mcweb_action"](
+                        "start-worker",
+                        rejection_message="Session file write failed; continuing startup tracking.",
                     )
-                except Exception as exc:
-                    state["log_mcweb_exception"]("update_operation/start_session_failed", exc)
-                return
+                except Exception:
+                    pass
             state["reset_backup_schedule_state"]()
             try:
                 state_store_service.update_operation(
                     state["APP_STATE_DB_PATH"],
                     op_id=op_id,
-                    status="observed",
-                    checkpoint="observed",
-                    message="Service start observed.",
-                    finished=True,
+                    status="in_progress",
+                    checkpoint="start_dispatched",
+                    message="Start dispatched; awaiting observed active state.",
+                    finished=False,
                 )
             except Exception as exc:
                     state["log_mcweb_exception"]("update_operation/start_observed", exc)
             _invalidate_observed_cache()
+            _publish_metrics_now()
 
         try:
             start_worker(
@@ -273,6 +266,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         except Exception as exc:
             state["set_service_status_intent"](None)
             state["invalidate_status_cache"]()
+            _publish_metrics_now()
             state["log_mcweb_exception"]("start-thread", exc)
             state["log_mcweb_action"]("start-worker", rejection_message="Failed to start service worker thread.")
             try:
@@ -388,6 +382,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
 
         state["set_service_status_intent"]("shutting")
         state["invalidate_status_cache"]()
+        _publish_metrics_now()
 
         if process_role == "web":
             state["log_mcweb_action"]("stop")
@@ -426,6 +421,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
                         message = "Stop operation failed: backup pre-stop hook failed."
                 state["set_service_status_intent"](None)
                 state["invalidate_status_cache"]()
+                _publish_metrics_now()
                 state["log_mcweb_action"]("stop-worker", rejection_message=message)
                 try:
                     state_store_service.update_operation(
@@ -456,6 +452,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
             except Exception as exc:
                 state["log_mcweb_exception"]("update_operation/stop_observed", exc)
             _invalidate_observed_cache()
+            _publish_metrics_now()
 
         try:
             start_worker(
@@ -471,6 +468,7 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         except Exception as exc:
             state["set_service_status_intent"](None)
             state["invalidate_status_cache"]()
+            _publish_metrics_now()
             state["log_mcweb_exception"]("stop-thread", exc)
             state["log_mcweb_action"]("stop-worker", rejection_message="Failed to start service stop worker thread.")
             try:

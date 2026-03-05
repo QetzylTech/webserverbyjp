@@ -132,6 +132,9 @@ def build_runtime_bindings(
     def is_rcon_enabled():
         return minecraft_runtime_service.is_rcon_enabled(_state())
 
+    def is_rcon_startup_ready(service_status=None):
+        return minecraft_runtime_service.is_rcon_startup_ready(_state(), service_status=service_status)
+
     def _run_mcrcon(command, timeout=4):
         return minecraft_runtime_service.run_mcrcon(_state(), command, timeout=timeout)
 
@@ -315,6 +318,7 @@ def build_runtime_bindings(
         "get_cpu_frequency_class": get_cpu_frequency_class,
         "_refresh_rcon_config": _refresh_rcon_config,
         "is_rcon_enabled": is_rcon_enabled,
+        "is_rcon_startup_ready": is_rcon_startup_ready,
         "_run_mcrcon": _run_mcrcon,
         "_probe_minecraft_runtime_metrics": _probe_minecraft_runtime_metrics,
         "get_players_online": get_players_online,

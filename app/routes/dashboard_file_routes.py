@@ -24,6 +24,7 @@ _METRICS_ROUTE_CACHE = {
 
 def register_file_routes(app, state):
     """Register file browsing, log streaming, and metrics routes."""
+    process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
 
     def _state_db_path():
         path = state.get("APP_STATE_DB_PATH")
@@ -46,6 +47,69 @@ def register_file_routes(app, state):
         if not isinstance(snapshot, dict):
             return None, 0
         return snapshot, int(event.get("id", 0) or 0)
+
+    def _apply_operation_status_hint(payload):
+        if not isinstance(payload, dict):
+            return payload
+        db_path = _state_db_path()
+        if db_path is None:
+            return payload
+        try:
+            rows = state_store_service.list_operations_by_status(
+                db_path,
+                statuses=("intent", "in_progress"),
+                limit=20,
+            )
+        except Exception:
+            return payload
+        if not isinstance(rows, list) or not rows:
+            return payload
+
+        has_start = False
+        has_stop = False
+        has_restore = False
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            op_type = str(row.get("op_type", "") or "").strip().lower()
+            if op_type == "start":
+                has_start = True
+            elif op_type == "stop":
+                has_stop = True
+            elif op_type == "restore":
+                has_restore = True
+
+        status_text = str(payload.get("service_status", "") or "").strip().lower()
+        running_raw = str(payload.get("service_running_status", "") or "").strip().lower()
+        is_off = status_text in {"off", ""} or running_raw in {"inactive", "failed", ""}
+        if not is_off:
+            return payload
+
+        if has_restore or has_stop:
+            patched = dict(payload)
+            patched["service_status"] = "Shutting Down"
+            patched["service_status_class"] = "stat-orange"
+            patched["service_running_status"] = "shutting_down"
+            return patched
+        if has_start:
+            patched = dict(payload)
+            patched["service_status"] = "Starting"
+            patched["service_status_class"] = "stat-yellow"
+            patched["service_running_status"] = "starting"
+            return patched
+        return payload
+
+    def _refresh_metrics_snapshot_best_effort():
+        """Force a fresh metrics snapshot in web-only role."""
+        if process_role != "web":
+            return
+        publish_fn = state.get("_collect_and_publish_metrics") or state.get("collect_and_publish_metrics")
+        if not callable(publish_fn):
+            return
+        try:
+            publish_fn()
+        except Exception:
+            pass
 
     def _snapshot_root_dir():
         return Path(getattr(state, "AUTO_SNAPSHOT_DIR", "") or (state["BACKUP_DIR"] / "snapshots"))
@@ -491,6 +555,7 @@ def register_file_routes(app, state):
     def metrics():
         """Runtime helper metrics."""
         now = time.time()
+        _refresh_metrics_snapshot_best_effort()
         latest_snapshot = None
         latest_event_id = 0
         latest_snapshot, latest_event_id = _latest_metrics_from_db()
@@ -503,6 +568,7 @@ def register_file_routes(app, state):
             ):
                 return jsonify(copy.deepcopy(cached_payload))
         payload = latest_snapshot if isinstance(latest_snapshot, dict) else state["get_cached_dashboard_metrics"]()
+        payload = _apply_operation_status_hint(payload)
         with _METRICS_ROUTE_CACHE_LOCK:
             _METRICS_ROUTE_CACHE["event_id"] = int(latest_event_id)
             _METRICS_ROUTE_CACHE["expires_at"] = now + _METRICS_ROUTE_CACHE_TTL_SECONDS
@@ -530,10 +596,12 @@ def register_file_routes(app, state):
                     latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
                     last_event_id = int(latest_event.get("id", 0) or 0)
                     if isinstance(latest_snapshot, dict):
-                        payload = json.dumps(latest_snapshot, separators=(",", ":"))
+                        patched_snapshot = _apply_operation_status_hint(latest_snapshot)
+                        payload = json.dumps(patched_snapshot, separators=(",", ":"))
                         yield f"data: {payload}\n\n"
             try:
                 while True:
+                    _refresh_metrics_snapshot_best_effort()
                     db_path = _state_db_path()
                     if db_path is not None:
                         try:
@@ -550,7 +618,8 @@ def register_file_routes(app, state):
                                 payload_obj = row.get("payload", {}) if isinstance(row, dict) else {}
                                 snapshot = payload_obj.get("snapshot") if isinstance(payload_obj, dict) else None
                                 if isinstance(snapshot, dict):
-                                    payload = json.dumps(snapshot, separators=(",", ":"))
+                                    patched_snapshot = _apply_operation_status_hint(snapshot)
+                                    payload = json.dumps(patched_snapshot, separators=(",", ":"))
                                     yield f"data: {payload}\n\n"
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
                             continue

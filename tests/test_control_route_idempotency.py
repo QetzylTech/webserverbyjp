@@ -91,32 +91,32 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
             "SERVICE": "minecraft",
         }
 
-    def test_web_role_enqueues_start_without_local_worker_thread(self):
+    def test_web_role_can_execute_start_locally(self):
         db_path = self._db_path("test_web_role_enqueue_start")
         app = Flask(__name__)
         state = self._base_state(db_path)
         state["PROCESS_ROLE"] = "web"
         started = {"count": 0}
 
-        class _FailIfStartedThread:
+        class _CountStartedThread:
             def __init__(self, target=None, daemon=None):
                 self._target = target
                 self.daemon = daemon
 
             def start(self):
                 started["count"] += 1
-                raise AssertionError("web role should not start local worker thread")
+                if self._target:
+                    self._target()
 
-        with patch.object(dashboard_control_routes.threading, "Thread", _FailIfStartedThread):
+        with patch.object(dashboard_control_routes.threading, "Thread", _CountStartedThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
             client = app.test_client()
             resp = client.post("/start")
         body = resp.get_json() or {}
         self.assertEqual(resp.status_code, 202)
-        self.assertTrue(body.get("queued"))
-        self.assertEqual(started["count"], 0)
+        self.assertGreaterEqual(started["count"], 1)
         op = state_store_service.get_operation(db_path, body.get("op_id", ""))
-        self.assertEqual(op.get("status"), "intent")
+        self.assertIn(op.get("status"), {"in_progress", "observed"})
 
     def test_start_idempotency_reuses_existing_operation(self):
         db_path = self._db_path("test_start_idempotency_reuse")
@@ -156,7 +156,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
         self.assertTrue(second_body.get("existing"))
         self.assertTrue(second_body.get("resumed"))
         self.assertEqual(second_body.get("op_id"), op_id)
-        self.assertEqual(after["status"], "observed")
+        self.assertEqual(after["status"], "in_progress")
         self.assertEqual(after["attempt"], 2)
 
     def test_restore_idempotency_conflict_different_target(self):

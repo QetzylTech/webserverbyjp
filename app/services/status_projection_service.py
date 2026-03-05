@@ -1,35 +1,43 @@
 """Service status projection use cases."""
 
-import time
-
 
 def get_service_status_display(ctx, service_status, players_online):
-    intent = ctx.get_service_status_intent()
+    intent = str(ctx.get_service_status_intent() or "").strip().lower()
+    raw = str(service_status or "").strip().lower()
     if intent == "crashed":
         return "Crashed"
-    if service_status in ("inactive", "failed"):
+    if intent == "shutting":
+        return "Shutting Down"
+    if intent == "starting":
+        if raw == "active":
+            players_is_integer = isinstance(players_online, str) and players_online.isdigit()
+            startup_ready = False
+            try:
+                startup_ready = bool(ctx.is_rcon_startup_ready(service_status=raw))
+            except Exception:
+                startup_ready = False
+            if players_is_integer and startup_ready:
+                ctx.set_service_status_intent(None)
+                return "Running"
+        return "Starting"
+    if raw in {"inactive", "failed"}:
         ctx.set_service_status_intent(None)
         return "Off"
-    if service_status == "activating":
-        return "Starting"
-    if service_status == "deactivating":
+    if raw in {"deactivating", "shutting_down"}:
         return "Shutting Down"
-    if service_status == "active":
-        if intent == "shutting":
-            return "Shutting Down"
-        if intent == "starting":
-            startup_grace_seconds = 45
-            try:
-                started_at = ctx.read_session_start_time()
-            except Exception:
-                started_at = None
-            if started_at is not None and (time.time() - float(started_at)) < startup_grace_seconds:
-                return "Starting"
-            ctx.set_service_status_intent(None)
+    if raw in {"activating", "starting"}:
+        return "Starting"
+    if raw == "active":
         players_is_integer = isinstance(players_online, str) and players_online.isdigit()
         if players_is_integer:
-            return "Running"
-        return "Running"
+            startup_ready = False
+            try:
+                startup_ready = bool(ctx.is_rcon_startup_ready(service_status=raw))
+            except Exception:
+                startup_ready = False
+            if startup_ready:
+                return "Running"
+        return "Starting"
     return "Off"
 
 

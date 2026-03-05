@@ -23,6 +23,7 @@ validate_sudo_password = _start.validate_sudo_password
 ensure_session_file = _workflow.ensure_session_file
 read_session_start_time = _start.read_session_start_time
 clear_session_start_time = _workflow.clear_session_start_time
+reset_backup_schedule_state = _workflow.reset_backup_schedule_state
 get_session_start_time = _start.get_session_start_time
 get_session_duration_text = _start.get_session_duration_text
 
@@ -87,8 +88,27 @@ __all__ = [
     "start_service_non_blocking",
     "run_sudo",
     "write_session_start_time",
+    "clear_session_start_time",
+    "reset_backup_schedule_state",
+    "get_session_start_time",
+    "get_session_duration_text",
+    "set_service_status_intent",
+    "get_service_status_intent",
+    "validate_sudo_password",
+    "ensure_session_file",
+    "read_session_start_time",
     "restore_world_backup",
     "append_restore_event",
     "start_restore_job",
     "get_restore_status",
+    "graceful_stop_minecraft",
+    "stop_server_automatically",
+    "run_backup_script",
+    "format_backup_time",
+    "get_server_time_text",
+    "get_latest_backup_zip_timestamp",
+    "get_backup_schedule_times",
+    "get_backup_status",
+    "get_backup_zip_snapshot",
+    "backup_snapshot_changed",
 ]

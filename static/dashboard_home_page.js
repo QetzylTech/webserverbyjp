@@ -18,6 +18,7 @@
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
     const METRICS_FALLBACK_POLL_INTERVAL_MS = 15000;
     const METRICS_FAST_RUNNING_POLL_INTERVAL_MS = 1000;
+    const OBSERVED_STATUS_POLL_INTERVAL_MS = 2000;
     function sendHomePageHeartbeat() {
         if (document.hidden) return;
         fetch("/home-heartbeat", {
@@ -101,6 +102,7 @@
     let metricsEventSource = null;
     let metricsPollTimer = null;
     let metricsFastPollTimer = null;
+    let observedStatusPollTimer = null;
     let countdownTimer = null;
     let serverClockTimer = null;
     const operationPollTimers = {};
@@ -108,6 +110,7 @@
     let lastBackupWarningSeq = 0;
     let cachedMetricsSnapshot = null;
     let lastHomeCacheWriteAt = 0;
+    let metricsLiveModalOpen = false;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
@@ -739,6 +742,51 @@
         modal.classList.add("open");
     }
 
+    function stripLogFields(value) {
+        if (Array.isArray(value)) {
+            return value.map((item) => stripLogFields(item));
+        }
+        if (!value || typeof value !== "object") {
+            return value;
+        }
+        const out = {};
+        Object.keys(value).forEach((key) => {
+            if (/log/i.test(String(key || ""))) return;
+            out[key] = stripLogFields(value[key]);
+        });
+        return out;
+    }
+
+    function renderLiveMetricsModal(data) {
+        const target = document.getElementById("metrics-live-json");
+        if (!target || !data || typeof data !== "object") return;
+        const snapshot = stripLogFields(data);
+        try {
+            target.textContent = JSON.stringify(snapshot, null, 2);
+        } catch (_) {
+            target.textContent = "{}";
+        }
+    }
+
+    function openLiveMetricsModal() {
+        const modal = document.getElementById("metrics-live-modal");
+        if (!modal) return;
+        metricsLiveModalOpen = true;
+        modal.setAttribute("aria-hidden", "false");
+        modal.classList.add("open");
+        if (cachedMetricsSnapshot) {
+            renderLiveMetricsModal(cachedMetricsSnapshot);
+        }
+    }
+
+    function closeLiveMetricsModal() {
+        const modal = document.getElementById("metrics-live-modal");
+        if (!modal) return;
+        metricsLiveModalOpen = false;
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+    }
+
     function summarizeError(errorCode, action) {
         if (errorCode === "csrf_invalid") {
             return "Security check failed. Refresh the page and try again.";
@@ -866,6 +914,9 @@
             await refreshMetrics();
             return;
         }
+        if (status === "intent" || status === "in_progress") {
+            await refreshMetrics();
+        }
         operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 700);
     }
 
@@ -934,6 +985,9 @@
 
     function applyMetricsData(data, options = {}) {
         if (!data) return;
+        if (metricsLiveModalOpen) {
+            renderLiveMetricsModal(data);
+        }
         const fromCache = options.fromCache === true;
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
@@ -1057,6 +1111,9 @@
 
     function applyFastMetricsData(data) {
         if (!data) return;
+        if (metricsLiveModalOpen) {
+            renderLiveMetricsModal(data);
+        }
         const ram = document.getElementById("ram-usage");
         const cpu = document.getElementById("cpu-per-core");
         const freq = document.getElementById("cpu-frequency");
@@ -1082,6 +1139,50 @@
         }
         cachedMetricsSnapshot = data;
         writeHomeCache();
+    }
+
+    function applyObservedStatus(observed) {
+        if (!observed || typeof observed !== "object") return;
+        const service = document.getElementById("service-status");
+        const startBtn = document.getElementById("start-btn");
+        const stopBtn = document.getElementById("stop-btn");
+        const rconInput = document.getElementById("rcon-command");
+        const rconSubmit = document.getElementById("rcon-submit");
+        const statusDisplay = String(observed.service_status_display || "").trim();
+        const statusClass = String(observed.service_status_class || "").trim();
+        const raw = String(observed.service_status_raw || "").trim().toLowerCase();
+        if (service && statusDisplay) service.textContent = statusDisplay;
+        if (service && statusClass) service.className = statusClass;
+        applyRefreshMode(statusDisplay || (service ? service.textContent : ""));
+        if (raw === "active") {
+            if (startBtn) startBtn.disabled = true;
+            if (stopBtn) stopBtn.disabled = false;
+            if (rconInput) rconInput.disabled = false;
+            if (rconSubmit) rconSubmit.disabled = false;
+        } else {
+            if (stopBtn) stopBtn.disabled = true;
+            if (rconInput) rconInput.disabled = true;
+            if (rconSubmit) rconSubmit.disabled = true;
+        }
+    }
+
+    async function refreshObservedStatus() {
+        if (document.hidden) return;
+        try {
+            const result = http
+                ? await http.getJson("/observed-state")
+                : { response: await fetch("/observed-state", { cache: "no-store" }), payload: null };
+            const response = result.response;
+            if (!response.ok) return;
+            let payload = result.payload;
+            if (!payload) {
+                payload = await response.json().catch(() => ({}));
+            }
+            const observed = payload && payload.observed ? payload.observed : null;
+            applyObservedStatus(observed);
+        } catch (_) {
+            // Keep last known status when probe fails.
+        }
     }
 
     async function submitFormAjax(form, sudoPassword = undefined) {
@@ -1149,6 +1250,7 @@
                 if (action === "/start" || action === "/stop") {
                     applyOptimisticStatus(action);
                 }
+                await refreshMetrics();
                 const opId = String(payload.op_id || "").trim();
                 if (opId) {
                     stopOperationPoll(opId);
@@ -1207,7 +1309,6 @@
     function startMetricsStream() {
         if (metricsEventSource) return;
         metricsEventSource = new EventSource("/metrics-stream");
-        stopMetricsPolling();
         metricsEventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data || "{}");
@@ -1216,9 +1317,7 @@
                 // Ignore malformed stream payload.
             }
         };
-        metricsEventSource.onopen = () => {
-            stopMetricsPolling();
-        };
+        metricsEventSource.onopen = () => {};
         metricsEventSource.onerror = () => {
             if (!metricsEventSource || metricsEventSource.readyState === EventSource.CLOSED) {
                 startMetricsPolling();
@@ -1237,7 +1336,6 @@
     }
 
     function startMetricsPolling() {
-        if (metricsEventSource && metricsEventSource.readyState !== EventSource.CLOSED) return;
         if (metricsPollTimer) return;
         refreshMetrics();
         metricsPollTimer = window.setInterval(refreshMetrics, METRICS_FALLBACK_POLL_INTERVAL_MS);
@@ -1267,6 +1365,18 @@
             clearTimeout(countdownTimer);
             countdownTimer = null;
         }
+    }
+
+    function startObservedStatusPolling() {
+        if (observedStatusPollTimer) return;
+        refreshObservedStatus();
+        observedStatusPollTimer = window.setInterval(refreshObservedStatus, OBSERVED_STATUS_POLL_INTERVAL_MS);
+    }
+
+    function stopObservedStatusPolling() {
+        if (!observedStatusPollTimer) return;
+        clearInterval(observedStatusPollTimer);
+        observedStatusPollTimer = null;
     }
 
     function applyFastMetricsMode(isRunning) {
@@ -1337,6 +1447,7 @@
         stopMetricsStream();
         stopMetricsPolling();
         stopFastMetricsPolling();
+        stopObservedStatusPolling();
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
@@ -1352,12 +1463,14 @@
             stopMetricsStream();
             stopMetricsPolling();
             stopFastMetricsPolling();
+            stopObservedStatusPolling();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
         startMetricsStream();
         startMetricsPolling();
+        startObservedStatusPolling();
         scheduleServerClockTick();
         refreshMetrics();
         sendHomePageHeartbeat();
@@ -1431,6 +1544,9 @@
         }
         const errorOk = document.getElementById("error-modal-ok");
         const errorMore = document.getElementById("error-modal-more");
+        const metricsLiveBtn = document.getElementById("metrics-live-btn");
+        const metricsLiveClose = document.getElementById("metrics-live-close");
+        const metricsLiveModal = document.getElementById("metrics-live-modal");
         if (errorOk) {
             errorOk.addEventListener("click", () => {
                 const modal = document.getElementById("error-modal");
@@ -1444,6 +1560,19 @@
                 const nextHidden = !details.hidden;
                 details.hidden = nextHidden;
                 errorMore.textContent = nextHidden ? "Show more" : "Show less";
+            });
+        }
+        if (metricsLiveBtn) {
+            metricsLiveBtn.addEventListener("click", () => openLiveMetricsModal());
+        }
+        if (metricsLiveClose) {
+            metricsLiveClose.addEventListener("click", () => closeLiveMetricsModal());
+        }
+        if (metricsLiveModal) {
+            metricsLiveModal.addEventListener("click", (event) => {
+                if (event.target === metricsLiveModal) {
+                    closeLiveMetricsModal();
+                }
             });
         }
 
@@ -1510,6 +1639,7 @@
         loadLogSourceFromServer(selectedLogSource);
         startMetricsStream();
         startMetricsPolling();
+        startObservedStatusPolling();
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");

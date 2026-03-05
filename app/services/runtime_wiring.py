@@ -27,12 +27,18 @@ def _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_s
 def _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace):
     """Install Flask lifecycle hooks from resolved runtime bindings."""
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
-    enable_metrics_collector_autostart = process_role != "web"
+    enable_metrics_collector_autostart = True
+    enable_background_watchers_autostart = process_role == "web"
     app_lifecycle_service.install_flask_hooks(
         app,
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
         ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
         enable_metrics_collector_autostart=enable_metrics_collector_autostart,
+        start_operation_reconciler=binding("start_operation_reconciler"),
+        start_idle_player_watcher=binding("start_idle_player_watcher"),
+        start_backup_session_watcher=binding("start_backup_session_watcher"),
+        start_storage_safety_watcher=binding("start_storage_safety_watcher"),
+        enable_background_watchers_autostart=enable_background_watchers_autostart,
         ensure_csrf_token=binding("_ensure_csrf_token"),
         is_csrf_valid=binding("_is_csrf_valid"),
         csrf_rejected_response=binding("_csrf_rejected_response"),
