@@ -686,6 +686,13 @@ def reconcile_operations_once(ctx):
                 if op_type == "backup":
                     backup_status, _backup_class = ctx.get_backup_status()
                     backup_running = str(backup_status or "").strip().lower() == "running"
+                    backup_timeout_seconds = float(
+                        getattr(
+                            ctx,
+                            "OPERATION_BACKUP_TIMEOUT_SECONDS",
+                            max(float(ctx.OPERATION_STOP_TIMEOUT_SECONDS), 900.0),
+                        )
+                    )
                     if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):
                         _queue_update(
                             op_id,
@@ -696,7 +703,7 @@ def reconcile_operations_once(ctx):
                         )
                         updated += 1
                         continue
-                    if status == "in_progress" and not backup_running and age >= float(ctx.OPERATION_STOP_TIMEOUT_SECONDS):
+                    if status == "in_progress" and not backup_running and age >= backup_timeout_seconds:
                         _queue_update(
                             op_id,
                             status="failed",

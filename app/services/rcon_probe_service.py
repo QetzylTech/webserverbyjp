@@ -16,29 +16,12 @@ def is_rcon_startup_ready(ctx, service_status=None):
     with ctx.rcon_startup_lock:
         if ctx.rcon_startup_ready:
             return True
-    try:
-        output = ports.log.minecraft_startup_probe_output(
-            ctx.SERVICE,
-            ctx.MINECRAFT_LOGS_DIR,
-            timeout=ctx.RCON_STARTUP_JOURNAL_TIMEOUT_SECONDS,
-        )
-        if output is None:
-            return bool(ctx.is_rcon_enabled())
-    except Exception as exc:
-        if not ports.log.is_timeout_error(exc):
-            ctx.log_mcweb_exception("is_rcon_startup_ready", exc)
-            return False
-        ctx.log_mcweb_log(
-            "rcon-startup-check-timeout",
-            command=f"minecraft_startup_probe service={ctx.SERVICE}",
-            rejection_message=f"Timed out after {ctx.RCON_STARTUP_JOURNAL_TIMEOUT_SECONDS:.1f}s.",
-        )
+    intent = str(ctx.get_service_status_intent() or "").strip().lower()
+    if intent == "starting":
         return False
-    ready = bool(ctx.RCON_STARTUP_READY_PATTERN.search(str(output or "")))
-    if ready:
-        with ctx.rcon_startup_lock:
-            ctx.rcon_startup_ready = True
-    return ready
+    with ctx.rcon_startup_lock:
+        ctx.rcon_startup_ready = True
+    return True
 
 
 def clean_rcon_output(text):

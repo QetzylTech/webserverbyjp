@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
+from app.core import state_store as state_store_service
 from app.ports import ports
 from app.services.restore_workflow_helpers import is_backup_running
 
@@ -19,7 +20,7 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
     if not backup_state.run_lock.acquire(blocking=False):
         return bool(count_skip_as_success)
     try:
-        if is_backup_running(ctx):
+        if is_backup_running(ctx, include_run_lock=False):
             with backup_state.lock:
                 backup_state.last_error = ""
             return bool(count_skip_as_success)
@@ -176,4 +177,18 @@ def get_backup_status(ctx):
     """Return backup runtime status text and CSS class."""
     if is_backup_running(ctx):
         return "Running", "stat-green"
+    try:
+        rows = state_store_service.list_operations_by_status(
+            Path(ctx.APP_STATE_DB_PATH),
+            statuses=("intent", "in_progress"),
+            limit=40,
+        )
+    except Exception:
+        rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("op_type", "") or "").strip().lower() != "backup":
+            continue
+        return "Queued", "stat-yellow"
     return "Idle", "stat-yellow"

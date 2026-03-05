@@ -4,6 +4,9 @@
 def get_service_status_display(ctx, service_status, players_online):
     intent = str(ctx.get_service_status_intent() or "").strip().lower()
     raw = str(service_status or "").strip().lower()
+    if raw in {"inactive", "failed"}:
+        ctx.set_service_status_intent(None)
+        return "Off"
     if intent == "crashed":
         return "Crashed"
     if intent == "shutting":
@@ -20,9 +23,6 @@ def get_service_status_display(ctx, service_status, players_online):
                 ctx.set_service_status_intent(None)
                 return "Running"
         return "Starting"
-    if raw in {"inactive", "failed"}:
-        ctx.set_service_status_intent(None)
-        return "Off"
     if raw in {"deactivating", "shutting_down"}:
         return "Shutting Down"
     if raw in {"activating", "starting"}:

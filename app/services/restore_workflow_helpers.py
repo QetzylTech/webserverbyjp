@@ -27,12 +27,14 @@ def stop_service_systemd(ctx):
     except Exception as exc:
         ctx.log_mcweb_exception("stop_service_systemd", exc)
 
-    deadline = time.time() + 10
+    wait_seconds = float(getattr(ctx, "OPERATION_STOP_TIMEOUT_SECONDS", 30.0) or 30.0)
+    wait_seconds = max(10.0, min(wait_seconds, 120.0))
+    deadline = time.time() + wait_seconds
     while time.time() < deadline:
         if ctx.get_status() in ctx.OFF_STATES:
             return True
         time.sleep(0.5)
-    return False
+    return ctx.get_status() in ctx.OFF_STATES
 
 
 def start_service(ctx):
@@ -84,8 +86,17 @@ def reset_backup_schedule_state(ctx):
         ctx.backup_state.periodic_runs = 0
 
 
-def is_backup_running(ctx):
+def is_backup_running(ctx, include_run_lock=True):
     """Return whether backup script reports active run via state file."""
+    if include_run_lock:
+        backup_state = getattr(ctx, "backup_state", None)
+        run_lock = getattr(backup_state, "run_lock", None)
+        if run_lock is not None:
+            try:
+                if bool(run_lock.locked()):
+                    return True
+            except Exception:
+                pass
     try:
         ports.filesystem.ensure_dir(ctx.BACKUP_STATE_FILE.parent)
         raw = ports.filesystem.read_text(ctx.BACKUP_STATE_FILE, encoding="utf-8").strip().lower()
