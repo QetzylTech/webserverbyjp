@@ -62,6 +62,7 @@ def _build_run_server(app_lifecycle_service, app, namespace, binding):
         load_minecraft_log_cache_from_journal=binding("_load_minecraft_log_cache_from_journal"),
         load_mcweb_log_cache_from_disk=binding("_load_mcweb_log_cache_from_disk"),
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
+        warm_file_page_caches=binding("warm_file_page_caches"),
         ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
         collect_and_publish_metrics=binding("_collect_and_publish_metrics"),
         start_operation_reconciler=binding("start_operation_reconciler"),
@@ -162,3 +163,7 @@ def create_runtime(
         "static_asset_version_fn": world_bindings["_static_asset_version"],
         "run_server": run_server,
     }
+
+
+
+

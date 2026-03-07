@@ -1,9 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 
+from app.core import state_store as state_store_service
 from app.routes.dashboard_file_routes import register_file_routes
 
 
@@ -79,6 +81,34 @@ class SnapshotDownloadRouteTests(unittest.TestCase):
                 data={"sudo_password": "ok"},
             )
             self.assertEqual(traversal.status_code, 404)
+
+
+class MetricsRouteTests(unittest.TestCase):
+    def test_metrics_route_returns_snapshot_without_route_side_status_rewrite(self):
+        app = Flask(__name__)
+        app.testing = True
+        state = {
+            "BACKUP_DIR": Path("."),
+            "APP_STATE_DB_PATH": Path("state.sqlite3"),
+            "get_cached_dashboard_metrics": lambda: {
+                "service_status": "Off",
+                "service_status_class": "stat-red",
+                "service_running_status": "inactive",
+            },
+        }
+        register_file_routes(app, state)
+
+        with patch.object(state_store_service, "get_latest_event", return_value=None), patch.object(
+            state_store_service,
+            "list_operations_by_status",
+            side_effect=AssertionError("stale route-side status rewrite should not run"),
+        ):
+            response = app.test_client().get("/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload.get("service_status"), "Off")
+        self.assertEqual(payload.get("service_running_status"), "inactive")
 
 
 if __name__ == "__main__":

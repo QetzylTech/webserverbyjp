@@ -12,6 +12,42 @@ def replace_file_records_snapshot(db_path, *, source_key, items):
         return _replace_file_records_snapshot_impl(db_path, source_key=source_key, items=items)
 
 
+def load_file_records_snapshot(db_path, *, source_key):
+    """Load the latest persisted file-record snapshot for one source key."""
+    with profiling.timed("sqlite.file_records.load_snapshot"):
+        return _load_file_records_snapshot_impl(db_path, source_key=source_key)
+
+
+def _load_file_records_snapshot_impl(db_path, *, source_key):
+    """Load the latest persisted file-record snapshot for one source key."""
+    source = str(source_key or "").strip()
+    if not source:
+        return []
+    with _connect(db_path) as conn:
+        _create_tables(conn)
+        rows = conn.execute(
+            """
+            SELECT name, mtime, size_bytes, modified_text, size_text
+            FROM file_records
+            WHERE source_key = ?
+            ORDER BY mtime DESC, name ASC
+            """,
+            (source,),
+        ).fetchall()
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "name": str(row["name"] or ""),
+                "mtime": float(row["mtime"] or 0),
+                "size_bytes": int(row["size_bytes"] or 0),
+                "modified": str(row["modified_text"] or ""),
+                "size_text": str(row["size_text"] or ""),
+            }
+        )
+    return items
+
+
 def _replace_file_records_snapshot_impl(db_path, *, source_key, items):
     """Replace mutable file records and append immutable change history."""
     source = str(source_key or "").strip()
@@ -121,3 +157,4 @@ def _replace_file_records_snapshot_impl(db_path, *, source_key, items):
                 (source, event[1], event[0], event[2], event[3], event[4], event[5]),
             )
         conn.commit()
+

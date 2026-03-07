@@ -30,6 +30,9 @@ def build_runtime_bindings(
     def ensure_file_page_cache_refresher_started():
         return dashboard_runtime_service.ensure_file_page_cache_refresher_started(_state())
 
+    def warm_file_page_caches():
+        return dashboard_runtime_service.warm_file_page_caches(_state())
+
     def set_service_status_intent(intent):
         return control_plane_service.set_service_status_intent(_state(), intent)
 
@@ -291,6 +294,7 @@ def build_runtime_bindings(
         "get_cached_file_page_items": get_cached_file_page_items,
         "file_page_cache_refresher_loop": file_page_cache_refresher_loop,
         "ensure_file_page_cache_refresher_started": ensure_file_page_cache_refresher_started,
+        "warm_file_page_caches": warm_file_page_caches,
         "set_service_status_intent": set_service_status_intent,
         "get_service_status_intent": get_service_status_intent,
         "stop_service_systemd": stop_service_systemd,
@@ -366,3 +370,6 @@ def build_runtime_bindings(
         "initialize_session_tracking": initialize_session_tracking,
         "_status_state_note": _status_state_note,
     }
+
+
+

@@ -72,6 +72,7 @@ def build_run_server(
     load_minecraft_log_cache_from_journal,
     load_mcweb_log_cache_from_disk,
     ensure_session_tracking_initialized,
+    warm_file_page_caches,
     ensure_metrics_collector_started,
     collect_and_publish_metrics,
     start_operation_reconciler,
@@ -103,6 +104,7 @@ def build_run_server(
             ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
             ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
             ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
+            ("warm_file_page_caches", warm_file_page_caches),
             ("ensure_metrics_collector_started", ensure_metrics_collector_started),
             ("collect_and_publish_metrics", collect_and_publish_metrics),
         ]
@@ -125,3 +127,6 @@ def build_run_server(
         )
 
     return run_server
+
+
+

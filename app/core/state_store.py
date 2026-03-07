@@ -20,7 +20,7 @@ from app.core.state_store_restore import (
     append_restore_run,
     restore_backup_records_match,
 )
-from app.core.state_store_files import replace_file_records_snapshot
+from app.core.state_store_files import replace_file_records_snapshot, load_file_records_snapshot
 from app.core.state_store_events import (
     append_event,
     list_events_since,
@@ -50,6 +50,7 @@ __all__ = [
     "append_restore_run",
     "restore_backup_records_match",
     "replace_file_records_snapshot",
+    "load_file_records_snapshot",
     "append_event",
     "list_events_since",
     "get_latest_event",
@@ -61,3 +62,5 @@ __all__ = [
     "list_operations_by_status",
     "get_operation_by_idempotency_key",
 ]
+
+
