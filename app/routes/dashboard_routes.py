@@ -1,4 +1,4 @@
-"""Flask route registration for the MC web dashboard."""
+﻿"""Flask route registration for the MC web dashboard."""
 import threading
 import time
 
@@ -9,7 +9,7 @@ from app.queries import dashboard_queries as dashboard_queries_service
 from app.routes.dashboard_control_routes import register_control_routes
 from app.routes.dashboard_file_routes import register_file_routes
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
-from app.services.maintenance_scheduler import run_cleanup_event_if_enabled
+from app.commands.maintenance_commands import run_cleanup_event_if_enabled
 
 
 def register_routes(app, state):
@@ -238,3 +238,4 @@ def register_routes(app, state):
         state,
         run_cleanup_event_if_enabled=run_cleanup_event_if_enabled,
     )
+

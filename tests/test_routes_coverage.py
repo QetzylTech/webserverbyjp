@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -255,8 +255,8 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
             "record_successful_password_ip": lambda: None,
         }
 
-        patches = {
-            "start_cleanup_scheduler_once": lambda _state: None,
+        query_patches = {
+            "start_worker": lambda *_args, **_kwargs: None,
             "_cleanup_load_config": lambda _state: {"rules": {"enabled": True}, "meta": {}},
             "_cleanup_normalize_scope": lambda _scope: "backups",
             "_cleanup_get_scope_view": lambda full_cfg, scope: {"rules": {"enabled": True}, "meta": {}},
@@ -274,10 +274,17 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
                 "errors": [],
                 "deleted_count": 0,
             },
+            "_cleanup_active_world_path": lambda _state: Path("/world"),
+            "_cleanup_data_dir": lambda _state: Path("/tmp"),
+        }
+        command_patches = {
+            "start_cleanup_scheduler_once": lambda _state: None,
             "_cleanup_validate_rules": lambda rules: (True, rules),
             "_cleanup_apply_scope_from_state": lambda _state, parsed, scope="backups": parsed,
             "_cleanup_now_iso": lambda _state: "2026-03-04T00:00:00Z",
             "_cleanup_get_client_ip": lambda _state: "127.0.0.1",
+            "_cleanup_load_config": lambda _state: {"rules": {"enabled": True}, "meta": {}},
+            "_cleanup_get_scope_view": lambda full_cfg, scope: {"rules": {"enabled": True}, "meta": {}},
             "_cleanup_save_config": lambda _state, _cfg: None,
             "_cleanup_log": lambda *_args, **_kwargs: None,
             "_cleanup_run_with_lock": lambda _state, _cfg, **kwargs: {
@@ -286,16 +293,24 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
                 "requested_delete_count": 0,
                 "capped_delete_count": 0,
             },
+            "_cleanup_evaluate": lambda _state, _cfg, **kwargs: {
+                "requested_delete_count": 0,
+                "capped_delete_count": 0,
+                "selected_ineligible": [],
+                "errors": [],
+                "deleted_count": 0,
+            },
             "_cleanup_append_history": lambda *_args, **_kwargs: None,
             "_cleanup_error": lambda code, message=None, status=400: ({"ok": False, "error": code, "message": message or ""}, status),
-            "_cleanup_active_world_path": lambda _state: Path("/world"),
-            "_cleanup_data_dir": lambda _state: Path("/tmp"),
             "_cleanup_load_non_normal": lambda _state: {"missed_runs": []},
             "_cleanup_atomic_write_json": lambda path, data: None,
             "_cleanup_non_normal_path": lambda _state: Path("/tmp/non_normal.json"),
+            "_cleanup_normalize_scope": lambda _scope: "backups",
         }
 
-        with patch.multiple(maintenance_routes, render_template=lambda *_args, **_kwargs: "maintenance-page", **patches):
+        with patch.object(maintenance_routes, "render_template", return_value="maintenance-page"), \
+             patch.multiple(maintenance_routes.maintenance_queries_service, **query_patches), \
+             patch.multiple(maintenance_routes.maintenance_commands_service, **command_patches):
             maintenance_routes.register_maintenance_routes(app, state)
             client = app.test_client()
 
@@ -347,30 +362,24 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
             calls["snapshot"] += 1
             return {"config": {}, "non_normal": {}, "storage": {}, "history": [], "next_run_at": None}
 
-        patches = {
-            "start_cleanup_scheduler_once": lambda _state: None,
+        query_patches = {
+            "start_worker": lambda *_args, **_kwargs: None,
             "_cleanup_load_config": _load_cfg,
             "_cleanup_normalize_scope": lambda _scope: "backups",
             "_cleanup_get_scope_view": lambda full_cfg, scope: {"rules": {"enabled": True}, "meta": {}},
             "_cleanup_state_snapshot": _snap,
             "_cleanup_evaluate": _eval,
-            "_cleanup_validate_rules": lambda rules: (True, rules),
-            "_cleanup_apply_scope_from_state": lambda _state, parsed, scope="backups": parsed,
-            "_cleanup_now_iso": lambda _state: "2026-03-04T00:00:00Z",
-            "_cleanup_get_client_ip": lambda _state: "127.0.0.1",
-            "_cleanup_save_config": lambda _state, _cfg: None,
-            "_cleanup_log": lambda *_args, **_kwargs: None,
-            "_cleanup_run_with_lock": lambda _state, _cfg, **kwargs: {"deleted_count": 0, "errors": [], "requested_delete_count": 0, "capped_delete_count": 0},
-            "_cleanup_append_history": lambda *_args, **_kwargs: None,
-            "_cleanup_error": lambda code, message=None, status=400: ({"ok": False, "error": code, "message": message or ""}, status),
             "_cleanup_active_world_path": lambda _state: Path("/world"),
             "_cleanup_data_dir": lambda _state: Path("/tmp"),
-            "_cleanup_load_non_normal": lambda _state: {"missed_runs": []},
-            "_cleanup_atomic_write_json": lambda path, data: None,
-            "_cleanup_non_normal_path": lambda _state: Path("/tmp/non_normal.json"),
+        }
+        command_patches = {
+            "start_cleanup_scheduler_once": lambda _state: None,
+            "_cleanup_normalize_scope": lambda _scope: "backups",
         }
 
-        with patch.multiple(maintenance_routes, render_template=lambda *_args, **_kwargs: "maintenance-page", **patches):
+        with patch.object(maintenance_routes, "render_template", return_value="maintenance-page"), \
+             patch.multiple(maintenance_routes.maintenance_queries_service, **query_patches), \
+             patch.multiple(maintenance_routes.maintenance_commands_service, **command_patches):
             maintenance_routes.register_maintenance_routes(app, state)
             client = app.test_client()
             first = client.get("/maintenance/api/state")
@@ -535,3 +544,5 @@ class SetupRoutesCoverageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
