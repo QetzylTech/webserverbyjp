@@ -1,34 +1,42 @@
-﻿"""Control-plane facade composed from use-case modules."""
+"""Compose control-plane operations from focused use-case modules."""
 
 from types import SimpleNamespace
 
 from app.services import backup_usecase as _backup
-from app.services import restore_usecase as _restore
+from app.services import restore_workflow as _restore_workflow
+from app.services import restore_workflow_helpers as _restore_helpers
 from app.services import start_usecase as _start
 from app.services import stop_usecase as _stop
-from app.services import restore_workflow_helpers as _workflow
-from app.services.restore_workflow_helpers import is_backup_running
 
-ensure_startup_rcon_settings = _restore.ensure_startup_rcon_settings
-run_sudo = _restore.run_sudo
-write_session_start_time = _restore.write_session_start_time
-stop_service_systemd = _workflow.stop_service_systemd
-restore_world_backup = _restore.restore_world_backup
-append_restore_event = _restore.append_restore_event
-start_restore_job = _restore.start_restore_job
-get_restore_status = _restore.get_restore_status
+_DIRECT_EXPORTS = {
+    "ensure_startup_rcon_settings": _restore_helpers.ensure_startup_rcon_settings,
+    "run_sudo": _restore_helpers.run_sudo,
+    "write_session_start_time": _restore_helpers.write_session_start_time,
+    "stop_service_systemd": _restore_helpers.stop_service_systemd,
+    "restore_world_backup": _restore_workflow.restore_world_backup,
+    "append_restore_event": _restore_workflow.append_restore_event,
+    "start_restore_job": _restore_workflow.start_restore_job,
+    "get_restore_status": _restore_workflow.get_restore_status,
+    "set_service_status_intent": _start.set_service_status_intent,
+    "get_service_status_intent": _start.get_service_status_intent,
+    "validate_sudo_password": _start.validate_sudo_password,
+    "ensure_session_file": _restore_helpers.ensure_session_file,
+    "read_session_start_time": _start.read_session_start_time,
+    "clear_session_start_time": _restore_helpers.clear_session_start_time,
+    "reset_backup_schedule_state": _restore_helpers.reset_backup_schedule_state,
+    "get_session_start_time": _start.get_session_start_time,
+    "get_session_duration_text": _start.get_session_duration_text,
+}
 
-set_service_status_intent = _start.set_service_status_intent
-get_service_status_intent = _start.get_service_status_intent
-validate_sudo_password = _start.validate_sudo_password
-ensure_session_file = _workflow.ensure_session_file
-read_session_start_time = _start.read_session_start_time
-clear_session_start_time = _workflow.clear_session_start_time
-reset_backup_schedule_state = _workflow.reset_backup_schedule_state
-get_session_start_time = _start.get_session_start_time
-get_session_duration_text = _start.get_session_duration_text
+for _name, _target in _DIRECT_EXPORTS.items():
+    globals()[_name] = _target
 
-# Backward-compatible patch surface for tests and callers.
+del _name
+del _target
+
+is_backup_running = _restore_helpers.is_backup_running
+
+# Preserve the patch surface used by tests around process execution.
 _calls = SimpleNamespace(
     service_start_no_block=_start._calls.service_start_no_block,
     run_backup_script=_backup._calls.run_backup_script,
@@ -89,24 +97,8 @@ def get_backup_status(ctx):
 
 
 __all__ = [
-    "ensure_startup_rcon_settings",
+    *_DIRECT_EXPORTS.keys(),
     "start_service_non_blocking",
-    "run_sudo",
-    "write_session_start_time",
-    "stop_service_systemd",
-    "clear_session_start_time",
-    "reset_backup_schedule_state",
-    "get_session_start_time",
-    "get_session_duration_text",
-    "set_service_status_intent",
-    "get_service_status_intent",
-    "validate_sudo_password",
-    "ensure_session_file",
-    "read_session_start_time",
-    "restore_world_backup",
-    "append_restore_event",
-    "start_restore_job",
-    "get_restore_status",
     "graceful_stop_minecraft",
     "stop_server_automatically",
     "run_backup_script",

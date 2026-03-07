@@ -26,7 +26,6 @@ from app.core.filesystem_utils import (
 from app.core.logging_setup import build_loggers
 from app.infrastructure.adapters import PlatformServiceControlAdapter
 from app.bootstrap.config_loader import load_web_config
-from app.bootstrap.container import build_runtime_bundle
 from app.services import service_ops as service_ops
 from app.services import data_bootstrap as data_bootstrap_service
 from app.services import setup_service as setup_service
@@ -388,19 +387,7 @@ _RUNTIME_IMPORTED_SYMBOLS = {
     "get_storage_usage": get_storage_usage,
 }
 
-
-def _build_runtime_context(namespace):
-    """Build explicit runtime context from known state keys only."""
-    allowed = REQUIRED_STATE_KEY_SET | _RUNTIME_CONTEXT_EXTRA_KEYS
-    context = {key: namespace[key] for key in allowed if key in namespace}
-    context.update(_RUNTIME_IMPORTED_SYMBOLS)
-    context.setdefault("STATE", None)
-    return context
-
-
-RUNTIME_CONTEXT = _build_runtime_context(locals())
-_runtime_bundle = build_runtime_bundle(
-    runtime_wiring_service=runtime_wiring_service,
+_runtime_bundle = runtime_wiring_service.create_runtime(
     app=app,
     namespace=locals(),
     required_state_key_set=REQUIRED_STATE_KEY_SET,
@@ -481,3 +468,6 @@ if __name__ == "__main__":
         run_worker()
     else:
         run_server()
+
+
+

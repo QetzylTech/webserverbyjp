@@ -1,11 +1,11 @@
-"""Runtime wiring helpers extracted from app.main."""
+"""Build the runtime context, bind services, and register routes."""
 
 from app.core.device_map import get_device_name_map as _default_device_name_map_lookup
 from app.services import bootstrap as _default_bootstrap_service
 
 
 def _build_runtime_context(namespace, required_state_key_set, runtime_context_extra_keys, runtime_imported_symbols):
-    """Assemble initial runtime context from allowed keys plus imported helpers."""
+    """Assemble the initial runtime context from explicit state keys and imports."""
     allowed = required_state_key_set | runtime_context_extra_keys
     runtime_context = {key: namespace[key] for key in allowed if key in namespace}
     runtime_context.update(runtime_imported_symbols)
@@ -25,20 +25,18 @@ def _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_s
 
 
 def _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace):
-    """Install Flask lifecycle hooks from resolved runtime bindings."""
+    """Install Flask lifecycle hooks from the resolved runtime bindings."""
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
-    enable_metrics_collector_autostart = True
-    enable_background_watchers_autostart = process_role == "web"
     app_lifecycle_service.install_flask_hooks(
         app,
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
         ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
-        enable_metrics_collector_autostart=enable_metrics_collector_autostart,
+        enable_metrics_collector_autostart=True,
         start_operation_reconciler=binding("start_operation_reconciler"),
         start_idle_player_watcher=binding("start_idle_player_watcher"),
         start_backup_session_watcher=binding("start_backup_session_watcher"),
         start_storage_safety_watcher=binding("start_storage_safety_watcher"),
-        enable_background_watchers_autostart=enable_background_watchers_autostart,
+        enable_background_watchers_autostart=process_role == "web",
         ensure_csrf_token=binding("_ensure_csrf_token"),
         is_csrf_valid=binding("_is_csrf_valid"),
         csrf_rejected_response=binding("_csrf_rejected_response"),
@@ -48,7 +46,7 @@ def _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace):
 
 
 def _build_run_server(app_lifecycle_service, app, namespace, binding):
-    """Create the app run-server entrypoint using resolved runtime bindings."""
+    """Create the app startup entrypoint from the resolved runtime bindings."""
     bootstrap_service = namespace.get("bootstrap_service") or _default_bootstrap_service
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
     return app_lifecycle_service.build_run_server(
@@ -95,7 +93,7 @@ def create_runtime(
     status_cache_service,
     register_routes,
 ):
-    """Build runtime context/bindings, register routes, and return run-server entrypoint."""
+    """Build the runtime context, register routes, and return the run-server entrypoint."""
     runtime_context = _build_runtime_context(
         namespace,
         required_state_key_set,
@@ -104,40 +102,49 @@ def create_runtime(
     )
 
     world_bindings = world_bindings_service.build_world_bindings(runtime_context)
-    binding_stage_exports = set()
-    binding_stage_values = {}
-    _install_binding_stage("world_bindings", world_bindings, binding_stage_exports, binding_stage_values)
     world_bindings["_refresh_world_dir_from_server_properties"]()
 
-    device_name_map_lookup = (
-        namespace.get("_device_name_map_lookup") or _default_device_name_map_lookup
+    device_name_map_lookup = namespace.get("_device_name_map_lookup") or _default_device_name_map_lookup
+    stages = (
+        (
+            "world_bindings",
+            world_bindings,
+        ),
+        (
+            "system_bindings",
+            system_bindings_service.build_system_bindings(
+                runtime_context,
+                status_cache_service=status_cache_service,
+                dashboard_runtime_service=dashboard_runtime_service,
+                device_name_map_lookup=device_name_map_lookup,
+            ),
+        ),
+        (
+            "runtime_bindings",
+            runtime_bindings_service.build_runtime_bindings(
+                runtime_context,
+                dashboard_runtime_service=dashboard_runtime_service,
+                control_plane_service=control_plane_service,
+                session_store_service=session_store_service,
+                minecraft_runtime_service=minecraft_runtime_service,
+                session_watchers_service=session_watchers_service,
+            ),
+        ),
     )
-    system_bindings = system_bindings_service.build_system_bindings(
-        runtime_context,
-        status_cache_service=status_cache_service,
-        dashboard_runtime_service=dashboard_runtime_service,
-        device_name_map_lookup=device_name_map_lookup,
-    )
-    _install_binding_stage("system_bindings", system_bindings, binding_stage_exports, binding_stage_values)
 
-    runtime_bindings = runtime_bindings_service.build_runtime_bindings(
-        runtime_context,
-        dashboard_runtime_service=dashboard_runtime_service,
-        control_plane_service=control_plane_service,
-        session_store_service=session_store_service,
-        minecraft_runtime_service=minecraft_runtime_service,
-        session_watchers_service=session_watchers_service,
-    )
-    _install_binding_stage("runtime_bindings", runtime_bindings, binding_stage_exports, binding_stage_values)
+    binding_stage_exports = set()
+    binding_stage_values = {}
+    for stage_name, mapping in stages:
+        _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_stage_values)
 
     request_bindings = request_bindings_service.build_request_bindings(
         session_store_service=session_store_service,
         session_state=namespace["session_state"],
-        initialize_session_tracking=runtime_bindings["initialize_session_tracking"],
-        status_state_note=runtime_bindings["_status_state_note"],
-        low_storage_error_message=runtime_bindings["low_storage_error_message"],
+        initialize_session_tracking=binding_stage_values["initialize_session_tracking"],
+        status_state_note=binding_stage_values["_status_state_note"],
+        low_storage_error_message=binding_stage_values["low_storage_error_message"],
         display_tz=namespace["DISPLAY_TZ"],
-        get_device_name_map=system_bindings["get_device_name_map"],
+        get_device_name_map=binding_stage_values["get_device_name_map"],
         app_state_db_path=namespace["APP_STATE_DB_PATH"],
     )
     _install_binding_stage("request_bindings", request_bindings, binding_stage_exports, binding_stage_values)
@@ -155,15 +162,9 @@ def create_runtime(
     runtime_context["STATE"] = state
     register_routes(app, state)
 
-    run_server = _build_run_server(app_lifecycle_service, app, namespace, binding)
-
     return {
         "runtime_context": runtime_context,
         "state": state,
         "static_asset_version_fn": world_bindings["_static_asset_version"],
-        "run_server": run_server,
+        "run_server": _build_run_server(app_lifecycle_service, app, namespace, binding),
     }
-
-
-
-

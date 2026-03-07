@@ -23,7 +23,7 @@ class BackupScriptAutoRetentionTests(unittest.TestCase):
         if not source_script.exists():
             self.skipTest("backup.sh not found")
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             app_dir = root / "app"
             scripts_dir = app_dir / "scripts"
@@ -112,3 +112,4 @@ class BackupScriptAutoRetentionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

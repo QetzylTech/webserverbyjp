@@ -1,6 +1,8 @@
-"""Flask lifecycle hook and startup runner composition helpers."""
+"""Install Flask hooks and build the app startup runner."""
+
 from flask import has_request_context, request
 from werkzeug.exceptions import HTTPException
+
 from app.core.response_helpers import internal_error_response
 
 
@@ -21,7 +23,7 @@ def install_flask_hooks(
     log_mcweb_action,
     log_mcweb_exception,
 ):
-        # Install request/error hooks using explicit runtime callbacks.
+    """Install request and error hooks from explicit runtime callbacks."""
 
     @app.before_request
     def _initialize_session_tracking_before_request():
@@ -82,12 +84,33 @@ def build_run_server(
     enable_background_workers=True,
     enable_boot_runtime_tasks=True,
 ):
-        # Return the app startup runner from explicit boot-step dependencies.
+    """Return the startup runner assembled from explicit boot steps."""
 
     def run_server():
         def _load_backup_log_cache_boot_step():
             if not is_backup_running():
                 load_backup_log_cache_from_disk()
+
+        def _build_boot_steps():
+            steps = [
+                ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
+                ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
+                ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
+                ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
+                ("warm_file_page_caches", warm_file_page_caches),
+                ("ensure_metrics_collector_started", ensure_metrics_collector_started),
+                ("collect_and_publish_metrics", collect_and_publish_metrics),
+            ]
+            if enable_background_workers:
+                steps.extend(
+                    [
+                        ("start_operation_reconciler", start_operation_reconciler),
+                        ("start_idle_player_watcher", start_idle_player_watcher),
+                        ("start_backup_session_watcher", start_backup_session_watcher),
+                        ("start_storage_safety_watcher", start_storage_safety_watcher),
+                    ]
+                )
+            return steps
 
         if not enable_boot_runtime_tasks:
             bootstrap_service.run_server(
@@ -99,34 +122,12 @@ def build_run_server(
             )
             return
 
-        boot_steps = [
-            ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
-            ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
-            ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
-            ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
-            ("warm_file_page_caches", warm_file_page_caches),
-            ("ensure_metrics_collector_started", ensure_metrics_collector_started),
-            ("collect_and_publish_metrics", collect_and_publish_metrics),
-        ]
-        if enable_background_workers:
-            boot_steps.extend(
-                [
-                    ("start_operation_reconciler", start_operation_reconciler),
-                    ("start_idle_player_watcher", start_idle_player_watcher),
-                    ("start_backup_session_watcher", start_backup_session_watcher),
-                    ("start_storage_safety_watcher", start_storage_safety_watcher),
-                ]
-            )
-
         bootstrap_service.run_server(
             app,
             app_config,
             log_mcweb_log,
             log_mcweb_exception,
-            boot_steps,
+            _build_boot_steps(),
         )
 
     return run_server
-
-
-
