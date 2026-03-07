@@ -4,7 +4,7 @@ from datetime import datetime
 import time
 
 from app.core import state_store as state_store_service
-from app.services.dashboard_query_service import get_backups_status, get_observed_state
+from app.queries.dashboard_runtime_queries import get_backups_status, get_observed_state
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 def class_from_percent(value):
@@ -357,4 +357,5 @@ def get_cached_dashboard_metrics(ctx):
         "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
     }
+
 
