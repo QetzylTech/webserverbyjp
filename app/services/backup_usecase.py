@@ -1,4 +1,4 @@
-﻿"""Backup control-plane use cases and scheduling helpers."""
+"""Backup control-plane use cases and scheduling helpers."""
 
 from datetime import datetime
 from pathlib import Path
@@ -14,9 +14,44 @@ _calls = SimpleNamespace(
 )
 
 
-def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
+def _backup_snapshot_root(ctx):
+    return Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+
+
+def _iter_backup_artifacts(ctx):
+    backup_dir = Path(ctx.BACKUP_DIR)
+    if backup_dir.exists() and backup_dir.is_dir():
+        yield from backup_dir.glob("*.zip")
+
+    snapshot_root = _backup_snapshot_root(ctx)
+    if snapshot_root.exists() and snapshot_root.is_dir():
+        for path in snapshot_root.iterdir():
+            if path.is_dir():
+                yield path
+
+
+def _scan_backup_artifacts(ctx, *, stat_attr):
+    snapshot = {}
+    for path in _iter_backup_artifacts(ctx):
+        try:
+            snapshot[str(path)] = getattr(path.stat(), stat_attr)
+        except OSError:
+            continue
+    return snapshot
+
+
+def run_backup_script(
+    ctx,
+    count_skip_as_success=True,
+    trigger="manual",
+    *,
+    snapshot_reader=None,
+    snapshot_changed_fn=None,
+):
     """Run backup script with single-flight locking and snapshot verification."""
     backup_state = ctx.backup_state
+    read_snapshot = snapshot_reader or get_backup_zip_snapshot
+    has_snapshot_changed = snapshot_changed_fn or backup_snapshot_changed
     if not backup_state.run_lock.acquire(blocking=False):
         return bool(count_skip_as_success)
     try:
@@ -28,7 +63,7 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
         with backup_state.lock:
             backup_state.last_error = ""
 
-        before_snapshot = get_backup_zip_snapshot(ctx)
+        before_snapshot = read_snapshot(ctx)
         try:
             direct_result = _calls.run_backup_script(ctx.BACKUP_SCRIPT, trigger, timeout=600)
         except OSError as exc:
@@ -52,9 +87,9 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
                 rejection_message=message,
             )
             return False
-        after_direct_snapshot = get_backup_zip_snapshot(ctx)
-        direct_created_zip = backup_snapshot_changed(ctx, before_snapshot, after_direct_snapshot)
 
+        after_direct_snapshot = read_snapshot(ctx)
+        direct_created_zip = has_snapshot_changed(ctx, before_snapshot, after_direct_snapshot)
         if direct_result.returncode == 0:
             return True
         if direct_created_zip:
@@ -65,6 +100,7 @@ def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
             ctx.set_backup_warning(message)
             ctx.log_mcweb_action("backup-warning", command=f"trigger={trigger}", rejection_message=message[:700])
             return True
+
         err = ((direct_result.stderr or "") + "\n" + (direct_result.stdout or "")).strip()
         if not err:
             try:
@@ -94,50 +130,16 @@ def get_server_time_text(ctx):
 
 def get_latest_backup_zip_timestamp(ctx):
     """Return latest backup artifact timestamp across zips and snapshots."""
-    backup_dir = ctx.BACKUP_DIR
     latest = None
-    if backup_dir.exists() and backup_dir.is_dir():
-        for path in backup_dir.glob("*.zip"):
-            try:
-                ts = path.stat().st_mtime
-            except OSError:
-                continue
-            if latest is None or ts > latest:
-                latest = ts
-    snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
-    if snapshot_root.exists() and snapshot_root.is_dir():
-        for path in snapshot_root.iterdir():
-            if not path.is_dir():
-                continue
-            try:
-                ts = path.stat().st_mtime
-            except OSError:
-                continue
-            if latest is None or ts > latest:
-                latest = ts
+    for ts in _scan_backup_artifacts(ctx, stat_attr="st_mtime").values():
+        if latest is None or ts > latest:
+            latest = ts
     return latest
 
 
 def get_backup_zip_snapshot(ctx):
     """Capture backup artifact mtime snapshot for output verification."""
-    snapshot = {}
-    backup_dir = ctx.BACKUP_DIR
-    if backup_dir.exists() and backup_dir.is_dir():
-        for path in backup_dir.glob("*.zip"):
-            try:
-                snapshot[str(path)] = path.stat().st_mtime_ns
-            except OSError:
-                continue
-    snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
-    if snapshot_root.exists() and snapshot_root.is_dir():
-        for path in snapshot_root.iterdir():
-            if not path.is_dir():
-                continue
-            try:
-                snapshot[str(path)] = path.stat().st_mtime_ns
-            except OSError:
-                continue
-    return snapshot
+    return _scan_backup_artifacts(ctx, stat_attr="st_mtime_ns")
 
 
 def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
@@ -146,9 +148,7 @@ def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
         return True
     for file_path, after_mtime in after_snapshot.items():
         before_mtime = before_snapshot.get(file_path)
-        if before_mtime is None:
-            return True
-        if after_mtime != before_mtime:
+        if before_mtime is None or after_mtime != before_mtime:
             return True
     return False
 

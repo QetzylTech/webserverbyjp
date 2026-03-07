@@ -12,86 +12,116 @@ def build_runtime_bindings(
     minecraft_runtime_service,
     session_watchers_service,
 ):
-        # Return mapping of delegate callables bound to namespace state.
+    # Return mapping of delegate callables bound to namespace state.
     ns = namespace
 
     def _state():
         return ns["STATE"].ctx
 
-    def _mark_file_page_client_active():
-        return dashboard_runtime_service.mark_file_page_client_active(_state())
+    def _ctx_delegate(service, method_name):
+        method = getattr(service, method_name)
 
-    def get_cached_file_page_items(cache_key):
-        return dashboard_runtime_service.get_cached_file_page_items(_state(), cache_key)
+        def bound(*args, **kwargs):
+            return method(_state(), *args, **kwargs)
 
-    def file_page_cache_refresher_loop():
-        return dashboard_runtime_service.file_page_cache_refresher_loop(_state())
+        return bound
 
-    def ensure_file_page_cache_refresher_started():
-        return dashboard_runtime_service.ensure_file_page_cache_refresher_started(_state())
+    def _session_delegate(method_name):
+        method = getattr(session_store_service, method_name)
 
-    def warm_file_page_caches():
-        return dashboard_runtime_service.warm_file_page_caches(_state())
+        def bound(*args, **kwargs):
+            return method(control_plane_service, _state(), *args, **kwargs)
 
-    def set_service_status_intent(intent):
-        return control_plane_service.set_service_status_intent(_state(), intent)
+        return bound
 
-    def get_service_status_intent():
-        return control_plane_service.get_service_status_intent(_state())
+    def _plain_delegate(service, method_name):
+        method = getattr(service, method_name)
 
-    def stop_service_systemd():
-        return control_plane_service.stop_service_systemd(_state())
+        def bound(*args, **kwargs):
+            return method(*args, **kwargs)
 
-    def run_sudo(cmd):
-        return control_plane_service.run_sudo(_state(), cmd)
+        return bound
 
-    def validate_sudo_password(sudo_password):
-        return control_plane_service.validate_sudo_password(_state(), sudo_password)
+    # State-bound delegates with no extra logic.
+    _mark_file_page_client_active = _ctx_delegate(dashboard_runtime_service, "mark_file_page_client_active")
+    get_cached_file_page_items = _ctx_delegate(dashboard_runtime_service, "get_cached_file_page_items")
+    file_page_cache_refresher_loop = _ctx_delegate(dashboard_runtime_service, "file_page_cache_refresher_loop")
+    ensure_file_page_cache_refresher_started = _ctx_delegate(dashboard_runtime_service, "ensure_file_page_cache_refresher_started")
+    warm_file_page_caches = _ctx_delegate(dashboard_runtime_service, "warm_file_page_caches")
 
-    def ensure_session_file():
-        return session_store_service.ensure_session_file(control_plane_service, _state())
+    set_service_status_intent = _ctx_delegate(control_plane_service, "set_service_status_intent")
+    get_service_status_intent = _ctx_delegate(control_plane_service, "get_service_status_intent")
+    stop_service_systemd = _ctx_delegate(control_plane_service, "stop_service_systemd")
+    run_sudo = _ctx_delegate(control_plane_service, "run_sudo")
+    validate_sudo_password = _ctx_delegate(control_plane_service, "validate_sudo_password")
 
-    def read_session_start_time():
-        return session_store_service.read_session_start_time(control_plane_service, _state())
+    ensure_session_file = _session_delegate("ensure_session_file")
+    read_session_start_time = _session_delegate("read_session_start_time")
+    write_session_start_time = _session_delegate("write_session_start_time")
+    clear_session_start_time = _session_delegate("clear_session_start_time")
+    get_session_start_time = _session_delegate("get_session_start_time")
+    get_session_duration_text = _session_delegate("get_session_duration_text")
 
-    def write_session_start_time(timestamp=None):
-        return session_store_service.write_session_start_time(control_plane_service, _state(), timestamp)
+    _log_source_settings = _ctx_delegate(minecraft_runtime_service, "log_source_settings")
+    get_log_source_text = _ctx_delegate(minecraft_runtime_service, "get_log_source_text")
+    ensure_log_stream_fetcher_started = _ctx_delegate(minecraft_runtime_service, "ensure_log_stream_fetcher_started")
+    _increment_log_stream_clients = _ctx_delegate(minecraft_runtime_service, "increment_log_stream_clients")
+    _decrement_log_stream_clients = _ctx_delegate(minecraft_runtime_service, "decrement_log_stream_clients")
+    _refresh_rcon_config = _ctx_delegate(minecraft_runtime_service, "refresh_rcon_config")
+    is_rcon_enabled = _ctx_delegate(minecraft_runtime_service, "is_rcon_enabled")
+    is_rcon_startup_ready = _ctx_delegate(minecraft_runtime_service, "is_rcon_startup_ready")
+    _run_mcrcon = _ctx_delegate(minecraft_runtime_service, "run_mcrcon")
+    _probe_minecraft_runtime_metrics = _ctx_delegate(minecraft_runtime_service, "probe_minecraft_runtime_metrics")
+    get_players_online = _ctx_delegate(minecraft_runtime_service, "get_players_online")
+    get_tick_rate = _ctx_delegate(minecraft_runtime_service, "get_tick_rate")
+    get_service_status_display = _ctx_delegate(minecraft_runtime_service, "get_service_status_display")
+    get_service_status_class = _plain_delegate(minecraft_runtime_service, "get_service_status_class")
 
-    def clear_session_start_time():
-        return session_store_service.clear_session_start_time(control_plane_service, _state())
+    get_backups_status = _ctx_delegate(dashboard_runtime_service, "get_backups_status")
+    get_cpu_per_core_items = _ctx_delegate(dashboard_runtime_service, "get_cpu_per_core_items")
+    get_ram_usage_class = _ctx_delegate(dashboard_runtime_service, "get_ram_usage_class")
+    get_storage_usage_class = _ctx_delegate(dashboard_runtime_service, "get_storage_usage_class")
+    get_cpu_frequency_class = _ctx_delegate(dashboard_runtime_service, "get_cpu_frequency_class")
+    collect_dashboard_metrics = _ctx_delegate(dashboard_runtime_service, "collect_dashboard_metrics")
+    get_observed_state = _ctx_delegate(dashboard_runtime_service, "get_observed_state")
+    invalidate_observed_state_cache = _ctx_delegate(dashboard_runtime_service, "invalidate_observed_state_cache")
+    get_consistency_report = _ctx_delegate(dashboard_runtime_service, "get_consistency_report")
+    _mark_home_page_client_active = _ctx_delegate(dashboard_runtime_service, "mark_home_page_client_active")
+    _collect_and_publish_metrics = _ctx_delegate(dashboard_runtime_service, "collect_and_publish_metrics")
+    metrics_collector_loop = _ctx_delegate(dashboard_runtime_service, "metrics_collector_loop")
+    ensure_metrics_collector_started = _ctx_delegate(dashboard_runtime_service, "ensure_metrics_collector_started")
+    start_operation_reconciler = _ctx_delegate(dashboard_runtime_service, "start_operation_reconciler")
+    get_cached_dashboard_metrics = _ctx_delegate(dashboard_runtime_service, "get_cached_dashboard_metrics")
 
-    def get_session_start_time(service_status=None):
-        return session_store_service.get_session_start_time(control_plane_service, _state(), service_status)
+    graceful_stop_minecraft = _ctx_delegate(control_plane_service, "graceful_stop_minecraft")
+    stop_server_automatically = _ctx_delegate(control_plane_service, "stop_server_automatically")
+    ensure_startup_rcon_settings = _ctx_delegate(control_plane_service, "ensure_startup_rcon_settings")
+    start_service_non_blocking = _ctx_delegate(control_plane_service, "start_service_non_blocking")
+    run_backup_script = _ctx_delegate(control_plane_service, "run_backup_script")
+    restore_world_backup = _ctx_delegate(control_plane_service, "restore_world_backup")
+    append_restore_event = _ctx_delegate(control_plane_service, "append_restore_event")
+    start_restore_job = _ctx_delegate(control_plane_service, "start_restore_job")
+    get_restore_status = _ctx_delegate(control_plane_service, "get_restore_status")
+    format_backup_time = _ctx_delegate(control_plane_service, "format_backup_time")
+    get_server_time_text = _ctx_delegate(control_plane_service, "get_server_time_text")
+    get_latest_backup_zip_timestamp = _ctx_delegate(control_plane_service, "get_latest_backup_zip_timestamp")
+    get_backup_zip_snapshot = _ctx_delegate(control_plane_service, "get_backup_zip_snapshot")
+    backup_snapshot_changed = _ctx_delegate(control_plane_service, "backup_snapshot_changed")
+    get_backup_schedule_times = _ctx_delegate(control_plane_service, "get_backup_schedule_times")
+    get_backup_status = _ctx_delegate(control_plane_service, "get_backup_status")
+    is_backup_running = _ctx_delegate(control_plane_service, "is_backup_running")
+    reset_backup_schedule_state = _ctx_delegate(control_plane_service, "reset_backup_schedule_state")
 
-    def get_session_duration_text():
-        return session_store_service.get_session_duration_text(control_plane_service, _state())
-
-    def _log_source_settings(source):
-        return minecraft_runtime_service.log_source_settings(_state(), source)
-
-    def get_log_source_text(source):
-        return minecraft_runtime_service.get_log_source_text(_state(), source)
-
-    def ensure_log_stream_fetcher_started(source):
-        return minecraft_runtime_service.ensure_log_stream_fetcher_started(_state(), source)
-
-    def _increment_log_stream_clients(source):
-        return minecraft_runtime_service.increment_log_stream_clients(_state(), source)
-
-    def _decrement_log_stream_clients(source):
-        return minecraft_runtime_service.decrement_log_stream_clients(_state(), source)
-
-    def get_backups_status():
-        return dashboard_runtime_service.get_backups_status(_state())
-
-    def get_cpu_per_core_items(cpu_per_core):
-        return dashboard_runtime_service.get_cpu_per_core_items(_state(), cpu_per_core)
-
-    def get_ram_usage_class(ram_usage):
-        return dashboard_runtime_service.get_ram_usage_class(_state(), ram_usage)
-
-    def get_storage_usage_class(storage_usage):
-        return dashboard_runtime_service.get_storage_usage_class(_state(), storage_usage)
+    format_countdown = _plain_delegate(session_watchers_service, "format_countdown")
+    get_idle_countdown = _ctx_delegate(session_watchers_service, "get_idle_countdown")
+    idle_player_watcher = _ctx_delegate(session_watchers_service, "idle_player_watcher")
+    start_idle_player_watcher = _ctx_delegate(session_watchers_service, "start_idle_player_watcher")
+    backup_session_watcher = _ctx_delegate(session_watchers_service, "backup_session_watcher")
+    start_backup_session_watcher = _ctx_delegate(session_watchers_service, "start_backup_session_watcher")
+    storage_safety_watcher = _ctx_delegate(session_watchers_service, "storage_safety_watcher")
+    start_storage_safety_watcher = _ctx_delegate(session_watchers_service, "start_storage_safety_watcher")
+    initialize_session_tracking = _ctx_delegate(session_watchers_service, "initialize_session_tracking")
+    _status_state_note = _ctx_delegate(session_watchers_service, "status_state_note")
 
     def get_storage_used_percent(storage_usage_text=None):
         usage_text = storage_usage_text if storage_usage_text is not None else ns["get_storage_usage"]()
@@ -126,87 +156,6 @@ def build_runtime_bindings(
             f"Starting is blocked below {ns['LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT']:.0f}% free."
         )
 
-    def get_cpu_frequency_class(cpu_frequency):
-        return dashboard_runtime_service.get_cpu_frequency_class(_state(), cpu_frequency)
-
-    def _refresh_rcon_config():
-        return minecraft_runtime_service.refresh_rcon_config(_state())
-
-    def is_rcon_enabled():
-        return minecraft_runtime_service.is_rcon_enabled(_state())
-
-    def is_rcon_startup_ready(service_status=None):
-        return minecraft_runtime_service.is_rcon_startup_ready(_state(), service_status=service_status)
-
-    def _run_mcrcon(command, timeout=4):
-        return minecraft_runtime_service.run_mcrcon(_state(), command, timeout=timeout)
-
-    def _probe_minecraft_runtime_metrics(force=False):
-        return minecraft_runtime_service.probe_minecraft_runtime_metrics(_state(), force=force)
-
-    def get_players_online():
-        return minecraft_runtime_service.get_players_online(_state())
-
-    def get_tick_rate():
-        return minecraft_runtime_service.get_tick_rate(_state())
-
-    def get_service_status_display(service_status, players_online):
-        return minecraft_runtime_service.get_service_status_display(_state(), service_status, players_online)
-
-    def get_service_status_class(service_status_display):
-        return minecraft_runtime_service.get_service_status_class(service_status_display)
-
-    def graceful_stop_minecraft(trigger="session_end"):
-        return control_plane_service.graceful_stop_minecraft(_state(), trigger=trigger)
-
-    def stop_server_automatically(trigger="session_end"):
-        return control_plane_service.stop_server_automatically(_state(), trigger=trigger)
-
-    def ensure_startup_rcon_settings():
-        return control_plane_service.ensure_startup_rcon_settings(_state())
-
-    def start_service_non_blocking(timeout=12):
-        return control_plane_service.start_service_non_blocking(_state(), timeout=timeout)
-
-    def run_backup_script(count_skip_as_success=True, trigger="manual"):
-        return control_plane_service.run_backup_script(_state(), count_skip_as_success, trigger)
-
-    def restore_world_backup(backup_filename):
-        return control_plane_service.restore_world_backup(_state(), backup_filename)
-
-    def append_restore_event(message):
-        return control_plane_service.append_restore_event(_state(), message)
-
-    def start_restore_job(backup_filename):
-        return control_plane_service.start_restore_job(_state(), backup_filename)
-
-    def get_restore_status(since_seq=0, job_id=None):
-        return control_plane_service.get_restore_status(_state(), since_seq=since_seq, job_id=job_id)
-
-    def format_backup_time(timestamp):
-        return control_plane_service.format_backup_time(_state(), timestamp)
-
-    def get_server_time_text():
-        return control_plane_service.get_server_time_text(_state())
-
-    def get_latest_backup_zip_timestamp():
-        return control_plane_service.get_latest_backup_zip_timestamp(_state())
-
-    def get_backup_zip_snapshot():
-        return control_plane_service.get_backup_zip_snapshot(_state())
-
-    def backup_snapshot_changed(before_snapshot, after_snapshot):
-        return control_plane_service.backup_snapshot_changed(_state(), before_snapshot, after_snapshot)
-
-    def get_backup_schedule_times(service_status=None):
-        return control_plane_service.get_backup_schedule_times(_state(), service_status)
-
-    def get_backup_status():
-        return control_plane_service.get_backup_status(_state())
-
-    def is_backup_running():
-        return control_plane_service.is_backup_running(_state())
-
     def set_backup_warning(message):
         msg = str(message or "").strip()
         with ns["backup_warning_lock"]:
@@ -225,69 +174,6 @@ def build_runtime_bindings(
         if ttl > 0 and (time.time() - at) > ttl:
             return {"seq": seq, "message": ""}
         return {"seq": seq, "message": msg}
-
-    def reset_backup_schedule_state():
-        return control_plane_service.reset_backup_schedule_state(_state())
-
-    def collect_dashboard_metrics():
-        return dashboard_runtime_service.collect_dashboard_metrics(_state())
-
-    def get_observed_state():
-        return dashboard_runtime_service.get_observed_state(_state())
-
-    def invalidate_observed_state_cache():
-        return dashboard_runtime_service.invalidate_observed_state_cache(_state())
-
-    def get_consistency_report(auto_repair=False):
-        return dashboard_runtime_service.get_consistency_report(_state(), auto_repair=bool(auto_repair))
-
-    def _mark_home_page_client_active():
-        return dashboard_runtime_service.mark_home_page_client_active(_state())
-
-    def _collect_and_publish_metrics():
-        return dashboard_runtime_service.collect_and_publish_metrics(_state())
-
-    def metrics_collector_loop():
-        return dashboard_runtime_service.metrics_collector_loop(_state())
-
-    def ensure_metrics_collector_started():
-        return dashboard_runtime_service.ensure_metrics_collector_started(_state())
-
-    def start_operation_reconciler():
-        return dashboard_runtime_service.start_operation_reconciler(_state())
-
-    def get_cached_dashboard_metrics():
-        return dashboard_runtime_service.get_cached_dashboard_metrics(_state())
-
-    def format_countdown(seconds):
-        return session_watchers_service.format_countdown(seconds)
-
-    def get_idle_countdown(service_status=None, players_online=None):
-        return session_watchers_service.get_idle_countdown(_state(), service_status, players_online)
-
-    def idle_player_watcher():
-        return session_watchers_service.idle_player_watcher(_state())
-
-    def start_idle_player_watcher():
-        return session_watchers_service.start_idle_player_watcher(_state())
-
-    def backup_session_watcher():
-        return session_watchers_service.backup_session_watcher(_state())
-
-    def start_backup_session_watcher():
-        return session_watchers_service.start_backup_session_watcher(_state())
-
-    def storage_safety_watcher():
-        return session_watchers_service.storage_safety_watcher(_state())
-
-    def start_storage_safety_watcher():
-        return session_watchers_service.start_storage_safety_watcher(_state())
-
-    def initialize_session_tracking():
-        return session_watchers_service.initialize_session_tracking(_state())
-
-    def _status_state_note():
-        return session_watchers_service.status_state_note(_state())
 
     return {
         "_mark_file_page_client_active": _mark_file_page_client_active,
@@ -370,6 +256,3 @@ def build_runtime_bindings(
         "initialize_session_tracking": initialize_session_tracking,
         "_status_state_note": _status_state_note,
     }
-
-
-

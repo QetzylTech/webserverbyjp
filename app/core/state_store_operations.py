@@ -104,6 +104,62 @@ def _latest_cache_invalidate(db_path, op_type):
         _LATEST_OPERATION_CACHE.pop(key, None)
 
 
+def _serialize_payload(payload):
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+
+
+def _build_operation_update_fields(
+    *,
+    status=None,
+    error_code=None,
+    message=None,
+    started=False,
+    finished=False,
+    checkpoint=None,
+    increment_attempt=False,
+    payload=None,
+):
+    fields = []
+    values = []
+    if status is not None:
+        fields.append("status = ?")
+        values.append(str(status))
+    if error_code is not None:
+        fields.append("error_code = ?")
+        values.append(str(error_code))
+    if message is not None:
+        fields.append("message = ?")
+        values.append(str(message))
+    if started:
+        fields.append("started_at = ?")
+        values.append(_now_iso())
+    if finished:
+        fields.append("finished_at = ?")
+        values.append(_now_iso())
+    if checkpoint is not None:
+        fields.append("checkpoint = ?")
+        values.append(str(checkpoint))
+    if increment_attempt:
+        fields.append("attempt = attempt + 1")
+    if isinstance(payload, dict):
+        fields.append("data_json = ?")
+        values.append(_serialize_payload(payload))
+    return fields, values
+
+
+def _record_operation_update(db_path, item, *, checkpoint=None, previous=None, fallback_op_id=""):
+    if isinstance(item, dict):
+        _latest_cache_invalidate(db_path, str(item.get("op_type", "") or ""))
+        profiling.record_operation_transition(str(item.get("op_type", "")), item)
+        checkpoint_name = checkpoint
+        if checkpoint_name is None and isinstance(previous, dict):
+            checkpoint_name = str(item.get("checkpoint", "") or "")
+        if checkpoint_name:
+            profiling.mark_operation_checkpoint(str(item.get("op_id", "") or fallback_op_id), str(checkpoint_name))
+        return
+    _latest_cache_invalidate(db_path, "")
+
+
 def create_operation(
     db_path,
     *,
@@ -178,7 +234,7 @@ def _create_operation_impl(
                     "",
                     "",
                     "",
-                    json.dumps(item, ensure_ascii=True, separators=(",", ":")),
+                    _serialize_payload(item),
                 ),
             )
             conn.commit()
@@ -237,31 +293,16 @@ def _update_operation_impl(
     previous = None
     if profiling.ENABLED:
         previous = get_operation(db_path, op_id)
-    fields = []
-    values = []
-    if status is not None:
-        fields.append("status = ?")
-        values.append(str(status))
-    if error_code is not None:
-        fields.append("error_code = ?")
-        values.append(str(error_code))
-    if message is not None:
-        fields.append("message = ?")
-        values.append(str(message))
-    if started:
-        fields.append("started_at = ?")
-        values.append(_now_iso())
-    if finished:
-        fields.append("finished_at = ?")
-        values.append(_now_iso())
-    if checkpoint is not None:
-        fields.append("checkpoint = ?")
-        values.append(str(checkpoint))
-    if increment_attempt:
-        fields.append("attempt = attempt + 1")
-    if isinstance(payload, dict):
-        fields.append("data_json = ?")
-        values.append(json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+    fields, values = _build_operation_update_fields(
+        status=status,
+        error_code=error_code,
+        message=message,
+        started=started,
+        finished=finished,
+        checkpoint=checkpoint,
+        increment_attempt=increment_attempt,
+        payload=payload,
+    )
     if not fields:
         return get_operation(db_path, op_id)
     values.append(str(op_id or ""))
@@ -275,16 +316,7 @@ def _update_operation_impl(
             conn.commit()
             row = _fetch_operation_row(conn, op_id)
     item = _row_to_operation_payload(row)
-    if isinstance(item, dict):
-        _latest_cache_invalidate(db_path, str(item.get("op_type", "") or ""))
-        profiling.record_operation_transition(str(item.get("op_type", "")), item)
-        checkpoint_name = checkpoint
-        if checkpoint_name is None and isinstance(previous, dict):
-            checkpoint_name = str(item.get("checkpoint", "") or "")
-        if checkpoint_name:
-            profiling.mark_operation_checkpoint(str(item.get("op_id", "") or op_id), str(checkpoint_name))
-    else:
-        _latest_cache_invalidate(db_path, "")
+    _record_operation_update(db_path, item, checkpoint=checkpoint, previous=previous, fallback_op_id=str(op_id or ""))
     return item
 
 
@@ -309,8 +341,6 @@ def update_operations_batch(db_path, *, updates):
                     op_id = str(payload.get("op_id", "") or "").strip()
                     if not op_id:
                         continue
-                    fields = []
-                    values = []
                     status = payload.get("status")
                     error_code = payload.get("error_code")
                     message = payload.get("message")
@@ -319,29 +349,16 @@ def update_operations_batch(db_path, *, updates):
                     checkpoint = payload.get("checkpoint")
                     increment_attempt = bool(payload.get("increment_attempt", False))
                     data_payload = payload.get("payload")
-                    if status is not None:
-                        fields.append("status = ?")
-                        values.append(str(status))
-                    if error_code is not None:
-                        fields.append("error_code = ?")
-                        values.append(str(error_code))
-                    if message is not None:
-                        fields.append("message = ?")
-                        values.append(str(message))
-                    if started:
-                        fields.append("started_at = ?")
-                        values.append(_now_iso())
-                    if finished:
-                        fields.append("finished_at = ?")
-                        values.append(_now_iso())
-                    if checkpoint is not None:
-                        fields.append("checkpoint = ?")
-                        values.append(str(checkpoint))
-                    if increment_attempt:
-                        fields.append("attempt = attempt + 1")
-                    if isinstance(data_payload, dict):
-                        fields.append("data_json = ?")
-                        values.append(json.dumps(data_payload, ensure_ascii=True, separators=(",", ":")))
+                    fields, values = _build_operation_update_fields(
+                        status=status,
+                        error_code=error_code,
+                        message=message,
+                        started=started,
+                        finished=finished,
+                        checkpoint=checkpoint,
+                        increment_attempt=increment_attempt,
+                        payload=data_payload,
+                    )
                     if not fields:
                         continue
                     values.append(op_id)
@@ -357,13 +374,7 @@ def update_operations_batch(db_path, *, updates):
     out = []
     for item, checkpoint, previous in touched:
         out.append(item)
-        _latest_cache_invalidate(db_path, str(item.get("op_type", "") or ""))
-        profiling.record_operation_transition(str(item.get("op_type", "")), item)
-        checkpoint_name = checkpoint
-        if checkpoint_name is None and isinstance(previous, dict):
-            checkpoint_name = str(item.get("checkpoint", "") or "")
-        if checkpoint_name:
-            profiling.mark_operation_checkpoint(str(item.get("op_id", "")), str(checkpoint_name))
+        _record_operation_update(db_path, item, checkpoint=checkpoint, previous=previous)
     return out
 
 

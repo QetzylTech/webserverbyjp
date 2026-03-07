@@ -17,6 +17,59 @@ from app.services.maintenance_state_store import (
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
+def _update_operation(ctx, op_id, **updates):
+    state_store_service.update_operation(ctx.APP_STATE_DB_PATH, op_id=op_id, **updates)
+
+
+def _mark_operation_started(ctx, op_id, message):
+    _update_operation(
+        ctx,
+        op_id,
+        status="in_progress",
+        checkpoint="worker_started",
+        started=True,
+        message=message,
+    )
+
+
+def _fail_operation(ctx, op_id, *, error_code, checkpoint, message, payload=None):
+    updates = {
+        "status": "failed",
+        "error_code": error_code,
+        "checkpoint": checkpoint,
+        "message": message,
+        "finished": True,
+    }
+    if payload is not None:
+        updates["payload"] = payload
+    _update_operation(ctx, op_id, **updates)
+
+
+def _complete_operation(ctx, op_id, *, message, payload=None):
+    updates = {
+        "status": "observed",
+        "checkpoint": "observed",
+        "message": message,
+        "finished": True,
+    }
+    if payload is not None:
+        updates["payload"] = payload
+    _update_operation(ctx, op_id, **updates)
+
+
+def _dispatch_control_intent(ctx, op_type, op_id, target):
+    handlers = {
+        "start": lambda: _execute_start(ctx, op_id),
+        "stop": lambda: _execute_stop(ctx, op_id),
+        "backup": lambda: _execute_backup(ctx, op_id),
+        "restore": lambda: _execute_restore(ctx, op_id, target),
+    }
+    handler = handlers.get(op_type)
+    if handler is None:
+        return
+    handler()
+
+
 def _interval_seconds(ctx, name, default_value):
     try:
         value = float(getattr(ctx, name, default_value))
@@ -49,27 +102,18 @@ def _maintenance_precompute_loop(ctx):
 
 
 def _execute_start(ctx, op_id):
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="in_progress",
-        checkpoint="worker_started",
-        started=True,
-        message="Start operation in progress.",
-    )
+    _mark_operation_started(ctx, op_id, "Start operation in progress.")
     result = ctx.start_service_non_blocking(timeout=12)
     if not bool((result or {}).get("ok")):
         message = str((result or {}).get("message", "Failed to start service.") or "Failed to start service.")
         ctx.set_service_status_intent(None)
         ctx.invalidate_status_cache()
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="failed",
+        _fail_operation(
+            ctx,
+            op_id,
             error_code="start_failed",
             checkpoint="start_failed",
             message=message,
-            finished=True,
         )
         return
     if ctx.write_session_start_time() is None:
@@ -84,9 +128,9 @@ def _execute_start(ctx, op_id):
     ctx.reset_backup_schedule_state()
     # Do not mark observed yet: startup completion is reconciled from live
     # runtime status to avoid flipping back to Off during warm-up.
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
+    _update_operation(
+        ctx,
+        op_id,
         status="in_progress",
         checkpoint="start_dispatched",
         message="Start dispatched; awaiting observed active state.",
@@ -95,14 +139,7 @@ def _execute_start(ctx, op_id):
 
 
 def _execute_stop(ctx, op_id):
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="in_progress",
-        checkpoint="worker_started",
-        started=True,
-        message="Stop operation in progress.",
-    )
+    _mark_operation_started(ctx, op_id, "Stop operation in progress.")
     result = ctx.graceful_stop_minecraft()
     systemd_ok = bool((result or {}).get("systemd_ok")) if isinstance(result, dict) else bool(result)
     backup_ok = bool((result or {}).get("backup_ok")) if isinstance(result, dict) else True
@@ -115,92 +152,58 @@ def _execute_stop(ctx, op_id):
                 message = "Stop operation failed: backup pre-stop hook failed."
         ctx.set_service_status_intent(None)
         ctx.invalidate_status_cache()
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="failed",
+        _fail_operation(
+            ctx,
+            op_id,
             error_code="stop_failed",
             checkpoint="stop_failed",
             message=message,
-            finished=True,
         )
         return
     ctx.clear_session_start_time()
     ctx.reset_backup_schedule_state()
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="observed",
-        checkpoint="observed",
-        message="Service stop observed.",
-        finished=True,
-    )
+    _complete_operation(ctx, op_id, message="Service stop observed.")
 
 
 def _execute_backup(ctx, op_id):
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="in_progress",
-        checkpoint="worker_started",
-        started=True,
-        message="Backup operation in progress.",
-    )
+    _mark_operation_started(ctx, op_id, "Backup operation in progress.")
     ok = ctx.run_backup_script(trigger="manual")
     if not ok:
         detail = ""
         with ctx.backup_state.lock:
             detail = str(ctx.backup_state.last_error or "")
         message = f"Backup failed: {detail}" if detail else "Backup failed."
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="failed",
+        _fail_operation(
+            ctx,
+            op_id,
             error_code="backup_failed",
             checkpoint="backup_failed",
             message=message,
-            finished=True,
         )
         return
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="observed",
-        checkpoint="observed",
-        message="Backup operation observed complete.",
-        finished=True,
-    )
+    _complete_operation(ctx, op_id, message="Backup operation observed complete.")
 
 
 def _execute_restore(ctx, op_id, target):
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="in_progress",
-        checkpoint="worker_started",
-        started=True,
-        message="Restore operation in progress.",
-    )
+    _mark_operation_started(ctx, op_id, "Restore operation in progress.")
     filename = str(target or "").strip()
     result = ctx.start_restore_job(filename)
     if not bool((result or {}).get("ok")):
         message = str((result or {}).get("message", "Restore failed to start.") or "Restore failed to start.")
         error_code = str((result or {}).get("error", "restore_start_failed") or "restore_start_failed")
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="failed",
+        _fail_operation(
+            ctx,
+            op_id,
             error_code=error_code,
             checkpoint="restore_start_failed",
             message=message,
-            finished=True,
         )
         return
 
     restore_job_id = str((result or {}).get("job_id", "") or "")
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
+    _update_operation(
+        ctx,
+        op_id,
         status="in_progress",
         checkpoint="restore_job_started",
         message="Restore worker started.",
@@ -218,14 +221,11 @@ def _execute_restore(ctx, op_id, target):
 
     result_payload = last_payload.get("result") if isinstance(last_payload, dict) else None
     if isinstance(result_payload, dict) and bool(result_payload.get("ok")):
-        state_store_service.update_operation(
-            ctx.APP_STATE_DB_PATH,
-            op_id=op_id,
-            status="observed",
-            checkpoint="observed",
+        _complete_operation(
+            ctx,
+            op_id,
             message=str(result_payload.get("message", "Restore completed successfully.") or "Restore completed successfully."),
             payload={"restore_job_id": restore_job_id, "result": result_payload},
-            finished=True,
         )
         return
     message = "Restore failed."
@@ -233,15 +233,13 @@ def _execute_restore(ctx, op_id, target):
     if isinstance(result_payload, dict):
         message = str(result_payload.get("message", message) or message)
         error_code = str(result_payload.get("error", error_code) or error_code)
-    state_store_service.update_operation(
-        ctx.APP_STATE_DB_PATH,
-        op_id=op_id,
-        status="failed",
+    _fail_operation(
+        ctx,
+        op_id,
         error_code=error_code,
         checkpoint="restore_failed",
         message=message,
         payload={"restore_job_id": restore_job_id, "result": result_payload if isinstance(result_payload, dict) else {}},
-        finished=True,
     )
 
 
@@ -281,25 +279,16 @@ def _control_intent_consumer_loop(ctx):
             if status != "intent":
                 continue
             try:
-                if op_type == "start":
-                    _execute_start(ctx, op_id)
-                elif op_type == "stop":
-                    _execute_stop(ctx, op_id)
-                elif op_type == "backup":
-                    _execute_backup(ctx, op_id)
-                elif op_type == "restore":
-                    _execute_restore(ctx, op_id, target)
+                _dispatch_control_intent(ctx, op_type, op_id, target)
             except Exception as exc:
                 ctx.log_mcweb_exception(f"worker_execute_{op_type}", exc)
                 try:
-                    state_store_service.update_operation(
-                        ctx.APP_STATE_DB_PATH,
-                        op_id=op_id,
-                        status="failed",
+                    _fail_operation(
+                        ctx,
+                        op_id,
                         error_code=f"{op_type}_worker_failed",
                         checkpoint=f"{op_type}_worker_failed",
                         message=str(exc)[:700],
-                        finished=True,
                     )
                 except Exception:
                     pass

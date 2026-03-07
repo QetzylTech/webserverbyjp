@@ -328,6 +328,82 @@ def _build_deleted_output_items(rows):
         )
     return deleted_items
 
+def _select_manual_targets(candidates, selected_paths, reasons_map):
+    to_delete = []
+    for row in candidates:
+        if row["path"] not in selected_paths:
+            continue
+        if row["eligible"]:
+            to_delete.append(row)
+            _mark(reasons_map, row["path"], "manual_selection")
+        else:
+            _mark(reasons_map, row["path"], "ineligible_selection")
+    return to_delete
+
+
+def _select_rule_targets(ctx, cfg, candidates, by_category, eligible, rules, reasons_map):
+    to_delete = []
+    _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete)
+
+    non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
+    if not non_backup_eligible:
+        return to_delete
+
+    non_backup_candidates = [row for row in candidates if row.get("category") != "backup_zip"]
+    non_backup_by_category = _group_by_category(non_backup_candidates)
+    _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
+    _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
+    _add_space_targets(ctx, cfg, non_backup_eligible, rules, reasons_map, to_delete)
+    return to_delete
+
+
+def _select_cleanup_targets(ctx, cfg, *, mode, candidates, by_category, eligible, rules, selected_paths):
+    reasons_map = {}
+    if mode == "manual":
+        to_delete = _select_manual_targets(candidates, selected_paths, reasons_map)
+    else:
+        to_delete = _select_rule_targets(ctx, cfg, candidates, by_category, eligible, rules, reasons_map)
+    return to_delete, reasons_map
+
+
+def _apply_cleanup_targets(capped_targets, *, apply_changes):
+    deleted = []
+    errors = []
+    if apply_changes:
+        for row in capped_targets:
+            try:
+                _cleanup_delete_target(row["path"], row["is_dir"])
+                deleted.append(row)
+            except OSError as exc:
+                errors.append(f"{row['name']}: {exc}")
+        return deleted, errors
+    return list(capped_targets), errors
+
+
+def _build_cleanup_result(*, candidates, reasons_map, selected_paths, ordered, capped_targets, deleted, errors, eligible_count, mode, apply_changes):
+    deleted_paths = {row["path"] for row in capped_targets}
+    output_items = _build_output_items(candidates, reasons_map, deleted_paths)
+    deleted_path_set = {row["path"] for row in deleted}
+    selected_ineligible = sorted(
+        path
+        for path in selected_paths
+        if path not in deleted_path_set and path in reasons_map and "ineligible_selection" in reasons_map[path]
+    )
+    return {
+        "ok": True,
+        "mode": mode,
+        "apply_changes": bool(apply_changes),
+        "eligible_count": eligible_count,
+        "requested_delete_count": len(ordered),
+        "capped_delete_count": len(capped_targets),
+        "deleted_count": len(deleted),
+        "deleted_bytes": sum(int(row["size"]) for row in deleted),
+        "deleted_items": _build_deleted_output_items(deleted),
+        "errors": errors,
+        "items": output_items,
+        "selected_ineligible": selected_ineligible,
+    }
+
 
 def _cleanup_evaluate(ctx, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
     """Handle cleanup evaluate."""
@@ -345,69 +421,36 @@ def _cleanup_evaluate(ctx, cfg, *, mode="rule", selected_paths=None, apply_chang
         with profiling.timed("maintenance.evaluate.hard_guards"):
             protected = _build_protected_paths(candidates, by_category, rules)
             eligible = _apply_hard_guards(candidates, protected)
-
-        to_delete = []
-        reasons_map = {}
         with profiling.timed("maintenance.evaluate.rule_selection"):
-            if mode == "manual":
-                for row in candidates:
-                    if row["path"] in selected_paths and row["eligible"]:
-                        to_delete.append(row)
-                        _mark(reasons_map, row["path"], "manual_selection")
-                    elif row["path"] in selected_paths and not row["eligible"]:
-                        _mark(reasons_map, row["path"], "ineligible_selection")
-            else:
-                _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete)
-
-                non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
-                if non_backup_eligible:
-                    non_backup_by_category = _group_by_category([row for row in candidates if row.get("category") != "backup_zip"])
-                    _add_age_targets(non_backup_eligible, rules, reasons_map, to_delete)
-                    _add_count_targets(non_backup_by_category, rules, reasons_map, to_delete)
-                    _add_space_targets(ctx, cfg, non_backup_eligible, rules, reasons_map, to_delete)
-
+            to_delete, reasons_map = _select_cleanup_targets(
+                ctx,
+                cfg,
+                mode=mode,
+                candidates=candidates,
+                by_category=by_category,
+                eligible=eligible,
+                rules=rules,
+                selected_paths=selected_paths,
+            )
         with profiling.timed("maintenance.evaluate.dedup_and_blast_cap"):
             ordered = _dedupe_oldest_first(to_delete)
             eligible_count = len(eligible)
             capped_targets = _apply_blast_radius_cap(ordered, eligible_count, rules)
-
-        deleted = []
-        errors = []
         with profiling.timed("maintenance.evaluate.apply_changes"):
-            if apply_changes:
-                for row in capped_targets:
-                    try:
-                        _cleanup_delete_target(row["path"], row["is_dir"])
-                        deleted.append(row)
-                    except OSError as exc:
-                        errors.append(f"{row['name']}: {exc}")
-            else:
-                deleted = list(capped_targets)
-
+            deleted, errors = _apply_cleanup_targets(capped_targets, apply_changes=apply_changes)
         with profiling.timed("maintenance.evaluate.output_build"):
-            deleted_paths = {row["path"] for row in capped_targets}
-            output_items = _build_output_items(candidates, reasons_map, deleted_paths)
-            deleted_path_set = {row["path"] for row in deleted}
-            selected_ineligible = sorted(
-                path
-                for path in selected_paths
-                if path not in deleted_path_set and path in reasons_map and "ineligible_selection" in reasons_map[path]
+            return _build_cleanup_result(
+                candidates=candidates,
+                reasons_map=reasons_map,
+                selected_paths=selected_paths,
+                ordered=ordered,
+                capped_targets=capped_targets,
+                deleted=deleted,
+                errors=errors,
+                eligible_count=eligible_count,
+                mode=mode,
+                apply_changes=apply_changes,
             )
-
-        return {
-            "ok": True,
-            "mode": mode,
-            "apply_changes": bool(apply_changes),
-            "eligible_count": eligible_count,
-            "requested_delete_count": len(ordered),
-            "capped_delete_count": len(capped_targets),
-            "deleted_count": len(deleted),
-            "deleted_bytes": sum(int(row["size"]) for row in deleted),
-            "deleted_items": _build_deleted_output_items(deleted),
-            "errors": errors,
-            "items": output_items,
-            "selected_ineligible": selected_ineligible,
-        }
 
 
 def _cleanup_state_snapshot(ctx, cfg):

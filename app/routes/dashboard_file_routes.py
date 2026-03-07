@@ -14,6 +14,9 @@ from app.core import state_store as state_store_service
 from app.ports import ports
 
 _METRICS_ROUTE_CACHE_LOCK = threading.Lock()
+# Short cache for /metrics JSON fallback requests. This improves burst behavior,
+# but it can add roughly 1 second of visible delay to status transitions when the
+# dashboard is reading status through /metrics instead of waiting on the SSE stream.
 _METRICS_ROUTE_CACHE_TTL_SECONDS = 1.0
 _METRICS_ROUTE_CACHE = {
     "event_id": -1,
@@ -21,6 +24,56 @@ _METRICS_ROUTE_CACHE = {
     "payload": None,
 }
 
+
+
+def _sse_response(generator):
+    return Response(
+        stream_with_context(generator),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _read_view_file_content(file_path, safe_name, *, max_bytes=2_000_000):
+    try:
+        if safe_name.lower().endswith(".gz"):
+            tail_chunks = deque()
+            tail_len = 0
+            truncated = False
+            with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    tail_chunks.append(chunk)
+                    tail_len += len(chunk)
+                    while tail_len > max_bytes and tail_chunks:
+                        truncated = True
+                        overflow = tail_len - max_bytes
+                        head = tail_chunks[0]
+                        if len(head) <= overflow:
+                            tail_len -= len(head)
+                            tail_chunks.popleft()
+                        else:
+                            tail_chunks[0] = head[overflow:]
+                            tail_len -= overflow
+            text = "".join(tail_chunks)
+            if truncated:
+                text = f"[truncated to last {max_bytes} characters]\n{text}"
+            return text, None
+
+        size = file_path.stat().st_size
+        if size > max_bytes:
+            with file_path.open("rb") as f:
+                f.seek(max(0, size - max_bytes))
+                raw = f.read(max_bytes)
+            return "[truncated to last 2000000 bytes]\n" + raw.decode("utf-8", errors="ignore"), None
+        return file_path.read_text(encoding="utf-8", errors="ignore"), None
+    except OSError:
+        return None, "Unable to read file."
 
 def register_file_routes(app, state):
     """Register file browsing, log streaming, and metrics routes."""
@@ -339,44 +392,9 @@ def register_file_routes(app, state):
             return jsonify({"ok": False, "message": "File not found."}), 404
 
         file_path = base_dir / safe_name
-        max_bytes = 2_000_000
-        try:
-            if safe_name.lower().endswith(".gz"):
-                # Stream-decompress and keep only a tail window for very large gzip logs.
-                tail_chunks = deque()
-                tail_len = 0
-                truncated = False
-                with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
-                    while True:
-                        chunk = f.read(64 * 1024)
-                        if not chunk:
-                            break
-                        tail_chunks.append(chunk)
-                        tail_len += len(chunk)
-                        while tail_len > max_bytes and tail_chunks:
-                            truncated = True
-                            overflow = tail_len - max_bytes
-                            head = tail_chunks[0]
-                            if len(head) <= overflow:
-                                tail_len -= len(head)
-                                tail_chunks.popleft()
-                            else:
-                                tail_chunks[0] = head[overflow:]
-                                tail_len -= overflow
-                text = "".join(tail_chunks)
-                if truncated:
-                    text = f"[truncated to last {max_bytes} characters]\n{text}"
-            else:
-                size = file_path.stat().st_size
-                if size > max_bytes:
-                    with file_path.open("rb") as f:
-                        f.seek(max(0, size - max_bytes))
-                        raw = f.read(max_bytes)
-                    text = "[truncated to last 2000000 bytes]\n" + raw.decode("utf-8", errors="ignore")
-                else:
-                    text = file_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            return jsonify({"ok": False, "message": "Unable to read file."}), 500
+        text, error_message = _read_view_file_content(file_path, safe_name)
+        if error_message:
+            return jsonify({"ok": False, "message": error_message}), 500
 
         return jsonify({"ok": True, "filename": safe_name, "content": text})
 
@@ -391,44 +409,9 @@ def register_file_routes(app, state):
             return jsonify({"ok": False, "message": "File not found."}), 404
 
         file_path = spec["base_dir"] / safe_name
-        max_bytes = 2_000_000
-        try:
-            if safe_name.lower().endswith(".gz"):
-                # Stream-decompress and keep only a tail window for very large gzip logs.
-                tail_chunks = deque()
-                tail_len = 0
-                truncated = False
-                with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
-                    while True:
-                        chunk = f.read(64 * 1024)
-                        if not chunk:
-                            break
-                        tail_chunks.append(chunk)
-                        tail_len += len(chunk)
-                        while tail_len > max_bytes and tail_chunks:
-                            truncated = True
-                            overflow = tail_len - max_bytes
-                            head = tail_chunks[0]
-                            if len(head) <= overflow:
-                                tail_len -= len(head)
-                                tail_chunks.popleft()
-                            else:
-                                tail_chunks[0] = head[overflow:]
-                                tail_len -= overflow
-                text = "".join(tail_chunks)
-                if truncated:
-                    text = f"[truncated to last {max_bytes} characters]\n{text}"
-            else:
-                size = file_path.stat().st_size
-                if size > max_bytes:
-                    with file_path.open("rb") as f:
-                        f.seek(max(0, size - max_bytes))
-                        raw = f.read(max_bytes)
-                    text = "[truncated to last 2000000 bytes]\n" + raw.decode("utf-8", errors="ignore")
-                else:
-                    text = file_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            return jsonify({"ok": False, "message": "Unable to read file."}), 500
+        text, error_message = _read_view_file_content(file_path, safe_name)
+        if error_message:
+            return jsonify({"ok": False, "message": error_message}), 500
 
         return jsonify({"ok": True, "filename": safe_name, "content": text})
 
@@ -481,14 +464,7 @@ def register_file_routes(app, state):
             finally:
                 state["_decrement_log_stream_clients"](source_key)
 
-        return Response(
-            stream_with_context(generate()),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return _sse_response(generate())
 
     # Route: /log-text/<source>
     @app.route("/log-text/<source>")
@@ -576,11 +552,4 @@ def register_file_routes(app, state):
                     state["metrics_stream_client_count"] = max(0, state["metrics_stream_client_count"] - 1)
                     state["metrics_cache_cond"].notify_all()
 
-        return Response(
-            stream_with_context(generate()),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return _sse_response(generate())

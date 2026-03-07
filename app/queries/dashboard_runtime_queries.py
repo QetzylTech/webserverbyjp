@@ -458,8 +458,46 @@ def get_backups_status(ctx):
     return f"ready ({zip_count} zip files)"
 
 
+def _active_operation(op):
+    if not isinstance(op, dict):
+        return False
+    return str(op.get("status", "") or "").strip().lower() in {"intent", "in_progress"}
+
+
+def _transition_intent(ctx):
+    getter = getattr(ctx, "get_service_status_intent", None)
+    if not callable(getter):
+        return ""
+    try:
+        return str(getter() or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, latest_stop, latest_restore):
+    raw = str(service_status_raw or "inactive").strip().lower()
+    if raw == "active":
+        return raw
+    if _active_operation(latest_restore) or _active_operation(latest_stop):
+        return "shutting_down"
+    if _active_operation(latest_start):
+        return "starting"
+
+    intent = _transition_intent(ctx)
+    if intent == "shutting":
+        return "shutting_down"
+    if intent == "starting":
+        return "starting"
+    return raw
+
+
 def get_observed_state(ctx):
-    """Return runtime-observed snapshot from service/filesystem and latest operations."""
+    """Return runtime-observed snapshot from service/filesystem and latest operations.
+
+    This read path is intentionally cached. That reduces repeated DB and probe work, but it
+    also means start/stop intent may take about 1 second to appear on the dashboard even when
+    the control route has already recorded the intent and published fresh metrics.
+    """
     now = time.time()
     with _OBSERVED_STATE_CACHE_LOCK:
         cached_at = float(_OBSERVED_STATE_CACHE.get("cached_at", 0.0) or 0.0)
@@ -485,20 +523,17 @@ def get_observed_state(ctx):
             latest_stop = None
             latest_restore = None
 
-    def _active(op):
-        if not isinstance(op, dict):
-            return False
-        return str(op.get("status", "")).strip().lower() in {"intent", "in_progress"}
-
     # Boot/runtime precedence: if probe already sees the service as active,
-    # report Running immediately and ignore stale async intent rows.
-    if service_status_raw != "active":
-        if _active(latest_restore):
-            service_status_raw = "shutting_down"
-        elif _active(latest_stop):
-            service_status_raw = "shutting_down"
-        elif _active(latest_start):
-            service_status_raw = "starting"
+    # report Running immediately and ignore stale async intent rows. When the probe is
+    # still off/inactive, prefer active operation rows and then in-memory transition
+    # intent so the dashboard can show Starting or Shutting Down immediately.
+    service_status_raw = _resolve_observed_service_status(
+        ctx,
+        service_status_raw,
+        latest_start=latest_start,
+        latest_stop=latest_stop,
+        latest_restore=latest_restore,
+    )
     players_online = ctx.get_players_online()
     service_status_display = ctx.get_service_status_display(service_status_raw, players_online)
     observed_payload = {

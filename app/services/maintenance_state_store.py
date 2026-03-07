@@ -317,32 +317,56 @@ def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
     return rules
 
 
+def _cleanup_cached_config(cache_key, now):
+    with _CLEANUP_CONFIG_CACHE_LOCK:
+        cached = _CLEANUP_CONFIG_CACHE.get(cache_key)
+        if not isinstance(cached, dict):
+            return None
+        if float(cached.get("expires_at", 0.0) or 0.0) < now:
+            return None
+        payload = cached.get("config")
+        if not isinstance(payload, dict):
+            return None
+        return copy.deepcopy(payload)
+
+
+def _cleanup_store_cached_config(cache_key, config, now):
+    with _CLEANUP_CONFIG_CACHE_LOCK:
+        _CLEANUP_CONFIG_CACHE[cache_key] = {
+            "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
+            "config": copy.deepcopy(config),
+        }
+
+
+def _cleanup_apply_runtime_scope_overrides(ctx, cfg):
+    cfg["rules"] = _cleanup_apply_scope_from_state(ctx, cfg.get("rules", {}))
+    for scope_name in _CLEANUP_SCOPE_CHOICES:
+        scoped = _cleanup_get_scope_view(cfg, scope_name)
+        scoped_rules = _cleanup_apply_scope_from_state(ctx, scoped.get("rules", {}), scope=scope_name)
+        scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
+    return cfg
+
+
 def _cleanup_load_config(ctx):
     """Handle cleanup load config."""
     ctx = _as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
     cache_key = str(db_path)
     now = time.time()
-    with _CLEANUP_CONFIG_CACHE_LOCK:
-        cached = _CLEANUP_CONFIG_CACHE.get(cache_key)
-        if isinstance(cached, dict) and (float(cached.get("expires_at", 0.0)) >= now):
-            payload = cached.get("config")
-            if isinstance(payload, dict):
-                return copy.deepcopy(payload)
+
+    cached = _cleanup_cached_config(cache_key, now)
+    if cached is not None:
+        return cached
 
     default = _cleanup_default_config()
-    loaded = None
     try:
         loaded = state_store_service.load_cleanup_config(db_path)
     except Exception:
         loaded = None
     if not isinstance(loaded, dict):
-        with _CLEANUP_CONFIG_CACHE_LOCK:
-            _CLEANUP_CONFIG_CACHE[cache_key] = {
-                "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
-                "config": copy.deepcopy(default),
-            }
+        _cleanup_store_cached_config(cache_key, default, now)
         return copy.deepcopy(default)
+
     cfg = _cleanup_migrate_config_dict(ctx, loaded, default)
     try:
         # Persist migrated config once so future loads are clean and stable.
@@ -350,16 +374,8 @@ def _cleanup_load_config(ctx):
             _cleanup_save_config(ctx, cfg)
     except Exception:
         pass
-    cfg["rules"] = _cleanup_apply_scope_from_state(ctx, cfg.get("rules", {}))
-    for scope_name in _CLEANUP_SCOPE_CHOICES:
-        scoped = _cleanup_get_scope_view(cfg, scope_name)
-        scoped_rules = _cleanup_apply_scope_from_state(ctx, scoped.get("rules", {}), scope=scope_name)
-        scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
-    with _CLEANUP_CONFIG_CACHE_LOCK:
-        _CLEANUP_CONFIG_CACHE[cache_key] = {
-            "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
-            "config": copy.deepcopy(cfg),
-        }
+    cfg = _cleanup_apply_runtime_scope_overrides(ctx, cfg)
+    _cleanup_store_cached_config(cache_key, cfg, now)
     return copy.deepcopy(cfg)
 
 

@@ -174,6 +174,11 @@ The UI uses a hybrid model (push + pull):
 
 So it is not a single massive broadcast-only channel.
 
+Status transition timing note:
+- start/stop button handlers set intent immediately, but the visible dashboard state is still read through cached observed-state and metrics snapshots
+- default cache values (`_OBSERVED_OPS_CACHE_TTL_SECONDS=1.5`, `_OBSERVED_STATE_CACHE_TTL_SECONDS=1.25`, `/metrics` route cache `1.0s`, and client fast polling `1000ms`) can add about 1 second of delay before `Starting` or `Shutting Down` appears
+- `Running` can take a bit longer because the final state also waits on live service status plus Minecraft readiness/RCON checks
+
 9. Offline/recovery behavior
 
 The app includes an offline shell + recovery flow:

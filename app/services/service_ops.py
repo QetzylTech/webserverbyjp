@@ -12,6 +12,7 @@ from app.services.restore_workflow_helpers import is_backup_running
 ensure_startup_rcon_settings = _restore.ensure_startup_rcon_settings
 run_sudo = _restore.run_sudo
 write_session_start_time = _restore.write_session_start_time
+stop_service_systemd = _workflow.stop_service_systemd
 restore_world_backup = _restore.restore_world_backup
 append_restore_event = _restore.append_restore_event
 start_restore_job = _restore.start_restore_job
@@ -58,7 +59,13 @@ def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
 def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
     _backup._calls.run_backup_script = _calls.run_backup_script
     _backup.is_backup_running = is_backup_running
-    return _backup.run_backup_script(ctx, count_skip_as_success=count_skip_as_success, trigger=trigger)
+    return _backup.run_backup_script(
+        ctx,
+        count_skip_as_success=count_skip_as_success,
+        trigger=trigger,
+        snapshot_reader=get_backup_zip_snapshot,
+        snapshot_changed_fn=backup_snapshot_changed,
+    )
 
 
 def format_backup_time(ctx, timestamp):
@@ -86,6 +93,7 @@ __all__ = [
     "start_service_non_blocking",
     "run_sudo",
     "write_session_start_time",
+    "stop_service_systemd",
     "clear_session_start_time",
     "reset_backup_schedule_state",
     "get_session_start_time",
