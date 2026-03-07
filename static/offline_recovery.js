@@ -154,17 +154,12 @@
         window.EventSource = WrappedEventSource;
     }
 
-    async function bootOfflineState() {
+    function bootOfflineState() {
         if (!navigator.onLine) {
             setOfflineActive("navigator_offline");
             return;
         }
-        const ok = await probeServerReachable();
-        if (ok) {
-            clearOfflineActive();
-        } else {
-            setOfflineActive("server_unreachable");
-        }
+        clearOfflineActive();
     }
 
     function registerServiceWorker() {

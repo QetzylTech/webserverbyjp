@@ -19,6 +19,15 @@ Disallowed:
 - Service layer contains business/use-case logic only.
 - Web process should not own business side effects beyond request handling.
 
+## Frontend Runtime Rules
+
+- Shared shell behavior (theme, nav shell wiring, persistent client identity, shared metrics SSE ownership) must live in shared shell/bootstrap modules, not duplicated per page.
+- Page scripts should own page-specific mount/unmount logic only.
+- Live dissemination should prefer one shared client runtime owner per page shell, not duplicated SSE or polling owners for the same topic.
+- Shell-first hydration is the current contract: route handlers should render lightweight shells and leave live/page-specific data hydration to client runtime code or dedicated data endpoints.
+- The long-term frontend target is a persistent browser shell with client-side view switching; new work should not deepen dependence on full document reloads.
+
+
 ## Process Rules
 
 - Background loops/threads are started only through `app/services/worker_scheduler.py`.
@@ -29,6 +38,13 @@ Disallowed:
 - Configuration is parsed and validated in bootstrap.
 - Runtime receives typed, validated config values.
 - Services should use explicit/typed dependencies or context objects, not generic mega mutable state dicts.
+
+## Migration Direction (Persistent Shell)
+
+- Move toward one persistent browser shell, one shared client store, and one shared metrics SSE owner across navigation.
+- Refactor page boot scripts into explicit `mount()` / `unmount()` modules so navigation no longer depends on full page lifecycle hooks.
+- Add lightweight fragment/data endpoints where needed, but keep backend business logic in the existing layers.
+- Avoid "keep every page alive forever" implementations that leave hidden timers, fetchers, or duplicate DOM/runtime owners mounted.
 
 ## Enforcement Layers
 

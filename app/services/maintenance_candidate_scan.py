@@ -9,6 +9,7 @@ from pathlib import Path
 from app.ports import ports
 from app.services.maintenance_state_store import _cleanup_data_dir
 from app.services import file_inventory_index as file_inventory_index_service
+from app.services.maintenance_context import as_ctx
 from app.core import profiling
 
 _RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
@@ -16,26 +17,9 @@ _INDEX_LOCK = threading.Lock()
 _DIR_SIZE_CACHE = {}
 
 
-class _MappingCtx:
-    def __init__(self, data):
-        self._data = data if isinstance(data, dict) else {}
-
-    def __getattr__(self, name):
-        if name in self._data:
-            return self._data[name]
-        raise AttributeError(name)
-
-
-def _as_ctx(value):
-    if hasattr(value, "ctx"):
-        return value.ctx
-    if isinstance(value, dict):
-        return _MappingCtx(value)
-    return value
-
 
 def _backup_bucket(name):
-    """Handle backup bucket."""
+    """Classify a backup filename into its retention bucket."""
     lowered = (name or "").lower()
     if "_pre_restore" in lowered:
         return "pre_restore"
@@ -76,7 +60,7 @@ def _safe_dir_mtime_ns(path):
 
 
 def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, keep_session_days, keep_pre_restore_days, dry_run):
-    """Handle cleanup backups."""
+    """Apply retention rules to backup archives and return a preview/result payload."""
     now = time.time()
     files = _iter_backup_files(backup_dir)
     by_bucket = {"manual": [], "other": [], "auto": [], "session": [], "pre_restore": []}
@@ -155,7 +139,7 @@ def _iter_old_world_dirs(data_dir):
 
 
 def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_run):
-    """Handle cleanup stale worlds."""
+    """Prune archived world directories outside the active world and retention window."""
     now = time.time()
     world_dir = Path(world_dir).resolve()
     old_worlds_dir = data_dir / "old_worlds"
@@ -223,14 +207,14 @@ def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_
 
 
 def _cleanup_is_under(root, path):
-    """Handle cleanup is under."""
+    """Return whether a resolved path stays within the resolved root."""
     root = Path(root).resolve()
     path = Path(path).resolve()
     return path == root or root in path.parents
 
 
 def _cleanup_read_level_name(path):
-    """Handle cleanup read level name."""
+    """Read the configured level-name from a server.properties file."""
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
@@ -247,8 +231,8 @@ def _cleanup_read_level_name(path):
 
 
 def _cleanup_active_world_path(ctx):
-    """Handle cleanup active world path."""
-    ctx = _as_ctx(ctx)
+    """Resolve the currently active world path from server.properties candidates."""
+    ctx = as_ctx(ctx)
     for candidate in ctx.SERVER_PROPERTIES_CANDIDATES:
         if not Path(candidate).exists():
             continue
@@ -266,7 +250,7 @@ def _cleanup_active_world_path(ctx):
 
 
 def _cleanup_dir_size(path):
-    """Handle cleanup dir size."""
+    """Return a cached recursive directory size for cleanup previews."""
     with profiling.timed("maintenance.fs.dir_size"):
         target_path = Path(path)
         key = str(target_path.resolve())
@@ -289,8 +273,8 @@ def _cleanup_dir_size(path):
 
 
 def _cleanup_collect_candidates(ctx, cfg):
-    """Handle cleanup collect candidates."""
-    ctx = _as_ctx(ctx)
+    """Collect backup and world cleanup candidates for maintenance evaluation."""
+    ctx = as_ctx(ctx)
     with profiling.timed("maintenance.candidate_discovery.total"):
         backup_dir = Path(ctx.BACKUP_DIR).resolve()
         data_dir = _cleanup_data_dir(ctx).resolve()
@@ -370,4 +354,6 @@ def _cleanup_collect_candidates(ctx, cfg):
         candidates.sort(key=lambda row: row["mtime"], reverse=True)
         profiling.set_gauge("maintenance.candidate_count", len(candidates))
         return candidates
+
+
 

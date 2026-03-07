@@ -1,4 +1,4 @@
-﻿"""Thin launcher facade for composed web and worker apps."""
+"""Launch the configured web or worker process entrypoint."""
 
 from app.bootstrap.web_app import PROCESS_ROLE, run_server
 from app.bootstrap.worker_app import run_worker
@@ -16,3 +16,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

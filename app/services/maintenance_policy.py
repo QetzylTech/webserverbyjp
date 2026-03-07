@@ -10,7 +10,7 @@ from app.services.maintenance_state_store import (
 
 
 def _cleanup_validate_rules(raw_rules):
-    """Handle cleanup validate rules."""
+    """Validate and normalize a cleanup rules payload."""
     if not isinstance(raw_rules, dict):
         return False, "Rules payload must be an object."
     rules = _cleanup_default_config()["rules"]
@@ -107,7 +107,7 @@ def _cleanup_validate_rules(raw_rules):
 
 
 def _cleanup_schedule_due_now(schedule, now_local):
-    """Handle cleanup schedule due now."""
+    """Return whether a time-based cleanup schedule is due at the given local time."""
     if not schedule.get("enabled", True):
         return False
     if schedule.get("mode") != "time":
@@ -136,4 +136,5 @@ def _cleanup_schedule_due_now(schedule, now_local):
             anchor = now_local.date()
         return ((now_local.date() - anchor).days % every_n) == 0
     return False
+
 

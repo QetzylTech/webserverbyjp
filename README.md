@@ -3,6 +3,12 @@ Minecraft Web Dashboard Setup
 This project is a Flask dashboard (`mcweb.py`) that controls a Minecraft service, runs backups through `scripts/backup.sh`, and sends RCON commands.
 The app now uses a platform call layer (`app/platform/*`) for OS-specific command execution (service control, backup script invocation, etc.).
 
+Documentation index:
+- Architecture contract: `ARCHITECTURE.md`
+- CI gate order and commands: `doc/CI_QUALITY_GATES.md`
+- PR acceptance checklist (priority-ordered): `doc/PR_ACCEPTANCE_CHECKLIST.md`
+
+
 1. Project layout
 
 Recommended location:
@@ -190,6 +196,49 @@ Behavior:
 - if server/network is unavailable, a red offline banner appears
 - when signal is restored, banner turns green (`Signal restored. Reconnecting...`) for ~1 second, then page reloads
 - service worker caches static/offline assets; dynamic HTML pages are not cached
+
+9.1 Frontend architecture TODO (persistent shell / good version)
+
+Current state:
+- the app is still multi-page Flask with shell + hydrate behavior on individual pages
+- shared metrics/nav state is reused on the client, but full document navigations still tear down and recreate page runtimes
+- repeated page switches therefore still reopen `/metrics-stream`, rerun page boot code, and re-request page-specific data
+
+Target state:
+- keep one persistent browser shell alive across navigation
+- keep one shared client state store alive across navigation
+- keep one shared metrics SSE owner alive across navigation
+- switch page views client-side instead of doing full document reloads
+- mount only the active page view and hydrate it from the shared store/cache
+- treat server-rendered HTML as an app shell / fragment source, not as the primary repeated navigation payload
+
+Expected benefits:
+- faster perceived navigation
+- fewer repeated server-side template renders
+- fewer repeated SSE reconnects on page switches
+- fewer repeated bootstrap requests such as `/device-name-map`, `/log-text/<source>`, and `/file-page-items/<page>`
+- lower steady-state server load when users move between pages frequently
+
+Scope of rewrite:
+- mostly JavaScript/frontend architecture
+- moderate template restructuring
+- small backend support changes for lighter shell/fragment/data responses
+- core backend control/backup/restore logic should remain mostly unchanged
+
+Planned implementation phases:
+1. Introduce one persistent app shell with client-side navigation interception.
+2. Add a shared client store for metrics, nav attention, device-name mappings, log buffers, and file-list caches.
+3. Promote metrics SSE to a single long-lived shell-owned runtime connection.
+4. Refactor each page script into explicit `mount()` / `unmount()` modules instead of full-page boot scripts.
+5. Convert page routes/templates into shell-friendly fragments or lightweight data endpoints where needed.
+6. Migrate pages incrementally: `readme` or another simple page first, then `home`, then file/log pages, then maintenance.
+7. Remove legacy full-page boot assumptions and duplicate per-page timers/subscriptions once the persistent shell is complete.
+
+Guardrails for the good version:
+- do not keep every page's timers, fetchers, and DOM trees alive forever
+- keep shared runtime state alive, not uncontrolled duplicated page runtimes
+- prefer one SSE owner and one source of truth for live metrics/nav state
+- keep page-specific heavy data lazy and cacheable
 
 10. Nginx reverse proxy (optional, no `:8080` in URL)
 

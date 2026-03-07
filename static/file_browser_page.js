@@ -1,20 +1,9 @@
 (function () {
-        const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-        function applyThemePreference() {
-            document.documentElement.classList.toggle("theme-dark", darkModeQuery.matches);
-        }
-        applyThemePreference();
-        if (darkModeQuery.addEventListener) {
-            darkModeQuery.addEventListener("change", applyThemePreference);
-        } else if (darkModeQuery.addListener) {
-            darkModeQuery.addListener(applyThemePreference);
-        }
-
         const __MCWEB_FILES_CONFIG = window.__MCWEB_FILES_CONFIG || {};
         const csrfToken = __MCWEB_FILES_CONFIG.csrfToken ?? "";
         const http = window.MCWebHttp || null;
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
-        const RESTORE_AVAILABILITY_INTERVAL_MS = 10000;
+        const FILES_PAGE_LIST_CACHE_KEY = "mcweb.files.pageList.cache.v1";
         const FILES_LOG_LIST_CACHE_KEY = "mcweb.files.logList.cache.v1";
         const FILES_LOG_TEXT_CACHE_KEY = "mcweb.files.logText.cache.v1";
         const FILES_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -33,31 +22,6 @@
         sendFilePageHeartbeat();
         let fileHeartbeatTimer = window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
 
-        const toggle = document.getElementById("nav-toggle");
-        const sidebar = document.getElementById("side-nav");
-        const backdrop = document.getElementById("nav-backdrop");
-        if (!toggle || !sidebar || !backdrop) return;
-
-        function closeNav() {
-            sidebar.classList.remove("open");
-            backdrop.classList.remove("open");
-            toggle.classList.remove("nav-open");
-            toggle.setAttribute("aria-expanded", "false");
-        }
-
-        function toggleNav() {
-            const nextOpen = !sidebar.classList.contains("open");
-            sidebar.classList.toggle("open", nextOpen);
-            backdrop.classList.toggle("open", nextOpen);
-            toggle.classList.toggle("nav-open", nextOpen);
-            toggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
-        }
-
-        toggle.addEventListener("click", toggleNav);
-        backdrop.addEventListener("click", closeNav);
-        window.addEventListener("resize", function () {
-            if (window.innerWidth > 1100) closeNav();
-        });
 
         const errorBox = document.getElementById("download-error");
         const sortSelect = document.getElementById("file-sort");
@@ -66,6 +30,7 @@
         const logSourceToggles = Array.from(document.querySelectorAll(".log-source-toggle"));
         let fileList = document.querySelector(".list");
         const listEmptyDynamic = document.getElementById("list-empty-dynamic");
+        const listLoading = document.getElementById("list-loading");
         const passwordModal = document.getElementById("download-password-modal");
         const passwordTitle = document.getElementById("download-password-title");
         const passwordText = passwordModal ? passwordModal.querySelector(".modal-text") : null;
@@ -92,6 +57,8 @@
         const backupRestoreStart = document.getElementById("backup-restore-start");
         const backupRestoreCancel = document.getElementById("backup-restore-cancel");
         const pageId = document.body.getAttribute("data-page") || "files";
+        const listApiPath = String(__MCWEB_FILES_CONFIG.listApiPath || "").trim();
+        const emptyText = String(__MCWEB_FILES_CONFIG.emptyText || "No files found.").trim();
         const viewerWidthStorageKey = `mcweb.viewerWidth.${pageId}`;
         const viewerHeightStorageKey = `mcweb.viewerHeight.${pageId}`;
         const PANE_ANIMATION_DURATION_MS = 220;
@@ -107,8 +74,6 @@
         let restoreOperationPollTimer = null;
         let restoreOperationOpId = "";
         let restorePaneAlertTimer = null;
-        let restorePaneStatePollTimer = null;
-        let restoreAvailabilityPollTimer = null;
         let restoreServerIsOff = false;
         let activeViewedFilename = "";
         let activeRestoreFilename = "";
@@ -120,22 +85,20 @@
         let currentLogFileSource = "";
         let viewerCloseTimer = null;
         let fileListClickBound = false;
-        const restorePaneClientIdStorageKey = "mcweb.restorePaneClientId";
 
-        function getRestorePaneClientId() {
-            try {
-                const existing = String(window.localStorage.getItem(restorePaneClientIdStorageKey) || "").trim();
-                if (existing) return existing;
-            } catch (_) {}
-            const generated = (window.crypto && typeof window.crypto.randomUUID === "function")
+        function createFallbackClientId() {
+            return (window.crypto && typeof window.crypto.randomUUID === "function")
                 ? window.crypto.randomUUID()
                 : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-            try {
-                window.localStorage.setItem(restorePaneClientIdStorageKey, generated);
-            } catch (_) {}
-            return generated;
         }
-        const restorePaneClientId = getRestorePaneClientId();
+
+        const restorePaneClientId = (() => {
+            const shell = window.MCWebShell;
+            if (shell && typeof shell.getPersistentClientId === "function") {
+                return shell.getPersistentClientId("mcweb.restorePaneClientId");
+            }
+            return createFallbackClientId();
+        })();
 
         function readSessionJson(key) {
             try {
@@ -296,14 +259,39 @@
                 const target = event.target;
                 if (!(target instanceof Element)) return;
                 const viewBtn = target.closest(".file-view-btn");
-                if (!viewBtn) return;
-                event.preventDefault();
-                setDownloadError("");
-                const url = viewBtn.getAttribute("data-view-url") || "";
-                const downloadUrl = viewBtn.getAttribute("data-download-url") || "";
-                const filename = viewBtn.getAttribute("data-filename") || "File Viewer";
-                if (!url) return;
-                await runFileView({ url, downloadUrl, filename });
+                if (viewBtn) {
+                    event.preventDefault();
+                    setDownloadError("");
+                    const url = viewBtn.getAttribute("data-view-url") || "";
+                    const downloadUrl = viewBtn.getAttribute("data-download-url") || "";
+                    const filename = viewBtn.getAttribute("data-filename") || "File Viewer";
+                    if (!url) return;
+                    await runFileView({ url, downloadUrl, filename });
+                    return;
+                }
+                const downloadBtn = target.closest(".file-download-btn");
+                if (downloadBtn && !downloadBtn.classList.contains("file-download-link")) {
+                    event.preventDefault();
+                    setDownloadError("");
+                    const url = downloadBtn.getAttribute("data-download-url") || "";
+                    const filename = downloadBtn.getAttribute("data-filename") || "backup.zip";
+                    if (!url) return;
+                    openPasswordModal({ kind: "download", url, filename });
+                    return;
+                }
+                const restoreBtn = target.closest(".file-restore-btn");
+                if (restoreBtn) {
+                    event.preventDefault();
+                    if (!restoreServerIsOff) {
+                        setDownloadError("Restore is disabled while server is not Off.");
+                        return;
+                    }
+                    setDownloadError("");
+                    const filename = restoreBtn.getAttribute("data-filename") || "";
+                    const displayName = restoreBtn.getAttribute("data-display-name") || filename;
+                    if (!filename) return;
+                    openBackupRestorePane(filename, "local", displayName);
+                }
             });
             fileListClickBound = true;
         }
@@ -328,28 +316,6 @@
                 backupRestoreStart.disabled = restoreDisabled || !hasSelection;
                 backupRestoreStart.title = restoreDisabled ? blockedTitle : "";
             }
-        }
-
-        async function refreshRestoreAvailability() {
-            if (pageId !== "backups") return;
-            if (document.hidden) return;
-            try {
-                const response = await fetch("/metrics", {
-                    method: "GET",
-                    headers: { "X-Requested-With": "XMLHttpRequest" },
-                    cache: "no-store",
-                });
-                if (!response.ok) {
-                    restoreServerIsOff = false;
-                    syncRestoreAvailabilityUi();
-                    return;
-                }
-                const payload = await response.json().catch(() => ({}));
-                restoreServerIsOff = isServerOffForRestore(payload);
-            } catch (_) {
-                restoreServerIsOff = false;
-            }
-            syncRestoreAvailabilityUi();
         }
 
         function openBackupRestorePane(filename, source = "local", displayName = "") {
@@ -559,62 +525,34 @@
             restorePaneAlertTimer = window.setInterval(sendRestorePaneOpenSignal, 8000);
         }
 
-        function stopRestorePaneStatePolling() {
-            if (!restorePaneStatePollTimer) return;
-            window.clearInterval(restorePaneStatePollTimer);
-            restorePaneStatePollTimer = null;
-        }
+        function applyRestorePaneSharedState(navAttention) {
+            const payload = navAttention && typeof navAttention === "object" ? navAttention : {};
+            const active = !!payload.restore_pane_attention;
+            const openedBySelf = !!payload.restore_pane_opened_by_self;
+            const filename = String(payload.restore_pane_filename || "").trim();
+            const openerName = String(payload.restore_pane_opened_by_name || "").trim();
+            remoteRestoreActive = active && !!filename && !openedBySelf;
+            remoteRestoreFilename = remoteRestoreActive ? filename : "";
+            remoteRestoreOpenedByName = remoteRestoreActive ? (openerName || "unknown") : "";
 
-        async function refreshRestorePaneSharedState() {
-            if (pageId !== "backups") return;
-            if (document.hidden) return;
-            try {
-                const response = await fetch("/maintenance/nav-alert/state", {
-                    method: "GET",
-                    headers: {
-                        "X-Requested-With": "XMLHttpRequest",
-                        "X-MCWEB-Client-Id": restorePaneClientId,
-                    },
-                    cache: "no-store",
-                });
-                if (!response.ok) return;
-                const payload = await response.json().catch(() => ({}));
-                const active = !!payload.restore_pane_attention;
-                const openedBySelf = !!payload.restore_pane_opened_by_self;
-                const filename = String(payload.restore_pane_filename || "").trim();
-                const openerName = String(payload.restore_pane_opened_by_name || "").trim();
-                remoteRestoreActive = active && !!filename && !openedBySelf;
-                remoteRestoreFilename = remoteRestoreActive ? filename : "";
-                remoteRestoreOpenedByName = remoteRestoreActive ? (openerName || "unknown") : "";
-
-                if (!remoteRestoreActive && restorePaneForcedByRemote) {
-                    restorePaneForcedByRemote = false;
-                    closeViewer();
-                }
-                applyActiveFileRowHighlight();
-            } catch (_) {
-                // Best-effort shared state refresh.
+            if (!remoteRestoreActive && restorePaneForcedByRemote) {
+                restorePaneForcedByRemote = false;
+                closeViewer();
             }
+            applyActiveFileRowHighlight();
         }
 
-        function startRestorePaneStatePolling() {
-            if (pageId !== "backups") return;
-            refreshRestorePaneSharedState();
-            if (restorePaneStatePollTimer) return;
-            restorePaneStatePollTimer = window.setInterval(refreshRestorePaneSharedState, 5000);
+        function applyBackupMetricsSnapshot(payload) {
+            if (!payload || typeof payload !== "object") return;
+            restoreServerIsOff = isServerOffForRestore(payload);
+            syncRestoreAvailabilityUi();
+            applyRestorePaneSharedState(payload.nav_attention || null);
         }
 
-        function stopRestoreAvailabilityPolling() {
-            if (!restoreAvailabilityPollTimer) return;
-            window.clearInterval(restoreAvailabilityPollTimer);
-            restoreAvailabilityPollTimer = null;
-        }
-
-        function startRestoreAvailabilityPolling() {
-            if (pageId !== "backups") return;
-            refreshRestoreAvailability();
-            if (restoreAvailabilityPollTimer) return;
-            restoreAvailabilityPollTimer = window.setInterval(refreshRestoreAvailability, RESTORE_AVAILABILITY_INTERVAL_MS);
+        function handleSharedMetricsSnapshot(event) {
+            const payload = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+            if (!payload) return;
+            applyBackupMetricsSnapshot(payload);
         }
 
         function stopFileHeartbeatPolling() {
@@ -632,18 +570,12 @@
         function handleVisibilityStateChange() {
             if (document.hidden) {
                 stopFileHeartbeatPolling();
-                stopRestoreAvailabilityPolling();
-                stopRestorePaneStatePolling();
                 stopRestorePaneAlertHeartbeat();
                 return;
             }
             startFileHeartbeatPolling();
-            if (pageId === "backups") {
-                startRestorePaneStatePolling();
-                startRestoreAvailabilityPolling();
-                if (selectedRestoreFilename) {
-                    startRestorePaneAlertHeartbeat();
-                }
+            if (pageId === "backups" && selectedRestoreFilename) {
+                startRestorePaneAlertHeartbeat();
             }
         }
 
@@ -718,19 +650,148 @@
 </li>`.trim();
         }
 
+        function setListLoadingState(isLoading) {
+            if (listLoading) {
+                listLoading.style.display = isLoading ? "block" : "none";
+            }
+        }
+
+        function toggleEmptyState(hasRows) {
+            if (listEmptyDynamic) {
+                listEmptyDynamic.textContent = emptyText || listEmptyDynamic.textContent || "No files found.";
+                listEmptyDynamic.style.display = hasRows ? "none" : "block";
+            }
+            const emptyBlock = document.querySelector(".pane-primary .empty");
+            if (emptyBlock && emptyBlock !== listLoading && emptyBlock !== listEmptyDynamic) {
+                emptyBlock.style.display = hasRows ? "none" : "block";
+            }
+        }
+
+        function listHasRows() {
+            return !!fileList && !!fileList.querySelector("li");
+        }
+
+        function handleListLoadFailure(message) {
+            setListLoadingState(false);
+            setDownloadError(message || "Failed to load file list.");
+            toggleEmptyState(listHasRows());
+        }
+
+        function buildStandardFileItemRow(item, payload) {
+            const safeName = String(item?.name || "").trim();
+            if (!safeName) return "";
+            const nameHtml = escapeHtml(safeName);
+            const nameLowerHtml = escapeHtml(safeName.toLowerCase());
+            const encodedFile = encodeURIComponent(safeName);
+            const downloadBase = String(payload?.download_base || "");
+            const viewBase = String(payload?.view_base || "");
+            const downloadUrl = downloadBase ? `${downloadBase}/${encodedFile}` : "#";
+            const viewUrl = viewBase ? `${viewBase}/${encodedFile}` : "";
+            const mtime = Number(item?.mtime || 0);
+            const sizeBytes = Number(item?.size_bytes || 0);
+            const modified = escapeHtml(String(item?.modified || ""));
+            const sizeText = escapeHtml(String(item?.size_text || ""));
+            if (pageId === "backups") {
+                const restoreName = escapeHtml(String(item?.restore_name || item?.name || ""));
+                const downloadName = escapeHtml(String(item?.download_name || item?.name || ""));
+                return `
+<li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
+    <span class="file-name">${nameHtml}</span>
+    <div class="file-actions">
+        <button
+            class="file-action-btn file-download-btn"
+            type="button"
+            data-download-url="${downloadUrl}"
+            data-filename="${downloadName}"
+        >Download</button>
+        <button
+            class="file-action-btn file-restore-btn"
+            type="button"
+            data-filename="${restoreName}"
+            data-display-name="${nameHtml}"
+        >Restore</button>
+    </div>
+    <span class="meta">${modified} | ${sizeText}</span>
+</li>`.trim();
+            }
+            return `
+<li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
+    <span class="file-name">${nameHtml}</span>
+    <div class="file-actions">
+        <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
+        <button
+            class="file-action-btn file-view-btn"
+            type="button"
+            data-view-url="${viewUrl}"
+            data-download-url="${downloadUrl}"
+            data-filename="${nameHtml}"
+        >View</button>
+    </div>
+    <span class="meta">${modified} | ${sizeText}</span>
+</li>`.trim();
+        }
+
+        function renderStandardFileList(payload) {
+            const list = ensureFileListElement();
+            if (!list) return;
+            const items = Array.isArray(payload?.items) ? payload.items : [];
+            const rows = items.map((item) => buildStandardFileItemRow(item, payload)).filter(Boolean);
+            list.innerHTML = rows.join("\n");
+            setListLoadingState(false);
+            toggleEmptyState(rows.length > 0);
+            if (pageId === "backups") {
+                applyBackupSortAndFilter();
+            } else {
+                applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
+            }
+            applyActiveFileRowHighlight();
+        }
+
+        async function loadStandardFileList() {
+            if (!listApiPath || pageId === "minecraft_logs") return;
+            const cacheKey = `${pageId}:${listApiPath}`;
+            const listCache = readSessionJson(FILES_PAGE_LIST_CACHE_KEY);
+            const cachedEntry = getFreshCacheEntry(listCache, cacheKey);
+            if (cachedEntry && cachedEntry.payload) {
+                renderStandardFileList(cachedEntry.payload);
+            } else {
+                setListLoadingState(true);
+            }
+            let response;
+            try {
+                response = await fetch(listApiPath, {
+                    method: "GET",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store",
+                });
+            } catch (_) {
+                handleListLoadFailure("Failed to load file list.");
+                return;
+            }
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (_) {
+                payload = null;
+            }
+            if (!response.ok || !payload || payload.ok === false) {
+                handleListLoadFailure((payload && payload.message) ? payload.message : "Failed to load file list.");
+                return;
+            }
+            setDownloadError("");
+            renderStandardFileList(payload);
+            listCache[cacheKey] = { ts: Date.now(), payload };
+            writeSessionJson(FILES_PAGE_LIST_CACHE_KEY, listCache);
+        }
+
         function renderLogFileList(payload) {
             const list = ensureFileListElement();
             if (!list) return;
             const items = Array.isArray(payload?.items) ? payload.items : [];
             const rows = items.map((item) => buildLogFileItemRow(item, payload)).filter(Boolean);
             list.innerHTML = rows.join("\n");
-            if (listEmptyDynamic) {
-                listEmptyDynamic.style.display = rows.length > 0 ? "none" : "block";
-            }
-            const emptyBlock = document.querySelector(".pane-primary .empty");
-            if (emptyBlock) {
-                emptyBlock.style.display = rows.length > 0 ? "none" : "block";
-            }
+            toggleEmptyState(rows.length > 0);
+            setListLoadingState(false);
             applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
             setActiveViewedFilename("");
             applyActiveFileRowHighlight();
@@ -745,6 +806,8 @@
                 currentLogFileSource = String(cachedListEntry.payload.source || sourceKey);
                 setActiveLogSource(currentLogFileSource);
                 renderLogFileList(cachedListEntry.payload);
+            } else {
+                setListLoadingState(true);
             }
             let response;
             try {
@@ -754,7 +817,7 @@
                     cache: "no-store",
                 });
             } catch (_) {
-                setDownloadError("Failed to load log file list.");
+                handleListLoadFailure("Failed to load log file list.");
                 return;
             }
             let payload = null;
@@ -764,7 +827,7 @@
                 payload = null;
             }
             if (!response.ok || !payload || payload.ok === false) {
-                setDownloadError((payload && payload.message) ? payload.message : "Failed to load log file list.");
+                handleListLoadFailure((payload && payload.message) ? payload.message : "Failed to load log file list.");
                 return;
             }
             setDownloadError("");
@@ -1526,38 +1589,21 @@
             });
         }
 
-        document.querySelectorAll(".file-download-btn").forEach((btn) => {
-            btn.addEventListener("click", async () => {
-                setDownloadError("");
-                const url = btn.getAttribute("data-download-url") || "";
-                const filename = btn.getAttribute("data-filename") || "backup.zip";
-                if (!url) return;
-                openPasswordModal({ kind: "download", url, filename });
-            });
-        });
-
-        document.querySelectorAll(".file-restore-btn").forEach((btn) => {
-            btn.addEventListener("click", () => {
-                if (!restoreServerIsOff) {
-                    setDownloadError("Restore is disabled while server is not Off.");
-                    return;
-                }
-                setDownloadError("");
-                const filename = btn.getAttribute("data-filename") || "";
-                const displayName = btn.getAttribute("data-display-name") || filename;
-                if (!filename) return;
-                openBackupRestorePane(filename, "local", displayName);
-            });
-        });
         if (pageId === "backups") {
             syncRestoreAvailabilityUi();
-            startRestoreAvailabilityPolling();
-            startRestorePaneStatePolling();
-            window.addEventListener("beforeunload", stopRestorePaneStatePolling);
+            window.addEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
+            if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
+                applyBackupMetricsSnapshot(window.__MCWEB_LAST_METRICS_SNAPSHOT);
+            }
             window.addEventListener("beforeunload", stopRestoreOperationPolling);
-            window.addEventListener("beforeunload", stopRestoreAvailabilityPolling);
+        }
+        if (pageId === "backups" || pageId === "crash_logs") {
+            loadStandardFileList();
         }
         document.addEventListener("visibilitychange", handleVisibilityStateChange);
+        window.addEventListener("pagehide", () => {
+            window.removeEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
+        });
         ensureFileListClickBinding();
         logSourceToggles.forEach((btn) => {
             btn.addEventListener("click", async () => {

@@ -31,7 +31,7 @@ class NavAlertIntentTests(unittest.TestCase):
             },
         }
         with patch.object(home_routes, "render_template", return_value="home"), \
-             patch.object(home_routes, "register_file_routes", lambda app, state: None), \
+             patch.object(home_routes, "register_file_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
              patch.object(home_routes, "register_maintenance_routes", lambda app, state: None), \
              patch.object(home_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):
             home_routes.register_routes(app, state)
@@ -63,6 +63,13 @@ class NavAlertIntentTests(unittest.TestCase):
         client = app.test_client()
         client.post("/maintenance/nav-alert/restore-pane-open", json={"filename": "x.zip", "client_id": "same"})
         payload = client.get("/maintenance/nav-alert/state", headers={"X-MCWEB-Client-Id": "same"}).get_json()
+        self.assertTrue(payload["restore_pane_opened_by_self"])
+
+    def test_nav_alert_state_detects_opened_by_self_via_query_param_client_id(self):
+        app, _ = self._build_app(device_map={"10.0.0.2": "Alice-Laptop"}, service_status="Off")
+        client = app.test_client()
+        client.post("/maintenance/nav-alert/restore-pane-open", json={"filename": "x.zip", "client_id": "same"})
+        payload = client.get("/maintenance/nav-alert/state?client_id=same").get_json()
         self.assertTrue(payload["restore_pane_opened_by_self"])
 
     def test_nav_alert_state_home_attention_color_by_service_status(self):

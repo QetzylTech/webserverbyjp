@@ -1,4 +1,4 @@
-"""File/log/metrics route registration for the MC web dashboard."""
+"""File, log, and metrics routes for the shell-first MC web dashboard."""
 from collections import deque
 import copy
 import gzip
@@ -75,9 +75,24 @@ def _read_view_file_content(file_path, safe_name, *, max_bytes=2_000_000):
     except OSError:
         return None, "Unable to read file."
 
-def register_file_routes(app, state):
+def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     """Register file browsing, log streaming, and metrics routes."""
     process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
+
+    def _attach_nav_attention(payload):
+        if not isinstance(payload, dict):
+            return payload
+        get_nav_alert_state = get_nav_alert_state_from_request
+        if not callable(get_nav_alert_state):
+            return payload
+        merged = dict(payload)
+        try:
+            nav_attention = get_nav_alert_state()
+        except Exception:
+            nav_attention = {}
+        if isinstance(nav_attention, dict) and nav_attention:
+            merged["nav_attention"] = dict(nav_attention)
+        return merged
 
     def _state_db_path():
         path = state.get("APP_STATE_DB_PATH")
@@ -194,7 +209,7 @@ def register_file_routes(app, state):
     # Route: /backups
     @app.route("/backups")
     def backups_page():
-        """Runtime helper backups_page."""
+        """Render the backup page shell; the file list hydrates client-side."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         return render_template(
@@ -203,9 +218,10 @@ def register_file_routes(app, state):
             page_title="Backup & Restore",
             panel_title="Backup & Restore",
             panel_hint="Latest to oldest from backup zips and auto snapshots",
-            items=state["get_cached_file_page_items"]("backups"),
+            items=[],
             download_base="/download/backups",
             empty_text="No backups or snapshots found.",
+            list_api_path="/file-page-items/backups",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
@@ -213,7 +229,7 @@ def register_file_routes(app, state):
     # Route: /crash-logs
     @app.route("/crash-logs")
     def crash_logs_page():
-        """Runtime helper crash_logs_page."""
+        """Render the crash-log page shell; the file list hydrates client-side."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         return render_template(
@@ -222,9 +238,10 @@ def register_file_routes(app, state):
             page_title="Crash Reports",
             panel_title="Crash Reports",
             panel_hint=f"Latest to oldest from {state['CRASH_REPORTS_DIR']}",
-            items=state["get_cached_file_page_items"]("crash_logs"),
+            items=[],
             download_base="/download/crash-logs",
             empty_text="No crash reports found.",
+            list_api_path="/file-page-items/crash_logs",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
@@ -232,7 +249,7 @@ def register_file_routes(app, state):
     # Route: /minecraft-logs
     @app.route("/minecraft-logs")
     def minecraft_logs_page():
-        """Runtime helper minecraft_logs_page."""
+        """Render the log-browser shell; log file inventories hydrate client-side."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         return render_template(
@@ -241,9 +258,10 @@ def register_file_routes(app, state):
             page_title="Log Files",
             panel_title="Log Files",
             panel_hint=f"Latest to oldest from {state['MINECRAFT_LOGS_DIR']}",
-            items=state["get_cached_file_page_items"]("minecraft_logs"),
+            items=[],
             download_base="/download/minecraft-logs",
             empty_text="No log files (.log/.gz) found.",
+            list_api_path="/log-files/minecraft",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
@@ -251,10 +269,34 @@ def register_file_routes(app, state):
     # Route: /file-page-heartbeat
     @app.route("/file-page-heartbeat", methods=["POST"])
     def file_page_heartbeat():
-        """Runtime helper file_page_heartbeat."""
+        """Refresh the activity marker used by the file-page cache worker."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         return ("", 204)
+
+    # Route: /file-page-items/<page_name>
+    @app.route("/file-page-items/<page_name>")
+    def file_page_items(page_name):
+        """Return one shell-hydration payload for backup or crash-log file pages."""
+        state["ensure_file_page_cache_refresher_started"]()
+        state["_mark_file_page_client_active"]()
+        normalized = str(page_name or "").strip().lower()
+        payloads = {
+            "backups": {
+                "items": state["get_cached_file_page_items"]("backups"),
+                "download_base": "/download/backups",
+                "view_base": "",
+            },
+            "crash_logs": {
+                "items": state["get_cached_file_page_items"]("crash_logs"),
+                "download_base": "/download/crash-logs",
+                "view_base": "/view-file/crash_logs",
+            },
+        }
+        payload = payloads.get(normalized)
+        if payload is None:
+            return jsonify({"ok": False, "message": "Invalid file page source."}), 404
+        return jsonify({"ok": True, "page": normalized, **payload})
 
     # Route: /download/backups/<path:filename>
     @app.route("/download/backups/<path:filename>", methods=["POST"])
@@ -355,7 +397,7 @@ def register_file_routes(app, state):
     # Route: /log-files/<source>
     @app.route("/log-files/<source>")
     def list_log_files(source):
-        """Return file-list payload for one log source."""
+        """Return one log-file inventory payload for the shell-hydrated log browser."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         spec = _log_file_source_spec(source)
@@ -520,7 +562,7 @@ def register_file_routes(app, state):
                     latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
                     last_event_id = int(latest_event.get("id", 0) or 0)
                     if isinstance(latest_snapshot, dict):
-                        payload = json.dumps(latest_snapshot, separators=(",", ":"))
+                        payload = json.dumps(_attach_nav_attention(latest_snapshot), separators=(",", ":"))
                         yield f"data: {payload}\n\n"
             try:
                 while True:
@@ -541,7 +583,7 @@ def register_file_routes(app, state):
                                 payload_obj = row.get("payload", {}) if isinstance(row, dict) else {}
                                 snapshot = payload_obj.get("snapshot") if isinstance(payload_obj, dict) else None
                                 if isinstance(snapshot, dict):
-                                    payload = json.dumps(snapshot, separators=(",", ":"))
+                                    payload = json.dumps(_attach_nav_attention(snapshot), separators=(",", ":"))
                                     yield f"data: {payload}\n\n"
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
                             continue

@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import jsonify, request
 from app.core import state_store as state_store_service
 from app.ports import ports
+from app.services.maintenance_context import as_ctx
 
 _CLEANUP_SCHEMA_VERSION = 1
 _CLEANUP_SCOPE_CHOICES = {"backups", "stale_worlds"}
@@ -30,26 +31,9 @@ _CLEANUP_CONFIG_CACHE_LOCK = threading.Lock()
 _CLEANUP_CONFIG_CACHE = {}
 
 
-class _MappingCtx:
-    def __init__(self, data):
-        self._data = data if isinstance(data, dict) else {}
-
-    def __getattr__(self, name):
-        if name in self._data:
-            return self._data[name]
-        raise AttributeError(name)
-
-
-def _as_ctx(value):
-    if hasattr(value, "ctx"):
-        return value.ctx
-    if isinstance(value, dict):
-        return _MappingCtx(value)
-    return value
-
 
 def _safe_int(value, default_value, minimum=0, maximum=10_000):
-    """Handle safe int."""
+    """Parse an integer and clamp it to the configured bounds."""
     try:
         parsed = int(str(value).strip())
     except (TypeError, ValueError):
@@ -62,32 +46,32 @@ def _safe_int(value, default_value, minimum=0, maximum=10_000):
 
 
 def _cleanup_data_dir(ctx):
-    """Handle cleanup data dir."""
-    ctx = _as_ctx(ctx)
+    """Return the app data directory used for maintenance state files."""
+    ctx = as_ctx(ctx)
     return Path(ctx.session_state.session_file).parent
 
 
 def _cleanup_db_path(ctx):
     """Return sqlite state-db path for structured maintenance records."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     return Path(ctx.APP_STATE_DB_PATH)
 
 
 def _cleanup_non_normal_path(ctx):
-    """Handle cleanup non normal path."""
-    ctx = _as_ctx(ctx)
+    """Return the path used for non-normal cleanup run state."""
+    ctx = as_ctx(ctx)
     return _cleanup_data_dir(ctx) / "cleanup_non_normal.txt"
 
 
 def _cleanup_log_path(ctx):
-    """Handle cleanup log path."""
-    ctx = _as_ctx(ctx)
+    """Return the maintenance log file path."""
+    ctx = as_ctx(ctx)
     return Path(ctx.MCWEB_LOG_FILE).parent / "cleanup.log"
 
 
 def _cleanup_now_iso(ctx):
-    """Handle cleanup now iso."""
-    ctx = _as_ctx(ctx)
+    """Return the current display-tz timestamp in ISO format."""
+    ctx = as_ctx(ctx)
     try:
         tz = ctx.DISPLAY_TZ
     except Exception:
@@ -96,7 +80,7 @@ def _cleanup_now_iso(ctx):
 
 
 def _cleanup_atomic_write_json(path, payload):
-    """Handle cleanup atomic write json."""
+    """Atomically write JSON maintenance state to disk."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -105,7 +89,7 @@ def _cleanup_atomic_write_json(path, payload):
 
 
 def _cleanup_atomic_write_text(path, text):
-    """Handle cleanup atomic write text."""
+    """Atomically write plain-text maintenance state to disk."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -114,7 +98,7 @@ def _cleanup_atomic_write_text(path, text):
 
 
 def _cleanup_default_config():
-    """Handle cleanup default config."""
+    """Return the default maintenance configuration payload."""
     return {
         "schema_version": _CLEANUP_SCHEMA_VERSION,
         "rules": {
@@ -219,7 +203,7 @@ def _cleanup_get_scope_view(cfg, scope):
 
 def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
     """Normalize cleanup config into the current schema."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     cfg = default_cfg
     loaded_rules = loaded.get("rules") if isinstance(loaded, dict) else None
     if isinstance(loaded_rules, dict):
@@ -291,18 +275,18 @@ def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
 
 
 def _cleanup_default_non_normal():
-    """Handle cleanup default non normal."""
+    """Return the default non-normal cleanup run payload."""
     return {"missed_runs": [], "last_ack_at": "", "last_ack_by": ""}
 
 
 def _cleanup_default_history():
-    """Handle cleanup default history."""
+    """Return the default cleanup history payload."""
     return {"runs": []}
 
 
 def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
     """Apply environment-defined safety/scope values onto rules."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     categories = rules.setdefault("categories", {})
     guards = rules.setdefault("guards", {})
     if scope:
@@ -348,8 +332,8 @@ def _cleanup_apply_runtime_scope_overrides(ctx, cfg):
 
 
 def _cleanup_load_config(ctx):
-    """Handle cleanup load config."""
-    ctx = _as_ctx(ctx)
+    """Load and cache the maintenance configuration from persistent storage."""
+    ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
     cache_key = str(db_path)
     now = time.time()
@@ -381,7 +365,7 @@ def _cleanup_load_config(ctx):
 
 def _cleanup_save_config(ctx, payload):
     """Persist cleanup config to sqlite."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
     state_store_service.save_cleanup_config(db_path, payload)
     cache_key = str(db_path)
@@ -390,8 +374,8 @@ def _cleanup_save_config(ctx, payload):
 
 
 def _cleanup_load_non_normal(ctx):
-    """Handle cleanup load non normal."""
-    ctx = _as_ctx(ctx)
+    """Load the non-normal cleanup run payload from disk."""
+    ctx = as_ctx(ctx)
     path = _cleanup_non_normal_path(ctx)
     default = _cleanup_default_non_normal()
     if not path.exists():
@@ -412,8 +396,8 @@ def _cleanup_load_non_normal(ctx):
 
 
 def _cleanup_get_client_ip(ctx):
-    """Handle cleanup get client ip."""
-    ctx = _as_ctx(ctx)
+    """Resolve the client IP for maintenance actions."""
+    ctx = as_ctx(ctx)
     client_ip = ""
     try:
         client_ip = (ctx._get_client_ip() or "").strip()
@@ -429,8 +413,8 @@ def _cleanup_get_client_ip(ctx):
 
 
 def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
-    """Handle cleanup log."""
-    ctx = _as_ctx(ctx)
+    """Append one maintenance log record to disk."""
+    ctx = as_ctx(ctx)
     stamp = _cleanup_now_iso(ctx)
     line = f"{stamp} | what={what} | why={why} | trigger={trigger} | result={result}"
     if details:
@@ -446,7 +430,7 @@ def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
 
 
 def _cleanup_safe_used_percent(path):
-    """Handle cleanup safe used percent."""
+    """Return used-percent and capacity numbers for the backup filesystem."""
     try:
         total, _used, free = ports.filesystem.disk_usage(path)
     except OSError:
@@ -460,8 +444,8 @@ def _cleanup_safe_used_percent(path):
 
 
 def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):
-    """Handle cleanup mark missed run."""
-    ctx = _as_ctx(ctx)
+    """Record a missed cleanup run for scheduler diagnostics."""
+    ctx = as_ctx(ctx)
     data = _cleanup_load_non_normal(ctx)
     event = {
         "at": _cleanup_now_iso(ctx),
@@ -475,8 +459,8 @@ def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):
 
 
 def _cleanup_load_history(ctx):
-    """Handle cleanup load history."""
-    ctx = _as_ctx(ctx)
+    """Load cleanup run history from persistent storage."""
+    ctx = as_ctx(ctx)
     default = _cleanup_default_history()
     db_path = _cleanup_db_path(ctx)
     try:
@@ -488,7 +472,7 @@ def _cleanup_load_history(ctx):
 
 def _cleanup_save_history(ctx, payload):
     """Persist cleanup history document to sqlite."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
     runs = payload.get("runs") if isinstance(payload, dict) else []
     state_store_service.save_cleanup_history_runs(db_path, runs, max_rows=500)
@@ -509,7 +493,7 @@ def _cleanup_append_history(
     scope="",
 ):
     """Append cleanup run history entry."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     item = {
         "at": _cleanup_now_iso(ctx),
         "trigger": str(trigger),
@@ -528,10 +512,12 @@ def _cleanup_append_history(
 
 
 def _cleanup_error(code, extra=None, status=400):
-    """Handle cleanup error."""
+    """Build a consistent error response payload for maintenance endpoints."""
     payload = {"ok": False, "error_code": code, "message": _CLEANUP_ERROR_MESSAGES.get(code, "Cleanup operation failed.")}
     if extra is not None:
         payload["details"] = extra
     return jsonify(payload), status
+
+
 
 

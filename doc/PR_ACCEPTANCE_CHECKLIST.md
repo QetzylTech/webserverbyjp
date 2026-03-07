@@ -38,6 +38,8 @@ Use this checklist in every PR review. `P0` is a hard stop: if any `P0` item fai
 - [ ] Home, backups, logs, crash, maintenance, instructions views remain responsive.
 - [ ] UI updates for stats/logs/actions are timely and do not block request threads.
 - [ ] Route handlers avoid new long blocking work in request path.
+- [ ] Shared shell behavior stays centralized (theme/nav/client identity/shared SSE ownership are not re-duplicated per page).
+- [ ] New client-side navigation/hydration work does not introduce duplicate timers, duplicate SSE owners, or hidden-page background churn.
 
 ## P5 Information Dissemination
 
@@ -69,6 +71,8 @@ Use this checklist in every PR review. `P0` is a hard stop: if any `P0` item fai
 - [ ] No OS logic outside platform/infrastructure adapters.
 - [ ] Services do not regress to mega mutable state dict parameters.
 - [ ] Worker lifecycle ownership remains centralized.
+- [ ] Shell-first rendering contract remains clear: lightweight route shells, client hydration, and page-specific data endpoints are still separated cleanly.
+- [ ] If a persistent-shell/client-router step was added, mount/unmount ownership and shared runtime ownership are explicit and bounded.
 
 ## P9 Access Control
 

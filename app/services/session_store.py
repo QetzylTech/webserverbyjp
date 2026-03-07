@@ -1,4 +1,4 @@
-"""Session store/service wrappers."""
+"""Session tracking helpers layered over the control-plane service."""
 def ensure_session_file(control_plane_service, ctx):
     """Delegate session file presence/creation to control-plane service."""
     return control_plane_service.ensure_session_file(ctx)
@@ -38,3 +38,4 @@ def ensure_session_tracking_initialized(session_state, initialize_fn):
             return
         initialize_fn()
         session_state.initialized = True
+

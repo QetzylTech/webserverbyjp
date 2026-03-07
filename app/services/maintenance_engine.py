@@ -14,27 +14,11 @@ from app.services.maintenance_state_store import (
     _safe_int,
 )
 from app.services.maintenance_candidate_scan import _backup_bucket, _cleanup_collect_candidates
+from app.services.maintenance_context import as_ctx
 from app.core import profiling
 
 _cleanup_run_lock = threading.Lock()
 
-
-class _MappingCtx:
-    def __init__(self, data):
-        self._data = data if isinstance(data, dict) else {}
-
-    def __getattr__(self, name):
-        if name in self._data:
-            return self._data[name]
-        raise AttributeError(name)
-
-
-def _as_ctx(value):
-    if hasattr(value, "ctx"):
-        return value.ctx
-    if isinstance(value, dict):
-        return _MappingCtx(value)
-    return value
 
 
 def _group_by_category(candidates):
@@ -123,7 +107,7 @@ def _add_count_targets(by_category, rules, reasons_map, to_delete):
 
 def _add_space_targets(ctx, cfg, eligible, rules, reasons_map, to_delete):
     """Add space targets."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     space_rule = rules.get("space", {})
     used_trigger = _safe_int(space_rule.get("used_trigger_percent", 80), 80, minimum=50, maximum=100)
     hysteresis = _safe_int(space_rule.get("hysteresis_percent", 5), 5, minimum=1, maximum=30)
@@ -176,7 +160,7 @@ def _add_space_targets(ctx, cfg, eligible, rules, reasons_map, to_delete):
 
 def _space_rule_gate(ctx, cfg, rules):
     """Return whether space-based cleanup gate is open."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     space_rule = rules.get("space", {})
     if not space_rule.get("enabled", True):
         return True
@@ -221,7 +205,7 @@ def _bucket_keep_limit(bucket, count_rule):
 
 def _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete):
     """Add backup targets that satisfy all enabled rules."""
-    ctx = _as_ctx(ctx)
+    ctx = as_ctx(ctx)
     backup_rows = [row for row in candidates if row["eligible"] and row.get("category") == "backup_zip"]
     if not backup_rows:
         return
@@ -285,7 +269,7 @@ def _apply_blast_radius_cap(ordered, eligible_count, rules):
 
 
 def _cleanup_delete_target(path, is_dir):
-    """Handle cleanup delete target."""
+    """Delete one cleanup target, dispatching to file or directory removal."""
     target = Path(path)
     if is_dir:
         ports.filesystem.rmtree(target)
@@ -406,8 +390,8 @@ def _build_cleanup_result(*, candidates, reasons_map, selected_paths, ordered, c
 
 
 def _cleanup_evaluate(ctx, cfg, *, mode="rule", selected_paths=None, apply_changes=False, trigger="manual_rule"):
-    """Handle cleanup evaluate."""
-    ctx = _as_ctx(ctx)
+    """Evaluate cleanup rules and return the deletion plan/result payload."""
+    ctx = as_ctx(ctx)
     with profiling.timed("maintenance.evaluate.total"):
         selected_paths = set(selected_paths or [])
         rules = cfg.get("rules", {})
@@ -454,8 +438,8 @@ def _cleanup_evaluate(ctx, cfg, *, mode="rule", selected_paths=None, apply_chang
 
 
 def _cleanup_state_snapshot(ctx, cfg):
-    """Handle cleanup state snapshot."""
-    ctx = _as_ctx(ctx)
+    """Return a compact snapshot of cleanup state for UI polling."""
+    ctx = as_ctx(ctx)
     with profiling.timed("maintenance.state_snapshot.total"):
         def _next_time_schedule_run():
             tz = getattr(ctx, "DISPLAY_TZ", None)
@@ -544,8 +528,8 @@ def _cleanup_state_snapshot(ctx, cfg):
 
 
 def _cleanup_run_with_lock(ctx, cfg, *, mode, selected_paths=None, trigger="manual_rule"):
-    """Handle cleanup run with lock."""
-    ctx = _as_ctx(ctx)
+    """Run cleanup once while holding the shared maintenance execution lock."""
+    ctx = as_ctx(ctx)
     if not _cleanup_run_lock.acquire(blocking=False):
         return None
     try:
@@ -559,4 +543,6 @@ def _cleanup_run_with_lock(ctx, cfg, *, mode, selected_paths=None, trigger="manu
         )
     finally:
         _cleanup_run_lock.release()
+
+
 

@@ -1,4 +1,4 @@
-﻿"""Flask route registration for the MC web dashboard."""
+"""Route registration for the shell-first MC web dashboard."""
 import threading
 import time
 
@@ -13,7 +13,7 @@ from app.commands.maintenance_commands import run_cleanup_event_if_enabled
 
 
 def register_routes(app, state):
-    """Register all HTTP routes using shared state/functions from mcweb."""
+    """Register top-level dashboard routes and wire the supporting route modules."""
     restore_pane_alert_lock = threading.Lock()
     restore_pane_alert_until_ref = [0.0]
     restore_pane_alert_filename_ref = [""]
@@ -28,57 +28,76 @@ def register_routes(app, state):
             raw = raw.split(",", 1)[0].strip()
         return raw
 
+    def _current_request_ip():
+        current_ip = ""
+        try:
+            current_ip = _normalized_ip(state["_get_client_ip"]())
+        except Exception:
+            current_ip = ""
+        if not current_ip:
+            current_ip = _normalized_ip(request.headers.get("X-Forwarded-For"))
+        if not current_ip:
+            current_ip = _normalized_ip(request.remote_addr)
+        return current_ip
+
+    def _current_request_client_id():
+        return str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
+
+    def _build_nav_alert_state(current_ip="", current_client_id=""):
+        now = time.time()
+        with restore_pane_alert_lock:
+            active = now <= restore_pane_alert_until_ref[0]
+            filename = str(restore_pane_alert_filename_ref[0] or "")
+            opener_ip = _normalized_ip(restore_pane_alert_ip_ref[0])
+            opener_client_id = str(restore_pane_alert_client_id_ref[0] or "").strip()
+        opened_by_self = bool(current_client_id and opener_client_id and current_client_id == opener_client_id)
+        if not opened_by_self:
+            opened_by_self = bool(current_ip and opener_ip and current_ip == opener_ip)
+        device_map = state["get_device_name_map"]()
+        opener_name = str(device_map.get(opener_ip, "") or "").strip()
+        opener_identity = opener_name or opener_ip or "unknown"
+        observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
+        home_attention = dashboard_queries_service.get_home_attention_level(observed)
+        return {
+            "restore_pane_attention": bool(active),
+            "restore_pane_filename": filename,
+            "restore_pane_opened_by_name": opener_identity,
+            "restore_pane_opened_by_ip": opener_ip or "unknown",
+            "restore_pane_opened_by_self": opened_by_self,
+            "home_attention": home_attention,
+        }
+
+    def _get_nav_alert_state_from_request():
+        return _build_nav_alert_state(
+            current_ip=_current_request_ip(),
+            current_client_id=_current_request_client_id(),
+        )
+
     # Route: /
     @app.route("/")
     def index():
-        """Runtime helper index."""
-        home = dashboard_queries_service.get_dashboard_home_model(state, request.args.get("msg", ""))
-        message_code = home["message_code"]
-        alert_message = home["alert_message"]
-        data = home["metrics"]
+        """Render the lightweight dashboard shell; live content hydrates client-side."""
+        home = dashboard_queries_service.get_dashboard_shell_model(state, request.args.get("msg", ""))
         return render_template(
             state["HTML_TEMPLATE_NAME"],
             current_page="home",
-            service_status=data["service_status"],
-            service_status_class=data["service_status_class"],
-            service_running_status=data["service_running_status"],
-            backups_status=data["backups_status"],
-            cpu_per_core_items=data["cpu_per_core_items"],
-            cpu_frequency=data["cpu_frequency"],
-            cpu_frequency_class=data["cpu_frequency_class"],
-            storage_usage=data["storage_usage"],
-            storage_usage_class=data["storage_usage_class"],
-            players_online=data["players_online"],
-            tick_rate=data["tick_rate"],
-            session_duration=data["session_duration"],
-            idle_countdown=data["idle_countdown"],
-            backup_status=data["backup_status"],
-            backup_status_class=data["backup_status_class"],
-            last_backup_time=data["last_backup_time"],
-            next_backup_time=data["next_backup_time"],
-            server_time=data["server_time"],
-            world_name=data["world_name"],
-            ram_usage=data["ram_usage"],
-            ram_usage_class=data["ram_usage_class"],
-            minecraft_logs_raw=state["get_log_source_text"]("minecraft"),
-            rcon_enabled=data["rcon_enabled"],
             csrf_token=state["_ensure_csrf_token"](),
-            alert_message=alert_message,
-            alert_message_code=message_code,
+            alert_message=home["alert_message"],
+            alert_message_code=home["message_code"],
             home_page_heartbeat_interval_ms=state["HOME_PAGE_HEARTBEAT_INTERVAL_MS"],
         )
 
     # Route: /home-heartbeat
     @app.route("/home-heartbeat", methods=["POST"])
     def home_heartbeat():
-        """Runtime helper home_heartbeat."""
+        """Refresh the short-lived activity marker used by the home-page worker."""
         state["_mark_home_page_client_active"]()
         return ("", 204)
 
     # Route: /ui-error-log
     @app.route("/ui-error-log", methods=["POST"])
     def ui_error_log():
-        """Runtime helper ui_error_log."""
+        """Capture client-side modal failures in the server log."""
         payload = request.get_json(silent=True) or {}
         error_code = str(payload.get("error_code", "") or "").strip()
         action = str(payload.get("action", "") or "").strip()
@@ -95,7 +114,7 @@ def register_routes(app, state):
     # Route: /favicon.ico
     @app.route("/favicon.ico")
     def favicon():
-        """Runtime helper favicon."""
+        """Redirect the browser to the configured favicon asset."""
         return redirect(state["FAVICON_URL"])
 
     # Route: /sw.js
@@ -111,19 +130,19 @@ def register_routes(app, state):
     # Route: /readme
     @app.route("/readme")
     def readme_page():
-        """Runtime helper readme_page."""
+        """Render the documentation shell page."""
         return render_template("documentation.html", current_page="readme")
 
     # Route: /doc/server_setup_doc.md
     @app.route("/doc/server_setup_doc.md")
     def readme_markdown():
-        """Runtime helper readme_markdown."""
+        """Serve the markdown source used by the documentation page."""
         return send_from_directory(str(state["DOCS_DIR"]), "server_setup_doc.md")
 
     # Route: /doc/readme-url
     @app.route("/doc/readme-url")
     def readme_url_config():
-        """Runtime helper readme_url_config."""
+        """Return the configured readme URL used by the documentation shell."""
         return jsonify({"url": state["DOC_README_URL"]})
 
     # Route: /observed-state
@@ -160,7 +179,7 @@ def register_routes(app, state):
     # Route: /device-name-map
     @app.route("/device-name-map")
     def device_name_map():
-        """Runtime helper device_name_map."""
+        """Return the current IP-to-device-name mapping for client-side rendering."""
         return jsonify({"map": state["get_device_name_map"]()})
 
     # Route: /maintenance/nav-alert/restore-pane-open
@@ -170,19 +189,8 @@ def register_routes(app, state):
         payload = request.get_json(silent=True) or {}
         filename = str(payload.get("filename", "") or "").strip()
         opener_client_id = str(payload.get("client_id", "") or "").strip()
-        opener_ip = ""
-        try:
-            opener_ip = _normalized_ip(state["_get_client_ip"]())
-        except Exception:
-            opener_ip = ""
-        if not opener_ip:
-            opener_ip = _normalized_ip(request.headers.get("X-Forwarded-For"))
-        if not opener_ip:
-            opener_ip = _normalized_ip(request.remote_addr)
-        if not opener_ip:
-            opener_ip = "unknown"
+        opener_ip = _current_request_ip() or "unknown"
         now = time.time()
-        # Keep alert active while backups clients keep pinging.
         ttl_seconds = 15.0
         with restore_pane_alert_lock:
             restore_pane_alert_until_ref[0] = max(restore_pane_alert_until_ref[0], now + ttl_seconds)
@@ -196,46 +204,13 @@ def register_routes(app, state):
     # Route: /maintenance/nav-alert/state
     @app.route("/maintenance/nav-alert/state")
     def maintenance_nav_alert_state():
-        """Return whether restore-pane attention should flash maintenance nav link."""
-        now = time.time()
-        current_ip = ""
-        try:
-            current_ip = _normalized_ip(state["_get_client_ip"]())
-        except Exception:
-            current_ip = ""
-        if not current_ip:
-            current_ip = _normalized_ip(request.headers.get("X-Forwarded-For")) or _normalized_ip(request.remote_addr)
-        current_client_id = str(request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
-        with restore_pane_alert_lock:
-            active = now <= restore_pane_alert_until_ref[0]
-            filename = str(restore_pane_alert_filename_ref[0] or "")
-            opener_ip = _normalized_ip(restore_pane_alert_ip_ref[0])
-            opener_client_id = str(restore_pane_alert_client_id_ref[0] or "").strip()
-        opened_by_self = bool(current_client_id and opener_client_id and current_client_id == opener_client_id)
-        if not opened_by_self:
-            opened_by_self = bool(current_ip and opener_ip and current_ip == opener_ip)
-        device_map = state["get_device_name_map"]()
-        opener_name = str(device_map.get(opener_ip, "") or "").strip()
-        opener_identity = opener_name or opener_ip or "unknown"
-        observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
-        home_attention = dashboard_queries_service.get_home_attention_level(observed)
-        return jsonify(
-            {
-                "ok": True,
-                "restore_pane_attention": bool(active),
-                "restore_pane_filename": filename,
-                "restore_pane_opened_by_name": opener_identity,
-                "restore_pane_opened_by_ip": opener_ip or "unknown",
-                "restore_pane_opened_by_self": opened_by_self,
-                "home_attention": home_attention,
-            }
-        )
+        """Return nav attention state for the current request identity."""
+        return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
-    register_file_routes(app, state)
+    register_file_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
     register_maintenance_routes(app, state)
     register_control_routes(
         app,
         state,
         run_cleanup_event_if_enabled=run_cleanup_event_if_enabled,
     )
-

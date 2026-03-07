@@ -1,4 +1,4 @@
-"""System metric service wrappers delegated to boot-selected platform module."""
+"""Expose system metric readers through the selected platform ports."""
 from app.ports import ports
 
 
@@ -20,3 +20,4 @@ def get_cpu_frequency():
 def get_storage_usage():
     """Return root filesystem usage summary."""
     return ports.metrics.get_storage_usage()
+

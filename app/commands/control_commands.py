@@ -260,6 +260,87 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
             return error_response(thread_error_message)
         return None
 
+    def _active_operation_response(op_type, *, target=None, log_action=None, message=None):
+        active = _find_active_operation(op_type, target=target)
+        if not isinstance(active, dict):
+            return None
+        if log_action:
+            state["log_mcweb_action"](log_action)
+        return _accepted_operation_response(
+            active.get("op_id", ""),
+            status=str(active.get("status", "") or "intent"),
+            existing=True,
+            message=message,
+        )
+
+    def _prepare_operation(
+        op_type,
+        *,
+        target,
+        payload,
+        active_target=None,
+        active_message=None,
+        active_log_action=None,
+        active_conflict_response=None,
+        accepted_message=None,
+        log_action=None,
+        load_error_response,
+        resume_error_response,
+        create_error_response,
+        target_conflict_response=None,
+    ):
+        idempotency_key = _idempotency_key_from_request()
+        if not idempotency_key:
+            active_response = _active_operation_response(
+                op_type,
+                target=active_target,
+                log_action=active_log_action,
+                message=active_message,
+            )
+            if active_response is not None:
+                return "", False, active_response
+            if callable(active_conflict_response):
+                any_active = _find_active_operation(op_type)
+                if isinstance(any_active, dict):
+                    return "", False, active_conflict_response()
+
+        existing, error_response = _load_existing_operation(
+            op_type,
+            idempotency_key,
+            error_log_key=f"get_operation_by_idempotency_key/{op_type}",
+            error_response=load_error_response,
+        )
+        if error_response is not None:
+            return "", False, error_response
+
+        op_id, resumed, reuse_response = _reuse_or_resume_existing_operation(
+            existing,
+            op_type=op_type,
+            resume_error_response=resume_error_response,
+            accepted_message=accepted_message,
+            expected_target=target,
+            target_conflict_response=target_conflict_response,
+            log_action=log_action,
+        )
+        if reuse_response is not None:
+            return op_id, resumed, reuse_response
+
+        if not op_id:
+            op_id = _new_operation_id(op_type)
+            error_response = _create_operation(
+                op_type,
+                op_id,
+                target=target,
+                idempotency_key=idempotency_key,
+                payload=payload,
+                error_log_key=f"create_operation/{op_type}",
+                error_response=create_error_response,
+            )
+            if error_response is not None:
+                return "", False, error_response
+
+        return op_id, resumed, None
+
     # Route: /start
     @app.route("/start", methods=["POST"])
     def start():
@@ -272,48 +353,18 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
             state["log_mcweb_action"]("start", rejection_message=message)
             return state["_low_storage_blocked_response"](message)
 
-        idempotency_key = _idempotency_key_from_request()
-        if not idempotency_key:
-            active = _find_active_operation("start")
-            if isinstance(active, dict):
-                state["log_mcweb_action"]("start")
-                return _accepted_operation_response(
-                    active.get("op_id", ""),
-                    status=str(active.get("status", "") or "intent"),
-                    existing=True,
-                )
-
-        existing, error_response = _load_existing_operation(
+        op_id, resumed, response = _prepare_operation(
             "start",
-            idempotency_key,
-            error_log_key="get_operation_by_idempotency_key/start",
-            error_response=state["_start_failed_response"]("Failed to load start operation record."),
-        )
-        if error_response is not None:
-            return error_response
-
-        op_id, resumed, reuse_response = _reuse_or_resume_existing_operation(
-            existing,
-            op_type="start",
-            resume_error_response=state["_start_failed_response"]("Failed to resume start operation."),
+            target=state.get("SERVICE", "minecraft"),
+            payload={},
+            active_log_action="start",
             log_action="start",
+            load_error_response=state["_start_failed_response"]("Failed to load start operation record."),
+            resume_error_response=state["_start_failed_response"]("Failed to resume start operation."),
+            create_error_response=state["_start_failed_response"]("Failed to create start operation record."),
         )
-        if reuse_response is not None:
-            return reuse_response
-
-        if not op_id:
-            op_id = _new_operation_id("start")
-            error_response = _create_operation(
-                "start",
-                op_id,
-                target=state.get("SERVICE", "minecraft"),
-                idempotency_key=idempotency_key,
-                payload={},
-                error_log_key="create_operation/start",
-                error_response=state["_start_failed_response"]("Failed to create start operation record."),
-            )
-            if error_response is not None:
-                return error_response
+        if response is not None:
+            return response
 
         _enqueue_control_intent("start", op_id, target=state.get("SERVICE", "minecraft"))
         _refresh_runtime_status("starting", invalidate_observed=True)
@@ -391,48 +442,18 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
             return state["_password_rejected_response"]()
         state["record_successful_password_ip"]()
 
-        idempotency_key = _idempotency_key_from_request()
-        if not idempotency_key:
-            active = _find_active_operation("stop")
-            if isinstance(active, dict):
-                state["log_mcweb_action"]("stop")
-                return _accepted_operation_response(
-                    active.get("op_id", ""),
-                    status=str(active.get("status", "") or "intent"),
-                    existing=True,
-                )
-
-        existing, error_response = _load_existing_operation(
+        op_id, resumed, response = _prepare_operation(
             "stop",
-            idempotency_key,
-            error_log_key="get_operation_by_idempotency_key/stop",
-            error_response=state["_start_failed_response"]("Failed to load stop operation record."),
-        )
-        if error_response is not None:
-            return error_response
-
-        op_id, resumed, reuse_response = _reuse_or_resume_existing_operation(
-            existing,
-            op_type="stop",
-            resume_error_response=state["_start_failed_response"]("Failed to resume stop operation."),
+            target=state.get("SERVICE", "minecraft"),
+            payload={},
+            active_log_action="stop",
             log_action="stop",
+            load_error_response=state["_start_failed_response"]("Failed to load stop operation record."),
+            resume_error_response=state["_start_failed_response"]("Failed to resume stop operation."),
+            create_error_response=state["_start_failed_response"]("Failed to create stop operation record."),
         )
-        if reuse_response is not None:
-            return reuse_response
-
-        if not op_id:
-            op_id = _new_operation_id("stop")
-            error_response = _create_operation(
-                "stop",
-                op_id,
-                target=state.get("SERVICE", "minecraft"),
-                idempotency_key=idempotency_key,
-                payload={},
-                error_log_key="create_operation/stop",
-                error_response=state["_start_failed_response"]("Failed to create stop operation record."),
-            )
-            if error_response is not None:
-                return error_response
+        if response is not None:
+            return response
 
         _enqueue_control_intent("stop", op_id, target=state.get("SERVICE", "minecraft"))
         _refresh_runtime_status("shutting", invalidate_observed=True)
@@ -511,48 +532,18 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         if limited is not None:
             return limited
 
-        idempotency_key = _idempotency_key_from_request()
-        if not idempotency_key:
-            active = _find_active_operation("backup")
-            if isinstance(active, dict):
-                state["log_mcweb_action"]("backup")
-                return _accepted_operation_response(
-                    active.get("op_id", ""),
-                    status=str(active.get("status", "") or "intent"),
-                    existing=True,
-                )
-
-        existing, error_response = _load_existing_operation(
+        op_id, resumed, response = _prepare_operation(
             "backup",
-            idempotency_key,
-            error_log_key="get_operation_by_idempotency_key/backup",
-            error_response=state["_backup_failed_response"]("Failed to load backup operation record."),
-        )
-        if error_response is not None:
-            return error_response
-
-        op_id, resumed, reuse_response = _reuse_or_resume_existing_operation(
-            existing,
-            op_type="backup",
-            resume_error_response=state["_backup_failed_response"]("Failed to resume backup operation."),
+            target="manual",
+            payload={"trigger": "manual"},
+            active_log_action="backup",
             log_action="backup",
+            load_error_response=state["_backup_failed_response"]("Failed to load backup operation record."),
+            resume_error_response=state["_backup_failed_response"]("Failed to resume backup operation."),
+            create_error_response=state["_backup_failed_response"]("Failed to create backup operation record."),
         )
-        if reuse_response is not None:
-            return reuse_response
-
-        if not op_id:
-            op_id = _new_operation_id("backup")
-            error_response = _create_operation(
-                "backup",
-                op_id,
-                target="manual",
-                idempotency_key=idempotency_key,
-                payload={"trigger": "manual"},
-                error_log_key="create_operation/backup",
-                error_response=state["_backup_failed_response"]("Failed to create backup operation record."),
-            )
-            if error_response is not None:
-                return error_response
+        if response is not None:
+            return response
 
         _enqueue_control_intent("backup", op_id, target="manual")
         _invalidate_observed_cache()
@@ -625,61 +616,29 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled, threadi
         if not filename:
             return jsonify({"ok": False, "error": "restore_failed", "message": "Backup filename is required."}), 400
 
-        idempotency_key = _idempotency_key_from_request()
-        if not idempotency_key:
-            active_same_target = _find_active_operation("restore", target=filename)
-            if isinstance(active_same_target, dict):
-                return _accepted_operation_response(
-                    active_same_target.get("op_id", ""),
-                    status=str(active_same_target.get("status", "") or "intent"),
-                    existing=True,
-                    message="Restore accepted.",
-                )
-            any_restore = _find_active_operation("restore")
-            if isinstance(any_restore, dict):
-                return jsonify({
-                    "ok": False,
-                    "error": "restore_in_progress",
-                    "message": "Another restore operation is already in progress.",
-                }), 409
-
-        existing, error_response = _load_existing_operation(
+        op_id, resumed, response = _prepare_operation(
             "restore",
-            idempotency_key,
-            error_log_key="get_operation_by_idempotency_key/restore",
-            error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to load restore operation record."}), 500),
-        )
-        if error_response is not None:
-            return error_response
-
-        op_id, resumed, reuse_response = _reuse_or_resume_existing_operation(
-            existing,
-            op_type="restore",
-            resume_error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to resume restore operation."}), 500),
+            target=filename,
+            payload={},
+            active_target=filename,
+            active_message="Restore accepted.",
+            active_conflict_response=lambda: (jsonify({
+                "ok": False,
+                "error": "restore_in_progress",
+                "message": "Another restore operation is already in progress.",
+            }), 409),
             accepted_message="Restore accepted.",
-            expected_target=filename,
+            load_error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to load restore operation record."}), 500),
+            resume_error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to resume restore operation."}), 500),
+            create_error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to create restore operation record."}), 500),
             target_conflict_response=lambda: (jsonify({
                 "ok": False,
                 "error": "idempotency_key_conflict",
                 "message": "Idempotency key already used for a different restore target.",
             }), 409),
         )
-        if reuse_response is not None:
-            return reuse_response
-
-        if not op_id:
-            op_id = _new_operation_id("restore")
-            error_response = _create_operation(
-                "restore",
-                op_id,
-                target=filename,
-                idempotency_key=idempotency_key,
-                payload={},
-                error_log_key="create_operation/restore",
-                error_response=(jsonify({"ok": False, "error": "restore_failed", "message": "Failed to create restore operation record."}), 500),
-            )
-            if error_response is not None:
-                return error_response
+        if response is not None:
+            return response
 
         _enqueue_control_intent("restore", op_id, target=filename)
         _invalidate_observed_cache()

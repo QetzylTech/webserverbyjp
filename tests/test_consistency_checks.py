@@ -85,7 +85,7 @@ class ConsistencyChecksTests(unittest.TestCase):
             "get_consistency_report": lambda auto_repair=False: {"ok": True, "auto_repair": bool(auto_repair), "issues": []},
         }
         with patch.object(dashboard_routes, "render_template", return_value="home-page"), \
-             patch.object(dashboard_routes, "register_file_routes", lambda app, state: None), \
+             patch.object(dashboard_routes, "register_file_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
              patch.object(dashboard_routes, "register_maintenance_routes", lambda app, state: None), \
              patch.object(dashboard_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):
             dashboard_routes.register_routes(app, state)

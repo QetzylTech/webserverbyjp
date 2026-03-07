@@ -1,14 +1,3 @@
-    const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    function applyThemePreference() {
-        document.documentElement.classList.toggle("theme-dark", darkModeQuery.matches);
-    }
-    applyThemePreference();
-    if (darkModeQuery.addEventListener) {
-        darkModeQuery.addEventListener("change", applyThemePreference);
-    } else if (darkModeQuery.addListener) {
-        darkModeQuery.addListener(applyThemePreference);
-    }
-
     // `alert_message` is set server-side when an action fails validation.
     const __MCWEB_HOME_CONFIG = window.__MCWEB_HOME_CONFIG || {};
     const alertMessage = __MCWEB_HOME_CONFIG.alertMessage ?? "";
@@ -97,7 +86,6 @@
     // Refresh cadence configuration (milliseconds).
     const TIMER_REBASE_TOLERANCE_SECONDS = 2;
 
-    let metricsEventSource = null;
     let metricsFastPollTimer = null;
     let countdownTimer = null;
     let serverClockTimer = null;
@@ -899,6 +887,12 @@
         }).join(" | ");
     }
 
+    function handleSharedMetricsSnapshot(event) {
+        const data = event && event.detail && typeof event.detail === "object" ? event.detail : null;
+        if (!data) return;
+        applyMetricsData(data);
+    }
+
     function applyMetricsData(data, options = {}) {
         if (!data) return;
         const fromCache = options.fromCache === true;
@@ -1170,34 +1164,6 @@
         }
     }
 
-    function startMetricsStream() {
-        if (metricsEventSource) return;
-        metricsEventSource = new EventSource("/metrics-stream");
-        metricsEventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data || "{}");
-                applyMetricsData(data);
-            } catch (err) {
-                // Ignore malformed stream payload.
-            }
-        };
-        metricsEventSource.onopen = () => {};
-        metricsEventSource.onerror = () => {
-            // EventSource reconnects automatically.
-        };
-    }
-
-    function stopMetricsStream() {
-        if (!metricsEventSource) return;
-        try {
-            metricsEventSource.close();
-        } catch (_) {
-            // Ignore close errors during teardown.
-        }
-        metricsEventSource = null;
-    }
-
-
     function startFastMetricsPolling() {
         if (metricsFastPollTimer) return;
         refreshMetricsFast();
@@ -1246,34 +1212,6 @@
         scheduleRuntimeSimulationTick();
     }
 
-    function initSidebarNav() {
-        const toggle = document.getElementById("nav-toggle");
-        const sidebar = document.getElementById("side-nav");
-        const backdrop = document.getElementById("nav-backdrop");
-        if (!toggle || !sidebar || !backdrop) return;
-
-        function closeNav() {
-            sidebar.classList.remove("open");
-            backdrop.classList.remove("open");
-            toggle.classList.remove("nav-open");
-            toggle.setAttribute("aria-expanded", "false");
-        }
-
-        function toggleNav() {
-            const nextOpen = !sidebar.classList.contains("open");
-            sidebar.classList.toggle("open", nextOpen);
-            backdrop.classList.toggle("open", nextOpen);
-            toggle.classList.toggle("nav-open", nextOpen);
-            toggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
-        }
-
-        toggle.addEventListener("click", toggleNav);
-        backdrop.addEventListener("click", closeNav);
-        window.addEventListener("resize", () => {
-            if (window.innerWidth > 1100) closeNav();
-        });
-    }
-
     function teardownRealtimeConnections() {
         LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
         LOG_SOURCE_KEYS.forEach((source) => {
@@ -1284,7 +1222,7 @@
             }
             pendingLogLines[source] = [];
         });
-        stopMetricsStream();
+        window.removeEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
         stopFastMetricsPolling();
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
@@ -1298,20 +1236,17 @@
     function handleVisibilityRefreshMode() {
         if (document.hidden) {
             LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
-            stopMetricsStream();
             stopFastMetricsPolling();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
-        startMetricsStream();
         scheduleServerClockTick();
         refreshMetrics();
         sendHomePageHeartbeat();
     }
 
     window.addEventListener("load", async () => {
-        initSidebarNav();
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
             form.addEventListener("submit", async (event) => {
                 event.preventDefault();
@@ -1454,7 +1389,12 @@
         }
         activateLogStream(selectedLogSource);
         loadLogSourceFromServer(selectedLogSource);
-        startMetricsStream();
+        window.addEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
+        if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
+            applyMetricsData(window.__MCWEB_LAST_METRICS_SNAPSHOT);
+        } else {
+            refreshMetrics();
+        }
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
