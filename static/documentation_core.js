@@ -1,4 +1,8 @@
+(function () {
 "use strict";
+
+    const shell = window.MCWebShell || null;
+    const pageModules = window.MCWebPageModules || null;
 
 // Configure marked for GitHub-flavored markdown
     marked.setOptions({
@@ -415,17 +419,33 @@
 
     // Fetch and render README
     const defaultReadmeURL = '/doc/server_setup_doc.md';
-    const contentElement = document.getElementById('content');
-    const backToTopButton = document.getElementById('backToTop');
-    const stickyHeader = document.getElementById('stickyHeader');
-    const stickyHeaderTitle = document.getElementById('stickyHeaderTitle');
-      const stickyMenuButton = document.getElementById('stickyMenu');
-      const stickyMenuLabel = document.getElementById('stickyMenuLabel');
-    const tocSidebar = document.getElementById('tocSidebar');
-    const tocSidebarBody = document.getElementById('tocSidebarBody');
-    const navToggle = document.getElementById('nav-toggle');
-    const sideNav = document.getElementById('side-nav');
-    const navBackdrop = document.getElementById('nav-backdrop');
+    let contentElement = null;
+    let backToTopButton = null;
+    let stickyHeader = null;
+    let docsPaneTitle = null;
+    let stickyHeaderTitle = null;
+    let stickyMenuButton = null;
+    let stickyMenuLabel = null;
+    let tocSidebar = null;
+    let tocSidebarBody = null;
+    let navToggle = null;
+    let sideNav = null;
+    let navBackdrop = null;
+
+    const bindPageElements = () => {
+      contentElement = document.getElementById('content');
+      backToTopButton = document.getElementById('backToTop');
+      stickyHeader = document.getElementById('stickyHeader');
+      docsPaneTitle = document.getElementById('docs-pane-title');
+      stickyHeaderTitle = document.getElementById('stickyHeaderTitle');
+      stickyMenuButton = document.getElementById('stickyMenu');
+      stickyMenuLabel = document.getElementById('stickyMenuLabel');
+      tocSidebar = document.getElementById('tocSidebar');
+      tocSidebarBody = document.getElementById('tocSidebarBody');
+      navToggle = document.getElementById('nav-toggle');
+      sideNav = document.getElementById('side-nav');
+      navBackdrop = document.getElementById('nav-backdrop');
+    };
     const initMcwebNav = () => {
       if (!navToggle || !sideNav || !navBackdrop) return;
 
@@ -486,6 +506,10 @@
       contentElement.innerHTML = html;
 
       const h1Title = contentElement.querySelector('h1');
+      const paneTitleText = h1Title ? h1Title.textContent.trim() : 'Instructions';
+      if (docsPaneTitle) {
+        docsPaneTitle.textContent = paneTitleText || 'Instructions';
+      }
       if (h1Title) {
         document.title = h1Title.textContent.trim();
       }
@@ -723,6 +747,9 @@
       addMediaListener(wideMql, inlineTocVisible);
 
       buildTocSidebar();
+      requestAnimationFrame(() => {
+        tocSidebar.classList.add('is-animated');
+      });
 
       // Enable in-page anchor navigation after content is injected.
       bindAnchorNavigation(contentElement, navigateToHeading);
@@ -834,6 +861,17 @@
     };
 
     const loadConfiguredReadme = () => {
+      if (shell && typeof shell.fetchConfiguredReadme === 'function') {
+        shell.fetchConfiguredReadme()
+          .then(({ text }) => {
+            processMarkdown(text || '');
+          })
+          .catch(err => {
+            contentElement.textContent = `Error loading README: ${err.message}`;
+            console.error('Failed to load README:', err);
+          });
+        return;
+      }
       fetch('/doc/readme-url', { cache: 'no-store' })
         .then(res => {
           if (!res.ok) {
@@ -850,8 +888,24 @@
         });
     };
 
-    window.startDocumentationPage = () => {
+    function mountDocumentationPage() {
+      bindPageElements();
+      if (!contentElement) return null;
       contentElement.innerHTML = '';
       initMcwebNav();
       loadConfiguredReadme();
-    };
+      return null;
+    }
+
+    if (pageModules && typeof pageModules.register === 'function') {
+      pageModules.register('readme', {
+        mount: mountDocumentationPage,
+      });
+    }
+
+    if ((document.body?.dataset?.page || '') === 'readme' && !document.getElementById('mcweb-app-content')) {
+      mountDocumentationPage();
+    }
+
+})();
+

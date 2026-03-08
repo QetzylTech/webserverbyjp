@@ -1,0 +1,41 @@
+<main
+    id="mcweb-page-root"
+    class="content docs-shell"
+    data-page-key="readme"
+    data-page-title="Instructions"
+    data-page-styles='["{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}","{{ url_for('static', filename='documentation.css', v=static_version('documentation.css')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='documentation_core.js', v=static_version('documentation_core.js')) }}"]'
+>
+  <header id="stickyHeader" class="sticky-header">
+    <div class="sticky-inner">
+      <button id="stickyMenu" class="sticky-menu" type="button" aria-label="Toggle table of contents" aria-controls="tocSidebar" aria-expanded="false">
+        <span class="sticky-menu-lines" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+        <span id="stickyMenuLabel" class="sticky-menu-label" hidden>Table of Contents</span>
+      </button>
+      <span id="stickyHeaderTitle" class="sticky-title"></span>
+    </div>
+  </header>
+  <div class="page-panes page-panes--docs">
+    <aside id="tocSidebar" class="toc-sidebar panel page-pane page-pane--toc" aria-label="Table of contents sidebar">
+      <div class="pane-head toc-sidebar-header">
+        <span>Contents</span>
+      </div>
+      <div class="pane-content toc-sidebar-content">
+        <div id="tocSidebarBody" class="toc-body"></div>
+      </div>
+    </aside>
+    <section class="panel page-pane page-pane--docs" aria-labelledby="docs-pane-title">
+      <div class="pane-head">
+        <h1 id="docs-pane-title" class="pane-title">Instructions</h1>
+      </div>
+      <div class="pane-content docs-content-body">
+        <article id="content"></article>
+      </div>
+    </section>
+  </div>
+  <a id="backToTop" class="back-to-top" href="#top" aria-label="Back to top">Back to top</a>
+</main>

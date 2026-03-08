@@ -73,11 +73,6 @@
     .file-viewer-resizer.is-dragging {
         background: rgba(30, 64, 175, 0.4);
     }
-    .title {
-        margin: 0;
-        font-size: 1.4rem;
-        font-weight: 700;
-    }
     .panel {
         clip-path: inset(0 round 12px);
         height: 100%;
@@ -91,11 +86,25 @@
     body[data-page] .panel.pane-primary {
         padding: 12px;
     }
-    .panel h2 {
+    .page-panes--files .page-pane--list > .pane-head {
+        padding: 0 0 12px;
+    }
+    .page-panes--files .page-pane--list > .pane-content {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+    }
+    .page-panes--files .page-pane--list > .pane-content .list {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+    .panel h2:not(.pane-title) {
         margin: 0 0 6px;
         font-size: 1.4rem;
         letter-spacing: 0.2px;
     }
+
     .sort-row {
         display: flex;
         align-items: center;
@@ -111,11 +120,9 @@
         margin: 0 0 0 auto;
         justify-content: flex-end;
     }
-    .title-row > .sort-row {
-        margin-left: auto;
-    }
-    .backup-controls .sort-row {
-        margin: 0;
+
+    .sort-row {
+        margin: 0 0 0 auto;
     }
     .log-view-controls {
         display: flex;
@@ -132,8 +139,25 @@
         flex-wrap: wrap;
         justify-content: flex-end;
     }
+.page-panes--files .pane-head-row {
+        align-items: center;
+    }
+    body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-head-row {
+        flex-wrap: nowrap;
+    }
+    body[data-page="minecraft_logs"] .log-view-controls {
+        flex: 0 1 auto;
+        min-width: max-content;
+        margin-left: auto;
+        gap: 6px;
+    }
+    body[data-page="minecraft_logs"] .log-view-toggles {
+        gap: 6px;
+        flex-wrap: nowrap;
+    }
     .log-source-toggle {
         height: 40px;
+        white-space: nowrap;
     }
     .filter-row {
         display: flex;
@@ -314,7 +338,7 @@
         top: 0;
         display: none;
         flex-direction: column;
-        gap: 10px;
+        gap: 0;
         overflow: hidden;
     }
     body[data-page="crash_logs"] .file-viewer.pane-editor,
@@ -324,44 +348,78 @@
     .wrap.viewer-open .file-viewer {
         display: flex;
     }
-    .file-viewer-header {
+    .page-panes--files .page-pane--viewer > .pane-head {
+        padding: 0 0 10px;
+    }
+    .page-panes--files .page-pane--viewer > .pane-head .pane-head-row {
+        gap: 8px;
+    }
+    .page-panes--files .page-pane--viewer > .pane-head .pane-title {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+    .page-panes--files .page-pane--viewer > .pane-head .pane-head-actions {
+        margin-left: auto;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        justify-content: flex-end;
+        gap: 8px;
+        flex: 0 1 auto;
+        min-width: 0;
+        flex-wrap: wrap;
     }
-    .file-viewer-title {
+    .pane-title--viewer {
         margin: 0;
         font-size: 1rem;
         line-height: 1.2;
         word-break: break-word;
     }
-    .file-viewer-actions {
+    .page-panes--files .page-pane--viewer > .pane-content {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .pane-head-actions-group--viewer {
         display: inline-flex;
         align-items: center;
         gap: 8px;
+        flex-wrap: nowrap;
+        margin-left: auto;
     }
-    body[data-page="crash_logs"] .file-viewer-actions,
-    body[data-page="minecraft_logs"] .file-viewer-actions {
+    body[data-page="crash_logs"] .pane-head-actions-group--viewer,
+    body[data-page="minecraft_logs"] .pane-head-actions-group--viewer {
         margin-right: 12px;
     }
-    .backup-restore-controls {
+    .pane-head-actions-group--restore {
         display: flex;
         flex-direction: row;
         align-items: center;
         gap: 8px;
-        justify-content: flex-end;
+        justify-content: flex-start;
+        overflow: visible;
+        flex: 0 1 auto;
+        min-width: 0;
     }
-    .backup-restore-controls[hidden] {
+    .pane-head-actions-group--restore[hidden] {
         display: none;
     }
-    .backup-restore-actions {
+    .pane-action-cluster--restore {
         display: flex;
         align-items: center;
         gap: 8px;
-        flex-wrap: nowrap;
-        flex: 0 0 auto;
-        margin-left: auto;
+        flex-wrap: wrap;
+        flex: 0 1 auto;
+        min-width: 0;
+        margin-left: 0;
+    }
+
+    .backup-restore-start,
+    .backup-restore-cancel,
+    .file-viewer-download,
+    .file-viewer-close {
+        white-space: nowrap;
     }
     .backup-restore-start,
     .backup-restore-cancel {
@@ -407,8 +465,6 @@
         font-size: 0.88rem;
         white-space: pre-wrap;
         word-break: break-word;
-        scrollbar-color: #94a3b8 #ffffff;
-        scrollbar-width: thin;
     }
     .file-viewer-content.has-vscroll {
         padding-right: 0;
@@ -420,23 +476,6 @@
     body[data-page="crash_logs"] .file-viewer-content.has-vscroll,
     body[data-page="minecraft_logs"] .file-viewer-content.has-vscroll {
         margin-right: 0;
-    }
-    .file-viewer-content::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
-    }
-    .file-viewer-content::-webkit-scrollbar-track {
-        background: #ffffff;
-    }
-    .file-viewer-content::-webkit-scrollbar-thumb {
-        background: #94a3b8;
-        border-radius: 10px;
-        border-style: solid;
-        border-width: 2px 0 2px 2px;
-        border-color: #ffffff;
-    }
-    .file-viewer-content::-webkit-scrollbar-thumb:hover {
-        background: #64748b;
     }
     .file-viewer-content .log-line {
         display: block;
@@ -457,6 +496,11 @@
     .empty {
         color: var(--muted);
         padding: 8px 0;
+    }
+    .list > .list-state {
+        padding: 12px;
+        text-align: center;
+        border-top: 0;
     }
 
     html.theme-dark body {
@@ -508,29 +552,6 @@
     html.theme-dark .file-viewer {
         background: #161b22;
         color: #e6edf3;
-    }
-    html.theme-dark .file-viewer-content {
-        background: #111111;
-        color: #f8fafc;
-        scrollbar-color: #334155 #11161d;
-        scrollbar-width: thin;
-    }
-    html.theme-dark .file-viewer-content::-webkit-scrollbar {
-        width: 28px;
-        height: 28px;
-    }
-    html.theme-dark .file-viewer-content::-webkit-scrollbar-track {
-        background: #11161d;
-    }
-    html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb {
-        background: #334155;
-        border-radius: 10px;
-        border-style: solid;
-        border-width: 2px 0 2px 2px;
-        border-color: #11161d;
-    }
-    html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb:hover {
-        background: #475569;
     }
     html.theme-dark .file-viewer-content .log-text { color: #f8fafc; }
     html.theme-dark .file-viewer-content .log-ts { color: #86efac; }
@@ -609,7 +630,7 @@
             display: flex;
         }
 
-        .panel h2 {
+        .panel h2:not(.pane-title) {
             text-align: center;
         }
         .backup-controls {
@@ -648,4 +669,34 @@
 
 
 
+
+
+
+
+
+
+
+
+/* File-page panes should keep the pane's native 12px right inset even when scrollbars appear. */
+body[data-page="backups"] .list.has-vscroll,
+body[data-page="crash_logs"] .list.has-vscroll,
+body[data-page="minecraft_logs"] .list.has-vscroll {
+    margin-right: 0;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+
+body[data-page="crash_logs"] .file-viewer.pane-editor,
+body[data-page="minecraft_logs"] .file-viewer.pane-editor {
+    padding-right: 12px;
+}
+
+body[data-page="crash_logs"] .pane-head-actions-group--viewer,
+body[data-page="minecraft_logs"] .pane-head-actions-group--viewer,
+body[data-page="crash_logs"] .file-viewer-content,
+body[data-page="minecraft_logs"] .file-viewer-content,
+body[data-page="crash_logs"] .file-viewer-content.has-vscroll,
+body[data-page="minecraft_logs"] .file-viewer-content.has-vscroll {
+    margin-right: 0;
+}
 

@@ -1,8 +1,10 @@
 """Route registration for the shell-first MC web dashboard."""
+import inspect
 import threading
 import time
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
+from markupsafe import Markup
 from app.core import profiling
 from app.queries import dashboard_queries as dashboard_queries_service
 
@@ -73,28 +75,45 @@ def register_routes(app, state):
             current_client_id=_current_request_client_id(),
         )
 
-    # Route: /
+    def _wants_fragment_response():
+        return str(request.headers.get("X-MCWEB-Fragment", "") or "").strip() == "1"
+
+    def _render_shell_page(fragment_template, *, current_page, page_title, **context):
+        fragment_html = render_template(fragment_template, current_page=current_page, **context)
+        if _wants_fragment_response():
+            response = app.make_response(fragment_html)
+            response.headers["X-MCWEB-Page-Title"] = page_title
+            response.headers["X-MCWEB-Page-Key"] = current_page
+            return response
+        return render_template(
+            "app_shell.html",
+            current_page=current_page,
+            page_title=page_title,
+            initial_page_html=Markup(fragment_html),
+            initial_metrics_snapshot=state["get_cached_dashboard_metrics"](),
+        )
+
     @app.route("/")
     def index():
-        """Render the lightweight dashboard shell; live content hydrates client-side."""
+        """Render the persistent dashboard shell or the home fragment payload."""
         home = dashboard_queries_service.get_dashboard_shell_model(state, request.args.get("msg", ""))
-        return render_template(
-            state["HTML_TEMPLATE_NAME"],
+        return _render_shell_page(
+            "fragments/home_fragment.html",
             current_page="home",
+            page_title="Minecraft Control",
             csrf_token=state["_ensure_csrf_token"](),
             alert_message=home["alert_message"],
             alert_message_code=home["message_code"],
             home_page_heartbeat_interval_ms=state["HOME_PAGE_HEARTBEAT_INTERVAL_MS"],
+            metrics_snapshot=state["get_cached_dashboard_metrics"](),
         )
 
-    # Route: /home-heartbeat
     @app.route("/home-heartbeat", methods=["POST"])
     def home_heartbeat():
         """Refresh the short-lived activity marker used by the home-page worker."""
         state["_mark_home_page_client_active"]()
         return ("", 204)
 
-    # Route: /ui-error-log
     @app.route("/ui-error-log", methods=["POST"])
     def ui_error_log():
         """Capture client-side modal failures in the server log."""
@@ -111,13 +130,11 @@ def register_routes(app, state):
         )
         return ("", 204)
 
-    # Route: /favicon.ico
     @app.route("/favicon.ico")
     def favicon():
         """Redirect the browser to the configured favicon asset."""
         return redirect(state["FAVICON_URL"])
 
-    # Route: /sw.js
     @app.route("/sw.js")
     def service_worker():
         """Serve root-scoped service worker for offline shell/recovery."""
@@ -127,31 +144,30 @@ def register_routes(app, state):
         response.headers["Expires"] = "0"
         return response
 
-    # Route: /readme
     @app.route("/readme")
     def readme_page():
-        """Render the documentation shell page."""
-        return render_template("documentation.html", current_page="readme")
+        """Render the documentation shell page or its client-side fragment."""
+        return _render_shell_page(
+            "fragments/documentation_fragment.html",
+            current_page="readme",
+            page_title="README Documentation",
+        )
 
-    # Route: /doc/server_setup_doc.md
     @app.route("/doc/server_setup_doc.md")
     def readme_markdown():
         """Serve the markdown source used by the documentation page."""
         return send_from_directory(str(state["DOCS_DIR"]), "server_setup_doc.md")
 
-    # Route: /doc/readme-url
     @app.route("/doc/readme-url")
     def readme_url_config():
         """Return the configured readme URL used by the documentation shell."""
         return jsonify({"url": state["DOC_README_URL"]})
 
-    # Route: /observed-state
     @app.route("/observed-state")
     def observed_state():
         """Return observed runtime state derived from service/filesystem probes."""
         return jsonify(dashboard_queries_service.get_observed_state_model(state))
 
-    # Route: /consistency-check
     @app.route("/consistency-check")
     def consistency_check():
         """Return runtime consistency/invariant report for diagnostics/admin checks."""
@@ -164,7 +180,6 @@ def register_routes(app, state):
             state["record_successful_password_ip"]()
         return jsonify(dashboard_queries_service.get_consistency_report_model(state, auto_repair=auto_repair))
 
-    # Route: /profiling-summary
     @app.route("/profiling-summary")
     def profiling_summary():
         """Return in-process profiling summary when MCWEB_PROFILE is enabled."""
@@ -176,13 +191,11 @@ def register_routes(app, state):
         state["record_successful_password_ip"]()
         return jsonify({"ok": True, "profiling": profiling.summary()})
 
-    # Route: /device-name-map
     @app.route("/device-name-map")
     def device_name_map():
         """Return the current IP-to-device-name mapping for client-side rendering."""
         return jsonify({"map": state["get_device_name_map"]()})
 
-    # Route: /maintenance/nav-alert/restore-pane-open
     @app.route("/maintenance/nav-alert/restore-pane-open", methods=["POST"])
     def maintenance_nav_alert_restore_pane_open():
         """Record a short-lived restore-pane activity signal for cross-client nav attention."""
@@ -201,16 +214,23 @@ def register_routes(app, state):
                 restore_pane_alert_client_id_ref[0] = opener_client_id
         return ("", 204)
 
-    # Route: /maintenance/nav-alert/state
     @app.route("/maintenance/nav-alert/state")
     def maintenance_nav_alert_state():
         """Return nav attention state for the current request identity."""
         return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
     register_file_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
-    register_maintenance_routes(app, state)
+    maintenance_route_params = inspect.signature(register_maintenance_routes).parameters
+    if "render_shell_page" in maintenance_route_params:
+        register_maintenance_routes(app, state, render_shell_page=_render_shell_page)
+    else:
+        register_maintenance_routes(app, state)
     register_control_routes(
         app,
         state,
         run_cleanup_event_if_enabled=run_cleanup_event_if_enabled,
     )
+
+
+
+

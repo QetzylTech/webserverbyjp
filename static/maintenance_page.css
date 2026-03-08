@@ -2,7 +2,7 @@ body {
   background: var(--ui-input-bg);
 }
 
-.maintenance-wrap {
+.page-panes--maintenance {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
@@ -15,34 +15,35 @@ body {
   min-height: 100dvh;
 }
 
-.maintenance-panel {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.maintenance-top-header {
+.page-panes--maintenance .page-pane--header {
   grid-area: header;
-  display: block;
+  display: flex;
+  flex-direction: column;
   overflow: visible;
   min-width: 0;
   height: auto;
 }
 
-.maintenance-title-wrap,
-.maintenance-title-row {
+.page-panes--maintenance .page-pane--header > .pane-head {
   width: 100%;
   min-width: 0;
+  padding: 0 0 12px;
 }
 
 .maintenance-panel h2 {
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 .maintenance-meta {
   margin: 4px 0;
 }
 
-.maintenance-header-actions {
+.page-panes--maintenance .page-pane--header > .pane-content {
+  min-width: 0;
+  padding: 0;
+}
+
+.pane-head-actions-group--header {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -50,7 +51,7 @@ body {
   flex-wrap: wrap;
 }
 
-.maintenance-header-actions .maintenance-header-btn {
+.pane-head-actions-group--header .maintenance-header-btn {
   display: inline-flex;
   align-items: center;
 }
@@ -67,7 +68,7 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 0;
   width: 100%;
   min-width: 0;
 }
@@ -132,7 +133,7 @@ body {
   flex: 0 0 auto;
 }
 
-.maintenance-left-pane {
+.page-panes--maintenance .page-pane--list {
   grid-area: left;
   display: flex;
   flex-direction: column;
@@ -140,63 +141,30 @@ body {
   overflow: hidden;
 }
 
-.maintenance-pane-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 0;
+.page-panes--maintenance .page-pane--list > .pane-head {
+  padding: 0 0 12px;
 }
 
-.maintenance-pane-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: 1 1 auto;
-  gap: 8px;
-  min-width: 0;
-}
-
-.maintenance-pane-title-row h2 {
-  margin: 0;
-}
-
-.maintenance-pane-title-row h2.maintenance-spaced-title {
-  margin: 12px 0 0 0;
-}
-
-.maintenance-pane-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.maintenance-left-pane .maintenance-pane-head {
-  align-items: baseline;
-  flex-wrap: wrap;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-.maintenance-left-pane .maintenance-pane-head .maintenance-meta {
-  margin: 0;
-}
-
-.maintenance-left-pane .maintenance-pane-head h2 {
-  margin: 12px 0;
-}
-
-.maintenance-left-content {
+.page-panes--maintenance .page-pane--list > .pane-content {
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0;
+  padding: 0;
 }
 
 .maintenance-file-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.maintenance-selection-count {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
 }
 
 #cleanup-file-list .maintenance-file {
@@ -233,26 +201,53 @@ body {
   opacity: 0.72;
 }
 
-.maintenance-right-pane {
+.page-panes--maintenance .page-pane--action {
   grid-area: right;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 
-.panel.maintenance-right-pane {
-  padding: 14px 0 14px 14px;
+.page-panes--maintenance .page-pane--action > .pane-head {
+  padding: 0 0 12px;
+}
+
+.page-panes--maintenance .page-pane--action > .pane-head .pane-head-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.page-panes--maintenance .page-pane--action > .pane-head .pane-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.page-panes--maintenance .page-pane--action > .pane-head .pane-head-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.page-panes--maintenance .page-pane--action > .pane-head .pane-head-actions > .btn-backup,
+.page-panes--maintenance .page-pane--action > .pane-head .pane-head-actions > .maintenance-header-btn,
+.page-panes--maintenance .page-pane--action > .pane-head .pane-head-actions .nav-link {
+  white-space: nowrap;
+}
+
+.page-panes--maintenance .page-pane--action > .pane-content {
+  padding: 0;
 }
 
 .maintenance-action-content {
   background: transparent;
   border-radius: 10px;
   padding: 0;
-  width: calc(100% + 14px);
+  width: auto;
   align-self: stretch;
-  margin-right: -14px;
-  padding-right: 0;
+  margin-right: 0;
   box-sizing: border-box;
   min-height: 0;
   flex: 1 1 auto;
@@ -260,29 +255,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
-  scrollbar-color: var(--pane-scrollbar-thumb) var(--pane-scrollbar-track);
-  scrollbar-width: thin;
 }
-
-.maintenance-action-content::-webkit-scrollbar {
-  width: var(--pane-scrollbar-size);
-  height: var(--pane-scrollbar-size);
-}
-
-.maintenance-action-content::-webkit-scrollbar-track {
-  background: var(--pane-scrollbar-track);
-}
-
-.maintenance-action-content::-webkit-scrollbar-thumb {
-  background: var(--pane-scrollbar-thumb);
-  border-radius: var(--pane-content-radius);
-  border: 0;
-}
-
-.maintenance-action-content::-webkit-scrollbar-thumb:hover {
-  background: var(--pane-scrollbar-thumb-hover);
-}
-
 .maintenance-action-toolbar {
   display: flex;
   align-items: flex-start;
@@ -338,7 +311,7 @@ body {
   display: none;
 }
 
-.maintenance-header-actions .maintenance-header-btn.active {
+.pane-head-actions-group--header .maintenance-header-btn.active {
   background: var(--ui-blue) !important;
   color: #ffffff !important;
 }
@@ -350,20 +323,12 @@ body {
   min-width: 0;
 }
 
-.maintenance-action-content.has-vscroll .maintenance-card-list,
-.maintenance-action-content.has-vscroll #rules-card-list {
-  margin-right: -12px;
-}
-
-.maintenance-action-content:not(.has-vscroll) .maintenance-action-view {
-  padding-right: 12px;
-  box-sizing: border-box;
-}
-
 .maintenance-scope-toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .maintenance-scope-toggle[hidden] {
@@ -384,14 +349,6 @@ body {
   border-radius: 10px;
   padding: 10px;
   border: 0;
-}
-
-body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
-  margin-right: 0 !important;
-}
-
-.maintenance-action-content.has-vscroll .maintenance-card-list .maintenance-card {
-  margin-right: 0 !important;
 }
 
 #rules-card-list .maintenance-card {
@@ -604,13 +561,13 @@ body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
     min-height: 100dvh;
   }
 
-  body[data-page="maintenance"] .wrap.maintenance-wrap {
+  body[data-page="maintenance"] .wrap.page-panes--maintenance {
     height: auto;
     min-height: 100dvh;
     overflow: visible;
   }
 
-  .maintenance-wrap {
+  .page-panes--maintenance {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto auto;
     grid-template-areas:
@@ -623,24 +580,20 @@ body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
     height: auto;
   }
 
-  .maintenance-top-header {
+  .page-panes--maintenance .page-pane--header {
     height: auto;
     overflow: visible;
   }
 
-  .maintenance-top-header .maintenance-title-wrap {
-    overflow: visible;
-  }
 
-
-  .maintenance-header-actions {
+  .pane-head-actions-group--header {
     width: 100%;
     max-width: 100%;
     justify-content: flex-end;
     flex-wrap: wrap;
   }
 
-  .maintenance-header-actions .maintenance-header-btn {
+  .pane-head-actions-group--header .maintenance-header-btn {
     width: auto;
     flex: 0 0 auto;
   }
@@ -651,8 +604,8 @@ body.maintenance-both-vscroll .maintenance-card-list .maintenance-card {
 }
 
 @media (max-width: 900px) {
-  .maintenance-left-pane,
-  .maintenance-right-pane {
+  .page-panes--maintenance .page-pane--list,
+  .page-panes--maintenance .page-pane--action {
     height: 500px;
     max-height: 500px;
   }
@@ -684,22 +637,6 @@ html.theme-dark .maintenance-card-title {
   color: #9fb0c6;
 }
 
-html.theme-dark .maintenance-action-content {
-  scrollbar-color: var(--pane-scrollbar-thumb-dark) var(--pane-scrollbar-track-dark);
-}
-
-html.theme-dark .maintenance-action-content::-webkit-scrollbar-track {
-  background: var(--pane-scrollbar-track-dark);
-}
-
-html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb {
-  background: var(--pane-scrollbar-thumb-dark);
-  border: 0;
-}
-
-html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb:hover {
-  background: var(--pane-scrollbar-thumb-hover-dark);
-}
 
 html.theme-dark .maintenance-meta,
 html.theme-dark .maintenance-action-toolbar .maintenance-meta,

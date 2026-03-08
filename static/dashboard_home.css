@@ -34,29 +34,50 @@
         overflow: hidden;
     }
 
-    .container {
+    .page-panes--home {
         max-width: none;
         margin: 0;
         width: 100%;
         height: 100dvh;
         padding: 12px;
-        display: flex;
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
         gap: 12px;
+        align-items: stretch;
         overflow: hidden;
     }
 
-    .header {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        justify-content: space-between;
-        align-items: center;
-        background: var(--surface);
-        border: 0;
-        border-radius: 14px;
-        padding: 12px 12px 12px;
+    /* Home now follows the shared pane pattern: panel -> pane-head + pane-content. */
+    .page-panes--home .page-pane--header {
+        min-height: 0;
+        height: auto;
+        overflow: hidden;
         box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+    }
+
+    .pane-head {
+        padding: 12px;
+    }
+
+    .pane-content {
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .page-panes--home .page-pane--header > .pane-head {
+        padding: 12px 12px 0;
+    }
+
+    .page-panes--home .page-pane--header > .pane-content {
+        padding: 12px 12px 12px;
+    }
+
+    .page-panes--home .page-pane--live > .pane-content {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 0 12px 12px;
     }
 
     .stats-groups {
@@ -160,9 +181,7 @@
     }
 
 
-    .logs {
-        display: block;
-        flex: 1;
+    .page-panes--home .page-pane--live {
         min-height: 0;
         overflow: hidden;
     }
@@ -179,14 +198,29 @@
         height: 100%;
     }
 
-    .panel-header {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        align-items: center;
-        padding: 10px 12px;
+    .page-panes--home .page-pane--live > .pane-head {
+        padding: 12px;
         border-bottom: 0;
         background: #ffffff;
+    }
+
+    .home-log-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 12px;
+        min-width: 0;
+        width: 100%;
+    }
+
+    .pane-head-actions-group--live {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        flex: 0 1 auto;
+        min-width: 0;
+        width: 100%;
     }
 
     #log-source {
@@ -221,9 +255,9 @@
         cursor: not-allowed;
     }
 
-    .console-box {
+        .console-box {
         display: block;
-        margin: 0 12px 12px;
+        margin: 0;
         min-height: 0;
         max-height: none;
         overflow: auto;
@@ -357,7 +391,7 @@
         color: #e6edf3;
     }
 
-    html.theme-dark .header,
+    html.theme-dark .page-panes--home .page-pane--header,
     html.theme-dark .panel,
     html.theme-dark .modal-card {
         background: #161b22;
@@ -379,13 +413,13 @@
     }
 
     html.theme-dark .status-row strong,
-    html.theme-dark .title h1,
-    html.theme-dark .panel-header strong,
+    html.theme-dark .page-panes--home .page-pane--header .pane-title,
+    html.theme-dark .page-panes--home .page-pane--live .pane-title,
     html.theme-dark .modal-title {
         color: #e6edf3;
     }
 
-    html.theme-dark .panel-header {
+    html.theme-dark .page-panes--home .page-pane--live > .pane-head {
         background: #161b22;
     }
 
@@ -483,9 +517,10 @@
             overflow: visible;
         }
 
-        .container {
-            display: flex;
-            flex-direction: column;
+        .page-panes--home {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: auto auto;
             gap: 12px;
             height: auto;
             min-height: 100dvh;
@@ -493,9 +528,10 @@
         }
 
 
-        .header .title-row {
+        .home-overview-row {
             flex-direction: column;
             align-items: flex-start;
+            margin-bottom: 12px;
         }
 
         .actions {
@@ -531,17 +567,14 @@
             word-break: break-word;
         }
 
-        .logs {
-            flex: 0 0 auto;
+        .page-panes--home .page-pane--live {
             overflow: visible;
-        }
-
-        .panel {
             height: 500px;
             max-height: 500px;
         }
 
-        .panel-header {
+        .home-log-row,
+        .pane-head-actions-group--live {
             flex-direction: column;
             align-items: stretch;
         }
@@ -557,3 +590,12 @@
             overflow: auto;
         }
     }
+
+
+
+/* Ensure Home header gap matches cleanup page */
+.home-overview-row {
+    margin-bottom: 12px;
+}
+
+

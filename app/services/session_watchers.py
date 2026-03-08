@@ -42,10 +42,17 @@ def idle_player_watcher(ctx):
                     if ctx.idle_zero_players_since is None:
                         ctx.idle_zero_players_since = now
                     elif now - ctx.idle_zero_players_since >= ctx.IDLE_ZERO_PLAYERS_SECONDS:
-                        # Countdown reached zero: surface shutdown state immediately in UI.
-                        ctx.set_service_status_intent("shutting")
-                        ctx.stop_server_automatically()
-                        ctx.idle_zero_players_since = None
+                        intent_getter = getattr(ctx, "get_service_status_intent", None)
+                        intent = ""
+                        if callable(intent_getter):
+                            try:
+                                intent = str(intent_getter() or "").strip().lower()
+                            except Exception:
+                                intent = ""
+                        if intent != "shutting":
+                            ctx.stop_server_automatically()
+                        # Keep the countdown pinned at zero until service state leaves active.
+                        ctx.idle_zero_players_since = now - ctx.IDLE_ZERO_PLAYERS_SECONDS
                 else:
                     ctx.idle_zero_players_since = None
         except Exception as exc:

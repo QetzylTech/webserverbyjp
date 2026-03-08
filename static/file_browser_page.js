@@ -1,12 +1,25 @@
-(function () {
+// File pages keep only transient viewer/restore UI state locally. Shared data
+// such as metrics, file lists, and log text comes from the persistent shell.
+let teardownFileBrowserPage = null;
+const pageModules = window.MCWebPageModules || null;
+function mountFileBrowserPage() {
+        if (typeof teardownFileBrowserPage === "function") {
+            try {
+                teardownFileBrowserPage();
+            } catch (_) {
+                // Ignore stale file-page teardown failures before remounting.
+            }
+        }
         const __MCWEB_FILES_CONFIG = window.__MCWEB_FILES_CONFIG || {};
         const csrfToken = __MCWEB_FILES_CONFIG.csrfToken ?? "";
         const http = window.MCWebHttp || null;
+        const shell = window.MCWebShell || null;
+        const domUtils = window.MCWebDomUtils || {};
+        const logUtils = window.MCWebLogUtils || {};
+        const viewerRuntime = window.MCWebFileViewerRuntime || {};
+        const dataRuntime = window.MCWebFilePageDataRuntime || {};
+        const escapeHtml = typeof logUtils.escapeHtml === "function" ? logUtils.escapeHtml : (text) => String(text || "");
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
-        const FILES_PAGE_LIST_CACHE_KEY = "mcweb.files.pageList.cache.v1";
-        const FILES_LOG_LIST_CACHE_KEY = "mcweb.files.logList.cache.v1";
-        const FILES_LOG_TEXT_CACHE_KEY = "mcweb.files.logText.cache.v1";
-        const FILES_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
         function sendFilePageHeartbeat() {
             if (document.hidden) return;
             fetch("/file-page-heartbeat", {
@@ -30,7 +43,7 @@
         const logSourceToggles = Array.from(document.querySelectorAll(".log-source-toggle"));
         let fileList = document.querySelector(".list");
         const listEmptyDynamic = document.getElementById("list-empty-dynamic");
-        const listLoading = document.getElementById("list-loading");
+        let listLoading = document.getElementById("list-loading");
         const passwordModal = document.getElementById("download-password-modal");
         const passwordTitle = document.getElementById("download-password-title");
         const passwordText = passwordModal ? passwordModal.querySelector(".modal-text") : null;
@@ -49,7 +62,7 @@
         const wrap = document.querySelector(".wrap");
         const fileViewer = document.getElementById("file-viewer");
         const fileViewerResizer = document.getElementById("file-viewer-resizer");
-        const fileViewerTitle = document.getElementById("file-viewer-title");
+        const fileViewerTitle = document.getElementById("pane-title-viewer");
         const fileViewerContent = document.getElementById("file-viewer-content");
         const fileViewerDownload = document.getElementById("file-viewer-download");
         const fileViewerClose = document.getElementById("file-viewer-close");
@@ -59,11 +72,13 @@
         const pageId = document.body.getAttribute("data-page") || "files";
         const listApiPath = String(__MCWEB_FILES_CONFIG.listApiPath || "").trim();
         const emptyText = String(__MCWEB_FILES_CONFIG.emptyText || "No files found.").trim();
+        const dataClient = (dataRuntime && typeof dataRuntime.createFilePageDataClient === "function")
+            ? dataRuntime.createFilePageDataClient({ shell, pageId, listApiPath })
+            : null;
         const viewerWidthStorageKey = `mcweb.viewerWidth.${pageId}`;
         const viewerHeightStorageKey = `mcweb.viewerHeight.${pageId}`;
         const PANE_ANIMATION_DURATION_MS = 220;
         const paneAnimations = window.MCWebPaneAnimations || null;
-        let isResizingViewer = false;
         let selectedRestoreFilename = "";
         let selectedRestoreDisplayName = "";
         let pendingAction = null;
@@ -83,13 +98,21 @@
         let restorePaneForcedByRemote = false;
         let activeLogSource = "";
         let currentLogFileSource = "";
-        let viewerCloseTimer = null;
         let fileListClickBound = false;
+        let fileMetricsUnsubscribe = null;
+        let fileViewerScrollbarCleanup = null;
+        let fileListScrollbarCleanup = null;
+        let hasRestoredShellViewState = false;
+        let pageRuntimeActive = true;
+        let fileListLoadToken = 0;
 
-        function createFallbackClientId() {
-            return (window.crypto && typeof window.crypto.randomUUID === "function")
-                ? window.crypto.randomUUID()
-                : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        function nextFileListLoadToken() {
+            fileListLoadToken += 1;
+            return fileListLoadToken;
+        }
+
+        function isCurrentFileListLoadToken(token) {
+            return pageRuntimeActive && token === fileListLoadToken;
         }
 
         const restorePaneClientId = (() => {
@@ -97,35 +120,21 @@
             if (shell && typeof shell.getPersistentClientId === "function") {
                 return shell.getPersistentClientId("mcweb.restorePaneClientId");
             }
-            return createFallbackClientId();
+            return (window.crypto && typeof window.crypto.randomUUID === "function")
+                ? window.crypto.randomUUID()
+                : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         })();
 
-        function readSessionJson(key) {
-            try {
-                const raw = window.sessionStorage.getItem(key);
-                if (!raw) return {};
-                const parsed = JSON.parse(raw);
-                return parsed && typeof parsed === "object" ? parsed : {};
-            } catch (_) {
-                return {};
-            }
+
+        function getPersistedFileViewState() {
+            return shell && typeof shell.getFilePageViewState === "function"
+                ? shell.getFilePageViewState(pageId)
+                : {};
         }
 
-        function writeSessionJson(key, payload) {
-            try {
-                window.sessionStorage.setItem(key, JSON.stringify(payload || {}));
-            } catch (_) {
-                // Ignore storage failures.
-            }
-        }
-
-        function getFreshCacheEntry(store, cacheKey) {
-            const entry = store && typeof store === "object" ? store[cacheKey] : null;
-            if (!entry || typeof entry !== "object") return null;
-            const ts = Number(entry.ts || 0);
-            if (!Number.isFinite(ts) || ts <= 0) return null;
-            if ((Date.now() - ts) > FILES_CACHE_MAX_AGE_MS) return null;
-            return entry;
+        function persistFileViewState(patch = {}) {
+            if (!shell || typeof shell.updateFilePageViewState !== "function") return;
+            shell.updateFilePageViewState(pageId, patch);
         }
 
         function setDownloadError(text) {
@@ -138,27 +147,21 @@
             errorBox.textContent = text;
             errorBox.classList.add("open");
         }
-        function syncVerticalScrollbarClass(target) {
-            if (!target) return;
-            const hasVerticalScrollbar = target.scrollHeight > target.clientHeight + 1;
-            target.classList.toggle("has-vscroll", hasVerticalScrollbar);
+        const watchVerticalScrollbarClass = typeof domUtils.watchVerticalScrollbarClass === "function"
+            ? (target) => domUtils.watchVerticalScrollbarClass(target, { observeMutations: true })
+            : () => {};
+        fileViewerScrollbarCleanup = watchVerticalScrollbarClass(fileViewerContent);
+        fileListScrollbarCleanup = watchVerticalScrollbarClass(fileList);
+        if (fileViewerContent) {
+            fileViewerContent.addEventListener("scroll", () => {
+                persistFileViewState({ viewerScrollTop: fileViewerContent.scrollTop });
+            });
         }
-        function watchVerticalScrollbarClass(target) {
-            if (!target) return;
-            syncVerticalScrollbarClass(target);
-            target.addEventListener("scroll", () => syncVerticalScrollbarClass(target), { passive: true });
-            window.addEventListener("resize", () => syncVerticalScrollbarClass(target));
-            if (window.ResizeObserver) {
-                const ro = new ResizeObserver(() => syncVerticalScrollbarClass(target));
-                ro.observe(target);
-            }
-            if (window.MutationObserver) {
-                const mo = new MutationObserver(() => syncVerticalScrollbarClass(target));
-                mo.observe(target, { childList: true, subtree: true, characterData: true });
-            }
+        if (fileList) {
+            fileList.addEventListener("scroll", () => {
+                persistFileViewState({ listScrollTop: fileList.scrollTop });
+            });
         }
-        watchVerticalScrollbarClass(fileViewerContent);
-        watchVerticalScrollbarClass(fileList);
 
         function closePasswordModal() {
             if (!passwordModal) return;
@@ -214,16 +217,19 @@
 
         function setActiveViewedFilename(filename) {
             activeViewedFilename = filename || "";
+            persistFileViewState({ activeViewedFilename });
             applyActiveFileRowHighlight();
         }
 
         function setActiveRestoreFilename(filename) {
             activeRestoreFilename = filename || "";
+            persistFileViewState({ activeRestoreFilename });
             applyActiveFileRowHighlight();
         }
 
         function setActiveLogSource(source) {
             activeLogSource = String(source || "").trim().toLowerCase();
+            persistFileViewState({ activeLogSource });
             logSourceToggles.forEach((btn) => {
                 const sourceKey = String(btn.getAttribute("data-log-source") || "").trim().toLowerCase();
                 const isActive = !!activeLogSource && sourceKey === activeLogSource;
@@ -248,7 +254,13 @@
                 panel.appendChild(list);
             }
             fileList = list;
-            watchVerticalScrollbarClass(fileList);
+            if (typeof fileListScrollbarCleanup === "function") {
+                fileListScrollbarCleanup();
+            }
+            fileListScrollbarCleanup = watchVerticalScrollbarClass(fileList);
+            fileList.addEventListener("scroll", () => {
+                persistFileViewState({ listScrollTop: fileList.scrollTop });
+            });
             ensureFileListClickBinding();
             return fileList;
         }
@@ -549,12 +561,6 @@
             applyRestorePaneSharedState(payload.nav_attention || null);
         }
 
-        function handleSharedMetricsSnapshot(event) {
-            const payload = event && event.detail && typeof event.detail === "object" ? event.detail : null;
-            if (!payload) return;
-            applyBackupMetricsSnapshot(payload);
-        }
-
         function stopFileHeartbeatPolling() {
             if (!fileHeartbeatTimer) return;
             window.clearInterval(fileHeartbeatTimer);
@@ -650,10 +656,26 @@
 </li>`.trim();
         }
 
-        function setListLoadingState(isLoading) {
-            if (listLoading) {
-                listLoading.style.display = isLoading ? "block" : "none";
+        function ensureListLoadingNode() {
+            if (!fileList) return null;
+            let node = document.getElementById("list-loading");
+            if (node && node.parentElement === fileList) {
+                listLoading = node;
+                return node;
             }
+            node = document.createElement("li");
+            node.id = "list-loading";
+            node.className = "list-state empty";
+            node.textContent = "Loading...";
+            fileList.prepend(node);
+            listLoading = node;
+            return node;
+        }
+
+        function setListLoadingState(isLoading) {
+            const node = ensureListLoadingNode();
+            if (!node) return;
+            node.style.display = isLoading ? "block" : "none";
         }
 
         function toggleEmptyState(hasRows) {
@@ -668,13 +690,55 @@
         }
 
         function listHasRows() {
-            return !!fileList && !!fileList.querySelector("li");
+            return !!fileList && !!fileList.querySelector("li:not(.list-state)");
         }
 
         function handleListLoadFailure(message) {
             setListLoadingState(false);
             setDownloadError(message || "Failed to load file list.");
             toggleEmptyState(listHasRows());
+        }
+
+        function restoreFileListScroll() {
+            if (!fileList) return;
+            const top = Number(getPersistedFileViewState().listScrollTop || 0);
+            if (!Number.isFinite(top) || top <= 0) {
+                fileList.scrollTop = 0;
+                return;
+            }
+            fileList.scrollTop = top;
+        }
+
+        function logSourceTitleFor(source) {
+            const sourceKey = String(source || "").trim().toLowerCase();
+            const toggle = logSourceToggles.find((btn) => String(btn.getAttribute("data-log-source") || "").trim().toLowerCase() === sourceKey);
+            return toggle ? String(toggle.textContent || "Log Viewer").trim() : "Log Viewer";
+        }
+
+        function restoreShellViewStateAfterListLoad() {
+            if (hasRestoredShellViewState) return;
+            hasRestoredShellViewState = true;
+            const state = getPersistedFileViewState();
+            if (!state.viewerOpen || !state.viewerRequest || typeof state.viewerRequest !== "object") return;
+            if (state.viewerKind === "file") {
+                const request = {
+                    url: String(state.viewerRequest.url || ""),
+                    downloadUrl: String(state.viewerRequest.downloadUrl || ""),
+                    filename: String(state.viewerRequest.filename || ""),
+                };
+                if (request.url) {
+                    runFileView(request, { restoreState: true }).catch(() => {});
+                }
+                return;
+            }
+            if (state.viewerKind === "log_source") {
+                const source = String(state.viewerRequest.source || "").trim().toLowerCase();
+                if (!source) return;
+                runLogSourceView({
+                    source,
+                    title: String(state.viewerRequest.title || logSourceTitleFor(source) || "Log Viewer"),
+                }, { restoreState: true }).catch(() => {});
+            }
         }
 
         function buildStandardFileItemRow(item, payload) {
@@ -732,6 +796,7 @@
         }
 
         function renderStandardFileList(payload) {
+            setDownloadError("");
             const list = ensureFileListElement();
             if (!list) return;
             const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -745,46 +810,34 @@
                 applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
             }
             applyActiveFileRowHighlight();
+            restoreFileListScroll();
+            restoreShellViewStateAfterListLoad();
         }
 
         async function loadStandardFileList() {
             if (!listApiPath || pageId === "minecraft_logs") return;
-            const cacheKey = `${pageId}:${listApiPath}`;
-            const listCache = readSessionJson(FILES_PAGE_LIST_CACHE_KEY);
-            const cachedEntry = getFreshCacheEntry(listCache, cacheKey);
-            if (cachedEntry && cachedEntry.payload) {
-                renderStandardFileList(cachedEntry.payload);
-            } else {
-                setListLoadingState(true);
-            }
-            let response;
+            const loadToken = nextFileListLoadToken();
+            setListLoadingState(true);
             try {
-                response = await fetch(listApiPath, {
-                    method: "GET",
-                    headers: { "X-Requested-With": "XMLHttpRequest" },
-                    cache: "no-store",
-                });
+                const payload = dataClient && typeof dataClient.loadStandardFileList === "function"
+                    ? await dataClient.loadStandardFileList()
+                    : (shell && typeof shell.fetchFilePageItems === "function")
+                        ? await shell.fetchFilePageItems(pageId, listApiPath)
+                        : await fetch(listApiPath, {
+                            method: "GET",
+                            headers: { "X-Requested-With": "XMLHttpRequest" },
+                            cache: "no-store",
+                        }).then((response) => response.ok ? response.json() : Promise.reject(new Error("load_failed")));
+                if (!isCurrentFileListLoadToken(loadToken)) return;
+                renderStandardFileList(payload);
             } catch (_) {
+                if (!isCurrentFileListLoadToken(loadToken)) return;
                 handleListLoadFailure("Failed to load file list.");
-                return;
             }
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload || payload.ok === false) {
-                handleListLoadFailure((payload && payload.message) ? payload.message : "Failed to load file list.");
-                return;
-            }
-            setDownloadError("");
-            renderStandardFileList(payload);
-            listCache[cacheKey] = { ts: Date.now(), payload };
-            writeSessionJson(FILES_PAGE_LIST_CACHE_KEY, listCache);
         }
 
         function renderLogFileList(payload) {
+            setDownloadError("");
             const list = ensureFileListElement();
             if (!list) return;
             const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -795,47 +848,34 @@
             applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
             setActiveViewedFilename("");
             applyActiveFileRowHighlight();
+            restoreFileListScroll();
+            restoreShellViewStateAfterListLoad();
         }
 
         async function loadLogFileSourceList(source) {
             const sourceKey = String(source || "").trim().toLowerCase();
             if (!sourceKey) return;
-            const listCache = readSessionJson(FILES_LOG_LIST_CACHE_KEY);
-            const cachedListEntry = getFreshCacheEntry(listCache, sourceKey);
-            if (cachedListEntry && cachedListEntry.payload) {
-                currentLogFileSource = String(cachedListEntry.payload.source || sourceKey);
+            const loadToken = nextFileListLoadToken();
+            setListLoadingState(true);
+            try {
+                const payload = dataClient && typeof dataClient.loadLogFileList === "function"
+                    ? await dataClient.loadLogFileList(sourceKey)
+                    : (shell && typeof shell.fetchLogFileList === "function")
+                        ? await shell.fetchLogFileList(sourceKey)
+                        : await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
+                            method: "GET",
+                            headers: { "X-Requested-With": "XMLHttpRequest" },
+                            cache: "no-store",
+                        }).then((response) => response.ok ? response.json() : Promise.reject(new Error("load_failed")));
+                if (!isCurrentFileListLoadToken(loadToken)) return;
+                currentLogFileSource = String(payload.source || sourceKey);
+                persistFileViewState({ currentLogFileSource });
                 setActiveLogSource(currentLogFileSource);
-                renderLogFileList(cachedListEntry.payload);
-            } else {
-                setListLoadingState(true);
-            }
-            let response;
-            try {
-                response = await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
-                    method: "GET",
-                    headers: { "X-Requested-With": "XMLHttpRequest" },
-                    cache: "no-store",
-                });
+                renderLogFileList(payload);
             } catch (_) {
+                if (!isCurrentFileListLoadToken(loadToken)) return;
                 handleListLoadFailure("Failed to load log file list.");
-                return;
             }
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload || payload.ok === false) {
-                handleListLoadFailure((payload && payload.message) ? payload.message : "Failed to load log file list.");
-                return;
-            }
-            setDownloadError("");
-            currentLogFileSource = String(payload.source || sourceKey);
-            setActiveLogSource(currentLogFileSource);
-            renderLogFileList(payload);
-            listCache[sourceKey] = { ts: Date.now(), payload };
-            writeSessionJson(FILES_LOG_LIST_CACHE_KEY, listCache);
         }
 
         function backupCategoryFromName(name) {
@@ -868,248 +908,51 @@
                 const visibleCount = items.filter((item) => item.style.display !== "none").length;
                 listEmptyDynamic.style.display = visibleCount > 0 ? "none" : "block";
             }
-        }
-
-        function escapeHtml(text) {
-            return (text || "")
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/\"/g, "&quot;")
-                .replace(/'/g, "&#39;");
-        }
-
-        function bracketClass(token) {
-            if (/^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]$/.test(token)) return "log-ts";
-            if (/[/]\s*error\]/i.test(token) || /[/]\s*fatal\]/i.test(token)) return "log-level-error";
-            if (/[/]\s*warn\]/i.test(token)) return "log-level-warn";
-            if (/[/]\s*info\]/i.test(token)) return "log-level-info";
-            return "log-bracket";
-        }
-
-        function formatTextSegment(text, isLineStart) {
-            if (!text) return "";
-            if (isLineStart) {
-                const m = text.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})(\s+.*)?$/);
-                if (m) {
-                    const ts = `<span class="log-ts">${escapeHtml(m[1])}</span>`;
-                    const rest = m[2] ? `<span class="log-text">${escapeHtml(m[2])}</span>` : "";
-                    return ts + rest;
-                }
-            }
-            return `<span class="log-text">${escapeHtml(text)}</span>`;
-        }
-
-        function formatViewerLogLine(line) {
-            const raw = line || "";
-            const lower = raw.toLowerCase();
-            if (lower.includes("error") || lower.includes("overloaded") || lower.includes("delayed")) {
-                return `<span class="log-line log-level-error">${escapeHtml(raw)}</span>`;
-            }
-            const bracketRe = /\[[^\]]*\]/g;
-            let out = "";
-            let cursor = 0;
-            let firstSegment = true;
-            let match;
-            while ((match = bracketRe.exec(raw)) !== null) {
-                const start = match.index;
-                const end = start + match[0].length;
-                out += formatTextSegment(raw.slice(cursor, start), firstSegment);
-                out += `<span class="${bracketClass(match[0])}">${escapeHtml(match[0])}</span>`;
-                cursor = end;
-                firstSegment = false;
-            }
-            out += formatTextSegment(raw.slice(cursor), firstSegment);
-            return `<span class="log-line">${out || '<span class="log-muted">(empty line)</span>'}</span>`;
+            persistFileViewState({
+                backupSortMode: selectedSort,
+                backupFilters: Object.fromEntries(
+                    backupFilterInputs.map((input) => [input.value, !!input.checked])
+                ),
+            });
         }
 
         function formatViewerLogHtml(rawText) {
-            const lines = String(rawText || "").split("\n");
-            if (lines.length === 0) {
-                return '<span class="log-line"><span class="log-muted">(empty line)</span></span>';
-            }
-            return lines.map(formatViewerLogLine).join("");
+            return logUtils.formatBracketAwareLogHtml(rawText, { highlightErrorLine: true });
         }
 
+        const viewerController = (viewerRuntime && typeof viewerRuntime.createViewerController === "function")
+            ? viewerRuntime.createViewerController({
+                wrap,
+                fileViewer,
+                fileViewerResizer,
+                paneAnimations,
+                viewerWidthStorageKey,
+                viewerHeightStorageKey,
+                paneAnimationDurationMs: PANE_ANIMATION_DURATION_MS,
+            })
+            : null;
+
         function closeViewer() {
-            if (!wrap || !fileViewer) return;
-            if (viewerCloseTimer) {
-                window.clearTimeout(viewerCloseTimer);
-                viewerCloseTimer = null;
+            selectedRestoreFilename = "";
+            selectedRestoreDisplayName = "";
+            restorePaneForcedByRemote = false;
+            setBackupRestoreControlsVisible(false);
+            setActiveViewedFilename("");
+            setActiveRestoreFilename("");
+            persistFileViewState({ viewerOpen: false });
+            if (viewerController) {
+                viewerController.close();
             }
-            const finishClose = () => {
-                fileViewer.setAttribute("aria-hidden", "true");
-                if (pageId === "backups") {
-                    selectedRestoreFilename = "";
-                    selectedRestoreDisplayName = "";
-                    restorePaneForcedByRemote = false;
-                    setBackupRestoreControlsVisible(false);
-                    setActiveRestoreFilename("");
-                    stopRestorePaneAlertHeartbeat();
-                } else {
-                    setActiveViewedFilename("");
-                    if (pageId !== "minecraft_logs") {
-                        setActiveLogSource("");
-                    }
-                }
-                if (fileViewerResizer) {
-                    fileViewerResizer.classList.remove("is-dragging");
-                }
-                clearPaneAnimation(fileViewer);
-                clearFloatingPaneStyles(fileViewer);
-            };
-            if (!wrap.classList.contains("viewer-open")) {
-                finishClose();
-                return;
+            if (fileViewerTitle) {
+                fileViewerTitle.textContent = "File Viewer";
             }
-            floatPaneForClose(fileViewer);
-            wrap.classList.remove("viewer-open");
-            playPaneAnimation(fileViewer, "out", { keepClassOnEnd: true });
-            viewerCloseTimer = window.setTimeout(finishClose, PANE_ANIMATION_DURATION_MS + 20);
         }
 
         function openViewer() {
-            if (!wrap || !fileViewer) return;
-            if (viewerCloseTimer) {
-                window.clearTimeout(viewerCloseTimer);
-                viewerCloseTimer = null;
+            persistFileViewState({ viewerOpen: true });
+            if (viewerController) {
+                viewerController.open();
             }
-            const alreadyOpen = wrap.classList.contains("viewer-open");
-            clearFloatingPaneStyles(fileViewer);
-            clearPaneAnimation(fileViewer);
-            wrap.classList.add("viewer-open");
-            fileViewer.setAttribute("aria-hidden", "false");
-            if (!alreadyOpen) {
-                playPaneAnimation(fileViewer, "in");
-            }
-        }
-
-        function clearPaneAnimation(target) {
-            if (!paneAnimations) return;
-            paneAnimations.clearPaneAnimation(target);
-        }
-
-        function playPaneAnimation(target, direction, options = {}) {
-            if (!paneAnimations) return;
-            paneAnimations.playPaneAnimation(target, direction, isStackedViewerLayout(), options);
-        }
-
-        function floatPaneForClose(target) {
-            if (!paneAnimations) return;
-            paneAnimations.floatPaneForClose(target);
-        }
-
-        function clearFloatingPaneStyles(target) {
-            if (!paneAnimations) return;
-            paneAnimations.clearFloatingPaneStyles(target);
-        }
-
-        function clampViewerWidth(px) {
-            const minPx = 340;
-            const maxPx = Math.max(380, Math.floor(window.innerWidth * 0.75));
-            return Math.max(minPx, Math.min(maxPx, Math.round(px)));
-        }
-
-        function clampViewerHeight(px) {
-            const minPx = 220;
-            const maxPx = Math.max(280, Math.floor(window.innerHeight * 0.75));
-            return Math.max(minPx, Math.min(maxPx, Math.round(px)));
-        }
-
-        function applyViewerWidth(px) {
-            if (!wrap) return;
-            const clamped = clampViewerWidth(px);
-            wrap.style.setProperty("--viewer-width", `${clamped}px`);
-            try {
-                localStorage.setItem(viewerWidthStorageKey, String(clamped));
-            } catch (_) {
-                // Ignore storage failures.
-            }
-        }
-
-        function loadViewerWidth() {
-            if (!wrap) return;
-            let saved = "";
-            try {
-                saved = localStorage.getItem(viewerWidthStorageKey) || "";
-            } catch (_) {
-                saved = "";
-            }
-            const parsed = Number(saved);
-            if (Number.isFinite(parsed) && parsed > 0) {
-                applyViewerWidth(parsed);
-                return;
-            }
-            applyViewerWidth(Math.floor(window.innerWidth * 0.4));
-        }
-
-        function applyViewerHeight(px) {
-            if (!wrap) return;
-            const clamped = clampViewerHeight(px);
-            wrap.style.setProperty("--viewer-height", `${clamped}px`);
-            try {
-                localStorage.setItem(viewerHeightStorageKey, String(clamped));
-            } catch (_) {
-                // Ignore storage failures.
-            }
-        }
-
-        function loadViewerHeight() {
-            if (!wrap) return;
-            let saved = "";
-            try {
-                saved = localStorage.getItem(viewerHeightStorageKey) || "";
-            } catch (_) {
-                saved = "";
-            }
-            const parsed = Number(saved);
-            if (Number.isFinite(parsed) && parsed > 0) {
-                applyViewerHeight(parsed);
-                return;
-            }
-            applyViewerHeight(Math.floor(window.innerHeight * 0.42));
-        }
-
-        function isStackedViewerLayout() {
-            return window.innerWidth <= 1100;
-        }
-
-        function updateViewerWidthFromPointer(clientX) {
-            if (!wrap) return;
-            const viewportWidth = window.innerWidth;
-            const desired = viewportWidth - clientX - 12;
-            applyViewerWidth(desired);
-        }
-
-        function updateViewerHeightFromPointer(clientY) {
-            if (!wrap) return;
-            const wrapRect = wrap.getBoundingClientRect();
-            const desired = wrapRect.bottom - clientY - 6;
-            applyViewerHeight(desired);
-        }
-
-        function stopViewerResize() {
-            if (!isResizingViewer) return;
-            isResizingViewer = false;
-            document.body.style.cursor = "";
-            document.body.style.userSelect = "";
-            if (fileViewerResizer) {
-                fileViewerResizer.classList.remove("is-dragging");
-            }
-        }
-
-        function startViewerResize(event) {
-            if (!fileViewerResizer || !wrap || !wrap.classList.contains("viewer-open")) return;
-            isResizingViewer = true;
-            document.body.style.cursor = isStackedViewerLayout() ? "row-resize" : "col-resize";
-            document.body.style.userSelect = "none";
-            fileViewerResizer.classList.add("is-dragging");
-            if (isStackedViewerLayout()) {
-                updateViewerHeightFromPointer(event.clientY);
-            } else {
-                updateViewerWidthFromPointer(event.clientX);
-            }
-            event.preventDefault();
         }
 
         function openPasswordModal(actionRequest) {
@@ -1342,7 +1185,7 @@
             showSuccessModal(`Restore requested for ${restoreDisplay}.`);
         }
 
-        async function runFileView(viewRequest) {
+        async function runFileView(viewRequest, options = {}) {
             if (!fileViewer || !fileViewerContent || !fileViewerTitle) return;
             if (pageId !== "minecraft_logs") {
                 setActiveLogSource("");
@@ -1350,33 +1193,37 @@
             setActiveViewedFilename(viewRequest.filename || "");
             fileViewerTitle.textContent = viewRequest.filename || "File Viewer";
             fileViewerContent.textContent = "Loading...";
-            setViewerDownloadMode("download_viewed", "Download", false, {
+            const normalizedRequest = {
+                url: viewRequest.url || "",
                 downloadUrl: viewRequest.downloadUrl || "",
                 filename: viewRequest.filename || "",
+            };
+            setViewerDownloadMode("download_viewed", "Download", false, {
+                downloadUrl: normalizedRequest.downloadUrl,
+                filename: normalizedRequest.filename,
             });
+            persistFileViewState({ viewerKind: "file", viewerRequest: normalizedRequest, viewerOpen: true });
             openViewer();
 
-            let response;
+            let payload = null;
             try {
-                response = await fetch(viewRequest.url, {
-                    method: "GET",
-                    headers: {
-                        "X-Requested-With": "XMLHttpRequest",
-                    },
-                    cache: "no-store",
-                });
+                payload = dataClient && typeof dataClient.loadViewedFile === "function"
+                    ? await dataClient.loadViewedFile(viewRequest.url)
+                    : (shell && typeof shell.fetchViewedFile === "function")
+                        ? await shell.fetchViewedFile(viewRequest.url)
+                        : await fetch(viewRequest.url, {
+                            method: "GET",
+                            headers: {
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                            cache: "no-store",
+                        }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Failed to load file.")));
             } catch (_) {
                 fileViewerContent.textContent = "Failed to load file.";
                 return;
             }
 
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload || !payload.ok) {
+            if (!payload || !payload.ok) {
                 const message = (payload && payload.message) ? payload.message : "Failed to load file.";
                 fileViewerContent.innerHTML = formatViewerLogHtml(message);
                 return;
@@ -1384,14 +1231,16 @@
             fileViewerTitle.textContent = payload.filename || viewRequest.filename || "File Viewer";
             setActiveViewedFilename(payload.filename || viewRequest.filename || "");
             fileViewerContent.innerHTML = formatViewerLogHtml(payload.content || "");
-            fileViewerContent.scrollTop = 0;
+            const restoredTop = options.restoreState ? Number(getPersistedFileViewState().viewerScrollTop || 0) : 0;
+            fileViewerContent.scrollTop = restoredTop;
+            persistFileViewState({ viewerScrollTop: fileViewerContent.scrollTop });
             setViewerDownloadMode("download_viewed", "Download", true, {
                 downloadUrl: viewRequest.downloadUrl || "",
                 filename: payload.filename || viewRequest.filename || "",
             });
         }
 
-        async function runLogSourceView(logRequest) {
+        async function runLogSourceView(logRequest, options = {}) {
             if (!fileViewer || !fileViewerContent || !fileViewerTitle) return;
             const source = String(logRequest?.source || "").trim();
             const title = String(logRequest?.title || "Log Viewer").trim();
@@ -1400,44 +1249,33 @@
             setActiveLogSource(source);
             fileViewerTitle.textContent = title;
             fileViewerContent.textContent = "Loading...";
+            const normalizedRequest = {
+                source,
+                title,
+            };
             setViewerDownloadMode("", "Download", false, {});
+            persistFileViewState({ viewerKind: "log_source", viewerRequest: normalizedRequest, viewerOpen: true });
             openViewer();
-            const textCache = readSessionJson(FILES_LOG_TEXT_CACHE_KEY);
-            const cachedTextEntry = getFreshCacheEntry(textCache, source);
-            if (cachedTextEntry && typeof cachedTextEntry.logs === "string") {
-                fileViewerContent.innerHTML = formatViewerLogHtml(cachedTextEntry.logs || "(no logs)");
-                fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
-            }
 
-            let response;
             try {
-                response = await fetch(`/log-text/${encodeURIComponent(source)}`, {
-                    method: "GET",
-                    headers: {
-                        "X-Requested-With": "XMLHttpRequest",
-                    },
-                    cache: "no-store",
-                });
+                const logs = (shell && typeof shell.fetchLogText === "function")
+                    ? String(await shell.fetchLogText(source) || "(no logs)")
+                    : await fetch(`/log-text/${encodeURIComponent(source)}`, {
+                        method: "GET",
+                        headers: { "X-Requested-With": "XMLHttpRequest" },
+                        cache: "no-store",
+                    }).then((response) => response.ok ? response.json() : null)
+                        .then((payload) => String((payload && payload.logs) || "(no logs)"));
+                fileViewerContent.innerHTML = formatViewerLogHtml(logs);
+                if (options.restoreState) {
+                    fileViewerContent.scrollTop = Number(getPersistedFileViewState().viewerScrollTop || 0);
+                } else {
+                    fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
+                }
+                persistFileViewState({ viewerScrollTop: fileViewerContent.scrollTop });
             } catch (_) {
-                fileViewerContent.textContent = "Failed to load log source.";
-                return;
-            }
-
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload) {
                 fileViewerContent.innerHTML = formatViewerLogHtml("Failed to load log source.");
-                return;
             }
-            const logs = String(payload.logs || "(no logs)");
-            fileViewerContent.innerHTML = formatViewerLogHtml(logs);
-            fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
-            textCache[source] = { ts: Date.now(), logs };
-            writeSessionJson(FILES_LOG_TEXT_CACHE_KEY, textCache);
         }
 
         if (passwordCancel) {
@@ -1534,37 +1372,46 @@
             });
         }
         if (fileViewerResizer) {
-            fileViewerResizer.addEventListener("pointerdown", startViewerResize);
+            fileViewerResizer.addEventListener("pointerdown", (event) => viewerController && viewerController.startResize(event));
             window.addEventListener("pointermove", (event) => {
-                if (!isResizingViewer) return;
-                if (isStackedViewerLayout()) {
-                    updateViewerHeightFromPointer(event.clientY);
-                } else {
-                    updateViewerWidthFromPointer(event.clientX);
-                }
+                if (!viewerController || !viewerController.isResizing()) return;
+                viewerController.handlePointerMove(event);
             });
-            window.addEventListener("pointerup", stopViewerResize);
-            window.addEventListener("pointercancel", stopViewerResize);
-            window.addEventListener("blur", stopViewerResize);
+            window.addEventListener("pointerup", () => viewerController && viewerController.stopResize());
+            window.addEventListener("pointercancel", () => viewerController && viewerController.stopResize());
+            window.addEventListener("blur", () => viewerController && viewerController.stopResize());
         }
         window.addEventListener("resize", () => {
-            if (isStackedViewerLayout()) {
-                const currentHeight = parseFloat((wrap && wrap.style.getPropertyValue("--viewer-height")) || "0");
-                if (Number.isFinite(currentHeight) && currentHeight > 0) {
-                    applyViewerHeight(currentHeight);
-                }
-                return;
-            }
-            const currentWidth = parseFloat((wrap && wrap.style.getPropertyValue("--viewer-width")) || "0");
-            if (Number.isFinite(currentWidth) && currentWidth > 0) {
-                applyViewerWidth(currentWidth);
+            if (viewerController) {
+                viewerController.syncLayout();
             }
         });
-        loadViewerWidth();
-        loadViewerHeight();
+        if (viewerController) {
+            viewerController.loadStoredSize();
+        }
+        const initialFileViewState = getPersistedFileViewState();
+        if (sortSelect && initialFileViewState.sortMode) {
+            sortSelect.value = initialFileViewState.sortMode;
+        }
+        if (backupSortSelect && initialFileViewState.backupSortMode) {
+            backupSortSelect.value = initialFileViewState.backupSortMode;
+        }
+        if (initialFileViewState.backupFilters) {
+            backupFilterInputs.forEach((input) => {
+                if (Object.prototype.hasOwnProperty.call(initialFileViewState.backupFilters, input.value)) {
+                    input.checked = !!initialFileViewState.backupFilters[input.value];
+                }
+            });
+        }
+        activeViewedFilename = String(initialFileViewState.activeViewedFilename || "");
+        activeRestoreFilename = String(initialFileViewState.activeRestoreFilename || "");
+        activeLogSource = String(initialFileViewState.activeLogSource || "").trim().toLowerCase();
+        currentLogFileSource = String(initialFileViewState.currentLogFileSource || "").trim().toLowerCase();
         if (sortSelect) {
             sortSelect.addEventListener("change", () => {
-                applyFileSort(sortSelect.value || "newest");
+                const nextSort = sortSelect.value || "newest";
+                persistFileViewState({ sortMode: nextSort });
+                applyFileSort(nextSort);
             });
             applyFileSort(sortSelect.value || "newest");
         }
@@ -1591,8 +1438,9 @@
 
         if (pageId === "backups") {
             syncRestoreAvailabilityUi();
-            window.addEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
-            if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
+            if (shell && typeof shell.subscribeMetrics === "function") {
+                fileMetricsUnsubscribe = shell.subscribeMetrics((payload) => applyBackupMetricsSnapshot(payload));
+            } else if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
                 applyBackupMetricsSnapshot(window.__MCWEB_LAST_METRICS_SNAPSHOT);
             }
             window.addEventListener("beforeunload", stopRestoreOperationPolling);
@@ -1600,10 +1448,43 @@
         if (pageId === "backups" || pageId === "crash_logs") {
             loadStandardFileList();
         }
+        // Release page-local timers and subscriptions before the shell swaps
+        // this fragment out or the browser unloads.
+        function teardownFilePageLifecycle() {
+            pageRuntimeActive = false;
+            fileListLoadToken += 1;
+            if (fileHeartbeatTimer) {
+                window.clearInterval(fileHeartbeatTimer);
+                fileHeartbeatTimer = null;
+            }
+            stopRestorePaneAlertHeartbeat();
+            stopRestorePolling();
+            stopRestoreOperationPolling();
+            document.removeEventListener("visibilitychange", handleVisibilityStateChange);
+            if (typeof fileMetricsUnsubscribe === "function") {
+                fileMetricsUnsubscribe();
+                fileMetricsUnsubscribe = null;
+            }
+            if (typeof fileViewerScrollbarCleanup === "function") {
+                fileViewerScrollbarCleanup();
+                fileViewerScrollbarCleanup = null;
+            }
+            if (viewerController) {
+                viewerController.teardown();
+            }
+            if (typeof fileListScrollbarCleanup === "function") {
+                fileListScrollbarCleanup();
+                fileListScrollbarCleanup = null;
+            }
+            window.removeEventListener("pagehide", teardownFilePageLifecycle);
+            window.removeEventListener("beforeunload", stopRestoreOperationPolling);
+            if (teardownFileBrowserPage === teardownFilePageLifecycle) {
+                teardownFileBrowserPage = null;
+            }
+        }
+        teardownFileBrowserPage = teardownFilePageLifecycle;
         document.addEventListener("visibilitychange", handleVisibilityStateChange);
-        window.addEventListener("pagehide", () => {
-            window.removeEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
-        });
+        window.addEventListener("pagehide", teardownFilePageLifecycle);
         ensureFileListClickBinding();
         logSourceToggles.forEach((btn) => {
             btn.addEventListener("click", async () => {
@@ -1614,10 +1495,28 @@
             });
         });
         if (pageId === "minecraft_logs") {
-            currentLogFileSource = "minecraft";
-            setActiveLogSource("minecraft");
+            currentLogFileSource = currentLogFileSource || "minecraft";
+            persistFileViewState({ currentLogFileSource });
+            setActiveLogSource(activeLogSource || currentLogFileSource || "minecraft");
             if (logSourceToggles.length > 0) {
                 loadLogFileSourceList(currentLogFileSource);
             }
         }
-    })();
+    return teardownFileBrowserPage;
+}
+
+if (pageModules && typeof pageModules.register === "function") {
+    pageModules.register(["backups", "crash_logs", "minecraft_logs"], {
+        mount: mountFileBrowserPage,
+        unmount: function () {
+            if (typeof teardownFileBrowserPage === "function") {
+                teardownFileBrowserPage();
+            }
+        },
+    });
+}
+
+// Direct full-page loads still boot here for non-shell compatibility.
+if (!document.getElementById("mcweb-app-content")) {
+    mountFileBrowserPage();
+}

@@ -1,38 +1,38 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Minecraft Control</title>
-{% include "partials/theme_init.html" %}
-<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard_home.css', v=static_version('dashboard_home.css')) }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
-</head>
-<body data-page="home">
-<div class="layout">
-    {% include "partials/nav.html" %}
-    <main class="content">
+{% set metrics = metrics_snapshot or {} %}
+{% set service_running = (metrics.service_running_status or '') == 'active' %}
+{% set rcon_enabled = metrics.rcon_enabled == true %}
+{% set low_storage_blocked = metrics.low_storage_blocked == true %}
+{% set backup_status = metrics.backup_status or 'Loading...' %}
+{% set backup_busy = backup_status in ['Running', 'Queued'] %}
+{% set world_name = metrics.world_name or '' %}
+<main
+    id="mcweb-page-root"
+    class="content"
+    data-page-key="home"
+    data-page-title="Minecraft Control"
+    data-page-styles='["{{ url_for('static', filename='dashboard_home.css', v=static_version('dashboard_home.css')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='log_render_utils.js', v=static_version('log_render_utils.js')) }}", "{{ url_for('static', filename='home_log_runtime.js', v=static_version('home_log_runtime.js')) }}", "{{ url_for('static', filename='home_time_utils.js', v=static_version('home_time_utils.js')) }}", "{{ url_for('static', filename='dashboard_home_page.js', v=static_version('dashboard_home_page.js')) }}"]'
+>
 <div class="wrap page-panes page-panes--home">
     <section class="panel page-pane page-pane--header" aria-labelledby="control-panel-title">
         <div class="pane-head">
             <div class="pane-head-row">
-                <h1 id="control-panel-title" class="pane-title">Control Panel</h1>
+                <h1 id="control-panel-title" class="pane-title">{{ ((world_name ~ " Control Panel") if world_name else "Control Panel") }}</h1>
                 <div class="pane-head-actions actions">
-                    <span class="server-time">Server time: <strong id="server-time">--</strong></span>
+                    <span class="server-time">Server time: <strong id="server-time">{{ metrics.server_time or "--" }}</strong></span>
                     <div class="action-buttons">
                         <form class="ajax-form" method="post" action="/start">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button id="start-btn" class="btn-start" type="submit" disabled>Start</button>
+                            <button id="start-btn" class="btn-start" type="submit"{% if service_running or low_storage_blocked %} disabled{% endif %}>Start</button>
                         </form>
                         <form class="ajax-form sudo-form" method="post" action="/stop">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <input type="hidden" name="sudo_password">
-                            <button id="stop-btn" class="btn-stop" type="submit" disabled>Stop</button>
+                            <button id="stop-btn" class="btn-stop" type="submit"{% if not service_running %} disabled{% endif %}>Stop</button>
                         </form>
                         <form class="ajax-form" method="post" action="/backup">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button id="backup-btn" class="btn-backup" type="submit" disabled>Backup</button>
+                            <button id="backup-btn" class="btn-backup" type="submit"{% if backup_busy %} disabled{% endif %}>Backup</button>
                         </form>
                     </div>
                 </div>
@@ -43,28 +43,28 @@
                 <div class="stats-group server-stats">
                     <p class="group-title">Server Stats</p>
                     <div class="status-row">
-                        <span>RAM: <strong id="ram-usage">Loading...</strong></span>
-                        <span>CPU: <strong id="cpu-per-core">Loading...</strong></span>
-                        <span>CPU freq: <strong id="cpu-frequency">Loading...</strong></span>
-                        <span>Storage: <strong id="storage-usage">Loading...</strong></span>
+                        <span>RAM: <strong id="ram-usage"{% if metrics.ram_usage_class %} class="{{ metrics.ram_usage_class }}"{% endif %}>{{ metrics.ram_usage or "Loading..." }}</strong></span>
+                        <span>CPU: <strong id="cpu-per-core">{% if metrics.cpu_per_core_items %}{% for item in metrics.cpu_per_core_items %}<span class="{{ item.class or "" }}">CPU{{ item.index }} {{ item.value }}%</span>{% if not loop.last %} | {% endif %}{% endfor %}{% else %}Loading...{% endif %}</strong></span>
+                        <span>CPU freq: <strong id="cpu-frequency"{% if metrics.cpu_frequency_class %} class="{{ metrics.cpu_frequency_class }}"{% endif %}>{{ metrics.cpu_frequency or "Loading..." }}</strong></span>
+                        <span>Storage: <strong id="storage-usage"{% if metrics.storage_usage_class %} class="{{ metrics.storage_usage_class }}"{% endif %}>{{ metrics.storage_usage or "Loading..." }}</strong></span>
                     </div>
                 </div>
                 <div class="stats-group">
                     <p class="group-title">Minecraft Stats</p>
                     <div class="status-row">
-                        <span>Server Status: <strong id="service-status">Loading...</strong><span id="service-status-duration-prefix"></span><strong id="session-duration" style="display:none;">--</strong></span>
-                        <span>Players online: <strong id="players-online">--</strong></span>
-                        <span>Tick time: <strong id="tick-rate">--</strong></span>
-                        <span>Auto-stop in: <strong id="idle-countdown">--:--</strong></span>
+                        <span>Server Status: <strong id="service-status"{% if metrics.service_status_class %} class="{{ metrics.service_status_class }}"{% endif %}>{{ metrics.service_status or "Loading..." }}</strong><span id="service-status-duration-prefix">{% if metrics.service_status == "Running" and metrics.session_duration and metrics.session_duration != "--" %} for {% endif %}</span><strong id="session-duration"{% if not (metrics.service_status == "Running" and metrics.session_duration and metrics.session_duration != "--") %} style="display:none;"{% endif %}>{{ metrics.session_duration or "--" }}</strong></span>
+                        <span>Players online: <strong id="players-online">{{ metrics.players_online or "--" }}</strong></span>
+                        <span>Tick time: <strong id="tick-rate">{{ metrics.tick_rate if metrics.tick_rate is not none else "--" }}</strong></span>
+                        <span>Auto-stop in: <strong id="idle-countdown">{{ metrics.idle_countdown or "--:--" }}</strong></span>
                     </div>
                 </div>
                 <div class="stats-group">
                     <p class="group-title">Backup Stats</p>
                     <div class="status-row">
-                        <span>Backup status: <strong id="backup-status">Loading...</strong></span>
-                        <span>Last backup: <strong id="last-backup-time">--</strong></span>
-                        <span>Next backup: <strong id="next-backup-time">--</strong></span>
-                        <span>Backups folder: <strong id="backups-status">Loading...</strong></span>
+                        <span>Backup status: <strong id="backup-status"{% if metrics.backup_status_class %} class="{{ metrics.backup_status_class }}"{% endif %}>{{ metrics.backup_status or "Loading..." }}</strong></span>
+                        <span>Last backup: <strong id="last-backup-time">{{ metrics.last_backup_time or "--" }}</strong></span>
+                        <span>Next backup: <strong id="next-backup-time">{{ metrics.next_backup_time or "--" }}</strong></span>
+                        <span>Backups folder: <strong id="backups-status">{{ metrics.backups_status or "Loading..." }}</strong></span>
                     </div>
                 </div>
             </div>
@@ -85,8 +85,8 @@
                     <form class="panel-controls ajax-form sudo-form" method="post" action="/rcon">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="sudo_password">
-                        <input id="rcon-command" class="ui-text-input" type="text" name="rcon_command" placeholder="Loading server state..." disabled required>
-                        <button id="rcon-submit" type="submit" disabled>Submit</button>
+                        <input id="rcon-command" class="ui-text-input" type="text" name="rcon_command" placeholder="{% if service_running %}{% if rcon_enabled %}Enter Minecraft server command{% else %}RCON unavailable (missing rcon.password){% endif %}{% else %}Loading server state...{% endif %}"{% if not (service_running and rcon_enabled) %} disabled{% endif %} required>
+                        <button id="rcon-submit" type="submit"{% if not (service_running and rcon_enabled) %} disabled{% endif %}>Submit</button>
                     </form>
                 </div>
             </div>
@@ -95,8 +95,6 @@
             <pre id="minecraft-log" class="console-box"></pre>
         </div>
     </section>
-</div>
-</main>
 </div>
 <div id="sudo-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
@@ -139,21 +137,12 @@
         </div>
     </div>
 </div>
-<script>
-    window.__MCWEB_HOME_CONFIG = {
-        alertMessage: {{ alert_message | tojson }},
-        alertMessageCode: {{ alert_message_code | tojson }},
-        csrfToken: {{ csrf_token | tojson }},
-        heartbeatIntervalMs: {{ home_page_heartbeat_interval_ms | tojson }},
-};
+<script type="application/json" id="mcweb-page-config">
+{{ {
+    "alertMessage": alert_message,
+    "alertMessageCode": alert_message_code,
+    "csrfToken": csrf_token,
+    "heartbeatIntervalMs": home_page_heartbeat_interval_ms,
+} | tojson }}
 </script>
-<script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
-<script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
-<script src="{{ url_for('static', filename='page_module_registry.js', v=static_version('page_module_registry.js')) }}"></script>
-<script src="{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}"></script>
-<script src="{{ url_for('static', filename='log_render_utils.js', v=static_version('log_render_utils.js')) }}"></script>
-<script src="{{ url_for('static', filename='home_log_runtime.js', v=static_version('home_log_runtime.js')) }}"></script>
-<script src="{{ url_for('static', filename='home_time_utils.js', v=static_version('home_time_utils.js')) }}"></script>
-<script src="{{ url_for('static', filename='dashboard_home_page.js', v=static_version('dashboard_home_page.js')) }}"></script>
-</body>
-</html>
+</main>

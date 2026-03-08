@@ -1,109 +1,150 @@
-document.addEventListener("DOMContentLoaded", () => {
-    if (typeof window.initMaintenanceShell === "function") {
-        window.initMaintenanceShell();
-    }
+(function (global) {
+    let teardownMaintenancePage = null;
+    const pageModules = global.MCWebPageModules || null;
 
-    // DOM wiring and mutable page state for maintenance interactions.
-    const csrfToken = document.getElementById("maintenance-csrf-token")?.value || "";
-    const http = window.MCWebHttp || null;
-    const bootstrap = document.getElementById("maintenance-bootstrap-data");
-    const fileList = document.getElementById("cleanup-file-list");
-    const manualDryRunInput = document.getElementById("manual-dry-run");
-    const manualDestructiveConfirmWrap = document.getElementById("manual-destructive-confirm-wrap");
-    const manualDestructiveConfirmInput = document.getElementById("manual-destructive-confirm");
-    const runManualDeleteBtn = document.getElementById("run-manual-delete-btn");
-    const ruleRunDryRunInput = document.getElementById("rule-run-dry-run");
-    const ruleRunDestructiveConfirmWrap = document.getElementById("rule-run-destructive-confirm-wrap");
-    const ruleRunDestructiveConfirmInput = document.getElementById("rule-run-destructive-confirm");
-    const runRuleDeleteBtn = document.getElementById("run-rule-delete-btn");
-    const actionTitle = document.getElementById("maintenance-action-title");
-    const actionDescription = document.getElementById("maintenance-action-description");
-    const actionToolbar = document.getElementById("maintenance-action-toolbar");
-    const actionContent = document.querySelector(".maintenance-action-content");
-    const maintenanceFileListPane = document.querySelector(".maintenance-file-list");
-    const rulesSaveBtn = document.getElementById("rules-save-btn");
-    const rulesEditToggleBtn = document.getElementById("rules-edit-toggle-btn");
-    const historyViewToggle = document.getElementById("history-view-toggle");
-    const historyShowSuccessBtn = document.getElementById("history-show-success");
-    const historyShowMissedBtn = document.getElementById("history-show-missed");
-    const viewRules = document.getElementById("maintenance-view-rules");
-    const viewManual = document.getElementById("maintenance-view-manual");
-    const viewHistory = document.getElementById("maintenance-view-history");
-    const rulesCardList = document.getElementById("rules-card-list");
-    const historyCardList = document.getElementById("history-card-list");
-    const openRulesBtn = document.getElementById("maint-open-rules");
-    const openHistoryBtn = document.getElementById("maint-open-history");
-    const openManualBtn = document.getElementById("maint-open-manual");
-    const scopeBackupsBtn = document.getElementById("maint-scope-backups");
-    const scopeStaleBtn = document.getElementById("maint-scope-stale");
-    const runAcknowledgeBtn = document.getElementById("ack-non-normal-btn");
-    const errorModal = document.getElementById("maintenance-error-modal");
-    const errorText = document.getElementById("maintenance-error-text");
-    const errorDetails = document.getElementById("maintenance-error-details");
-    const passwordModal = document.getElementById("maintenance-password-modal");
-    const passwordInput = document.getElementById("maintenance-password-input");
-    const passwordSubmit = document.getElementById("maintenance-password-submit");
-    const passwordCancel = document.getElementById("maintenance-password-cancel");
-    const passwordText = document.getElementById("maintenance-password-text");
-    const dryRunModal = document.getElementById("maintenance-dry-run-modal");
-    const dryRunSummary = document.getElementById("maintenance-dry-run-summary");
-    const dryRunFiles = document.getElementById("maintenance-dry-run-files");
-    const dryRunIssues = document.getElementById("maintenance-dry-run-issues");
-    const dryRunOk = document.getElementById("maintenance-dry-run-ok");
-    const dryRunConfirmRunBtn = document.getElementById("maintenance-dry-run-confirm-run");
-    const dryRunDestructiveConfirmWrap = document.getElementById("maintenance-dry-run-destructive-confirm-wrap");
-    const dryRunDestructiveConfirmInput = document.getElementById("maintenance-dry-run-destructive-confirm");
-    const completeModal = document.getElementById("maintenance-complete-modal");
-    const completeSummary = document.getElementById("maintenance-complete-summary");
-    const completeFiles = document.getElementById("maintenance-complete-files");
-    const completeIssues = document.getElementById("maintenance-complete-issues");
-    const completeOk = document.getElementById("maintenance-complete-ok");
-    const ackSuggestModal = document.getElementById("maintenance-ack-suggest-modal");
-    const ackSuggestRunBtn = document.getElementById("maintenance-ack-suggest-run");
-    const ackSuggestCancelBtn = document.getElementById("maintenance-ack-suggest-cancel");
-    const ackSuggestDryRunInput = document.getElementById("maintenance-ack-suggest-dry-run");
-    const ackSuggestDestructiveConfirmWrap = document.getElementById("maintenance-ack-suggest-destructive-confirm-wrap");
-    const ackSuggestDestructiveConfirmInput = document.getElementById("maintenance-ack-suggest-destructive-confirm");
-    const acknowledgeButtonHome = runAcknowledgeBtn?.parentElement || null;
+    function mountMaintenancePage() {
+        if (typeof teardownMaintenancePage === "function") {
+            try {
+                teardownMaintenancePage();
+            } catch (_) {
+                // Ignore stale teardown failures before remounting.
+            }
+        }
 
-    const SCOPE_LABELS = { backups: "Backups", stale_worlds: "Stale Worlds" };
-    const SCOPE_CATEGORIES = {
-        backups: new Set(["backup_zip"]),
-        stale_worlds: new Set(["stale_world_dir", "old_world_zip"]),
-    };
-    let currentActionView = "rules";
-    let currentScope = parseDataAttr("scope", "backups");
-    let historyViewMode = "successful";
-    let pendingProtectedAction = null;
-    let pendingRunRulesDryRunOverride = null;
-    let pendingManualDeleteDryRunOverride = null;
-    let pendingDryRunActionKey = "";
-    let manualSelectedPaths = new Set();
-    let rulesEditMode = false;
-    let rulesDraft = null;
-    let stateRefreshInFlight = false;
-    let stateAutoRefreshTimer = null;
-    const STATE_AUTO_REFRESH_MS = 5000;
-    const RULE_FIELD_UPDATERS = {
-        "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
-        "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
-        "count.session_backups_to_keep": (draft, value) => { draft.count.session_backups_to_keep = Math.max(3, Number(value || 3)); },
-        "count.manual_backups_to_keep": (draft, value) => { draft.count.manual_backups_to_keep = Math.max(3, Number(value || 3)); },
-        "count.prerestore_backups_to_keep": (draft, value) => { draft.count.prerestore_backups_to_keep = Math.max(3, Number(value || 3)); },
-        "count.max_per_category": (draft, value) => {
-            const n = Math.max(3, Number(value || 3));
-            draft.count.max_per_category = n;
-            draft.count.session_backups_to_keep = n;
-            draft.count.manual_backups_to_keep = n;
-            draft.count.prerestore_backups_to_keep = n;
-        },
-        "time_based.enabled": (draft, value) => { draft.time_based.enabled = !!value; },
-        "time_based.time_of_backup": (draft, value) => { draft.time_based.time_of_backup = String(value || "03:00"); },
-        "time_based.repeat_mode": (draft, value) => { draft.time_based.repeat_mode = String(value || "does_not_repeat"); },
-        "time_based.weekly_day": (draft, value) => { draft.time_based.weekly_day = String(value || "Sunday"); },
-        "time_based.monthly_date": (draft, value) => { draft.time_based.monthly_date = Math.max(1, Math.min(31, Number(value || 1))); },
-        "time_based.every_n_days": (draft, value) => { draft.time_based.every_n_days = Math.max(1, Math.min(365, Number(value || 1))); },
-    };
+        const bootstrapEl = document.getElementById("maintenance-bootstrap-data");
+        if (!bootstrapEl) return;
+
+        const cleanupFns = [];
+        function registerCleanup(fn) {
+            if (typeof fn === "function") cleanupFns.push(fn);
+        }
+        function addScopedListener(target, type, handler, options) {
+            if (!target || typeof target.addEventListener !== "function") return;
+            target.addEventListener(type, handler, options);
+            registerCleanup(() => {
+                try {
+                    target.removeEventListener(type, handler, options);
+                } catch (_) {
+                    // Ignore listener teardown failures.
+                }
+            });
+        }
+
+        const shell = global.MCWebShell || null;
+        const MAINTENANCE_CSRF_HEADER = "X-CSRF-Token";
+        const maintenanceApiRuntime = global.MCWebMaintenanceApiRuntime || null;
+        if (shell && typeof shell.startThemePreferenceWatcher === "function") {
+            shell.startThemePreferenceWatcher();
+        }
+        if (shell && typeof shell.startSidebarNav === "function") {
+            shell.startSidebarNav();
+        }
+
+        // DOM wiring and mutable page state for maintenance interactions.
+        const csrfToken = document.getElementById("maintenance-csrf-token")?.value || "";
+        const http = window.MCWebHttp || null;
+        const maintenanceApi = maintenanceApiRuntime && typeof maintenanceApiRuntime.createMaintenanceApi === "function"
+            ? maintenanceApiRuntime.createMaintenanceApi({ shell, http, csrfToken })
+            : null;
+        const bootstrap = document.getElementById("maintenance-bootstrap-data");
+        const fileList = document.getElementById("cleanup-file-list");
+        const manualSelectionCount = document.getElementById("maintenance-manual-selection-count");
+        const manualDryRunInput = document.getElementById("manual-dry-run");
+        const manualDestructiveConfirmWrap = document.getElementById("manual-destructive-confirm-wrap");
+        const manualDestructiveConfirmInput = document.getElementById("manual-destructive-confirm");
+        const runManualDeleteBtn = document.getElementById("run-manual-delete-btn");
+        const ruleRunDryRunInput = document.getElementById("rule-run-dry-run");
+        const ruleRunDestructiveConfirmWrap = document.getElementById("rule-run-destructive-confirm-wrap");
+        const ruleRunDestructiveConfirmInput = document.getElementById("rule-run-destructive-confirm");
+        const runRuleDeleteBtn = document.getElementById("run-rule-delete-btn");
+        const actionTitle = document.getElementById("pane-title-action");
+        const actionDescription = document.getElementById("maintenance-action-description");
+        const actionToolbar = document.getElementById("maintenance-action-toolbar");
+        const actionContent = document.querySelector(".maintenance-action-content");
+        const maintenanceFileListPane = document.querySelector(".maintenance-file-list");
+        const rulesSaveBtn = document.getElementById("rules-save-btn");
+        const rulesEditToggleBtn = document.getElementById("rules-edit-toggle-btn");
+        const historyViewToggle = document.getElementById("history-view-toggle");
+        const historyShowSuccessBtn = document.getElementById("history-show-success");
+        const historyShowMissedBtn = document.getElementById("history-show-missed");
+        const viewRules = document.getElementById("maintenance-view-rules");
+        const viewManual = document.getElementById("maintenance-view-manual");
+        const viewHistory = document.getElementById("maintenance-view-history");
+        const rulesCardList = document.getElementById("rules-card-list");
+        const historyCardList = document.getElementById("history-card-list");
+        const openRulesBtn = document.getElementById("maint-open-rules");
+        const openHistoryBtn = document.getElementById("maint-open-history");
+        const openManualBtn = document.getElementById("maint-open-manual");
+        const scopeBackupsBtn = document.getElementById("maint-scope-backups");
+        const scopeStaleBtn = document.getElementById("maint-scope-stale");
+        const runAcknowledgeBtn = document.getElementById("ack-non-normal-btn");
+        const errorModal = document.getElementById("maintenance-error-modal");
+        const errorText = document.getElementById("maintenance-error-text");
+        const errorDetails = document.getElementById("maintenance-error-details");
+        const passwordModal = document.getElementById("maintenance-password-modal");
+        const passwordInput = document.getElementById("maintenance-password-input");
+        const passwordSubmit = document.getElementById("maintenance-password-submit");
+        const passwordCancel = document.getElementById("maintenance-password-cancel");
+        const passwordText = document.getElementById("maintenance-password-text");
+        const dryRunModal = document.getElementById("maintenance-dry-run-modal");
+        const dryRunSummary = document.getElementById("maintenance-dry-run-summary");
+        const dryRunFiles = document.getElementById("maintenance-dry-run-files");
+        const dryRunIssues = document.getElementById("maintenance-dry-run-issues");
+        const dryRunOk = document.getElementById("maintenance-dry-run-ok");
+        const dryRunConfirmRunBtn = document.getElementById("maintenance-dry-run-confirm-run");
+        const dryRunDestructiveConfirmWrap = document.getElementById("maintenance-dry-run-destructive-confirm-wrap");
+        const dryRunDestructiveConfirmInput = document.getElementById("maintenance-dry-run-destructive-confirm");
+        const completeModal = document.getElementById("maintenance-complete-modal");
+        const completeSummary = document.getElementById("maintenance-complete-summary");
+        const completeFiles = document.getElementById("maintenance-complete-files");
+        const completeIssues = document.getElementById("maintenance-complete-issues");
+        const completeOk = document.getElementById("maintenance-complete-ok");
+        const ackSuggestModal = document.getElementById("maintenance-ack-suggest-modal");
+        const ackSuggestRunBtn = document.getElementById("maintenance-ack-suggest-run");
+        const ackSuggestCancelBtn = document.getElementById("maintenance-ack-suggest-cancel");
+        const ackSuggestDryRunInput = document.getElementById("maintenance-ack-suggest-dry-run");
+        const ackSuggestDestructiveConfirmWrap = document.getElementById("maintenance-ack-suggest-destructive-confirm-wrap");
+        const ackSuggestDestructiveConfirmInput = document.getElementById("maintenance-ack-suggest-destructive-confirm");
+        const acknowledgeButtonHome = runAcknowledgeBtn?.parentElement || null;
+
+        const SCOPE_LABELS = { backups: "Backups", stale_worlds: "Stale Worlds" };
+        const SCOPE_CATEGORIES = {
+            backups: new Set(["backup_zip"]),
+            stale_worlds: new Set(["stale_world_dir", "old_world_zip"]),
+        };
+        let currentActionView = "rules";
+        let currentScope = parseDataAttr("scope", "backups");
+        let historyViewMode = "successful";
+        let pendingProtectedAction = null;
+        let pendingRunRulesDryRunOverride = null;
+        let pendingManualDeleteDryRunOverride = null;
+        let pendingDryRunActionKey = "";
+        let manualSelectedPaths = new Set();
+        let rulesEditMode = false;
+        let rulesDraft = null;
+        let stateRefreshInFlight = false;
+        let stateAutoRefreshTimer = null;
+        const STATE_AUTO_REFRESH_MS = 5000;
+        const RULE_FIELD_UPDATERS = {
+            "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
+            "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
+            "count.session_backups_to_keep": (draft, value) => { draft.count.session_backups_to_keep = Math.max(3, Number(value || 3)); },
+            "count.manual_backups_to_keep": (draft, value) => { draft.count.manual_backups_to_keep = Math.max(3, Number(value || 3)); },
+            "count.prerestore_backups_to_keep": (draft, value) => { draft.count.prerestore_backups_to_keep = Math.max(3, Number(value || 3)); },
+            "count.max_per_category": (draft, value) => {
+                const n = Math.max(3, Number(value || 3));
+                draft.count.max_per_category = n;
+                draft.count.session_backups_to_keep = n;
+                draft.count.manual_backups_to_keep = n;
+                draft.count.prerestore_backups_to_keep = n;
+            },
+            "time_based.enabled": (draft, value) => { draft.time_based.enabled = !!value; },
+            "time_based.time_of_backup": (draft, value) => { draft.time_based.time_of_backup = String(value || "03:00"); },
+            "time_based.repeat_mode": (draft, value) => { draft.time_based.repeat_mode = String(value || "does_not_repeat"); },
+            "time_based.weekly_day": (draft, value) => { draft.time_based.weekly_day = String(value || "Sunday"); },
+            "time_based.monthly_date": (draft, value) => { draft.time_based.monthly_date = Math.max(1, Math.min(31, Number(value || 1))); },
+            "time_based.every_n_days": (draft, value) => { draft.time_based.every_n_days = Math.max(1, Math.min(365, Number(value || 1))); },
+        };
 
     function parseDataAttr(name, defaultValue) {
         try {
@@ -754,6 +795,7 @@ document.addEventListener("DOMContentLoaded", () => {
             li.appendChild(title);
             li.appendChild(meta);
             fileList.appendChild(li);
+            syncManualSelectionCount();
             syncMaintenanceOverflowState();
             return;
         }
@@ -791,6 +833,35 @@ document.addEventListener("DOMContentLoaded", () => {
             fileList.appendChild(li);
         });
         syncMaintenanceOverflowState();
+    }
+
+    function getVisibleManualEligibleItems() {
+        const items = (Array.isArray(preview?.items) ? preview.items : []).filter((item) => isItemInCurrentScope(item));
+        return items.filter((item) => !!item?.eligible);
+    }
+
+    function getManualSelectionCap() {
+        const rules = getEffectiveRules();
+        const caps = rules?.caps || {};
+        const eligibleCount = getVisibleManualEligibleItems().length;
+        const absoluteCap = Math.max(1, Math.min(500, Number(caps.max_delete_files_absolute ?? 5) || 5));
+        const pct = Math.max(1, Math.min(100, Number(caps.max_delete_percent_eligible ?? 10) || 10));
+        const minNonEmpty = Math.max(1, Math.min(20, Number(caps.max_delete_min_if_non_empty ?? 1) || 1));
+        let pctCap = Math.floor((eligibleCount * pct) / 100);
+        if (eligibleCount > 0) {
+            pctCap = Math.max(minNonEmpty, pctCap);
+        }
+        return Math.min(absoluteCap, eligibleCount > 0 ? pctCap : 0);
+    }
+
+    function syncManualSelectionCount() {
+        if (!manualSelectionCount) return;
+        const show = currentActionView === "manual";
+        manualSelectionCount.hidden = !show;
+        if (!show) return;
+        const selectedCount = manualSelectedPaths.size;
+        const maxCount = getManualSelectionCap();
+        manualSelectionCount.textContent = `${selectedCount}/${maxCount} Files selected`;
     }
 
     function renderHistory() {
@@ -945,7 +1016,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const selected = viewMeta[viewName] || viewMeta.rules;
         if (actionTitle) {
             actionTitle.textContent = `${selected.title} - ${scopeLabel()}`;
-            actionTitle.classList.add("maintenance-spaced-title");
         }
         if (actionDescription) actionDescription.textContent = selected.description;
 
@@ -957,6 +1027,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (viewName === "manual") syncManualCleanupModeState();
             if (viewName === "history") renderHistory();
         }
+        syncManualSelectionCount();
         if (actionToolbar && actionDescription) {
             actionToolbar.hidden = !actionDescription.textContent.trim();
         }
@@ -1089,30 +1160,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Thin API client for maintenance JSON endpoints with shared error handling.
     async function apiPost(path, body) {
-        let response;
-        let payload;
-        if (http) {
-            const result = await http.postJson(path, body || {}, {
-                csrfToken,
-                headers: { "X-Requested-With": "XMLHttpRequest" },
-            });
-            response = result.response;
-            payload = result.payload;
-        } else {
-            response = await fetch(path, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRF-Token": csrfToken,
-                },
-                body: JSON.stringify(body || {}),
-            });
-            payload = await response.json().catch(() => ({}));
+        if (maintenanceApi && typeof maintenanceApi.postJson === "function") {
+            return maintenanceApi.postJson(path, body || {});
         }
-        if (!response.ok || !payload.ok) {
-            throw payload;
-        }
-        return payload;
+        throw { ok: false, message: "Maintenance API client unavailable." };
     }
 
     async function refreshState(options = {}) {
@@ -1122,19 +1173,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const requestedScope = options.scope || currentScope;
 
         try {
-            const statePath = `/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}`;
-            let response;
-            let payload;
-            if (http) {
-                const result = await http.getJson(statePath, { headers: { "X-Requested-With": "XMLHttpRequest" } });
-                response = result.response;
-                payload = result.payload;
-            } else {
-                response = await fetch(statePath, { headers: { Accept: "application/json" } });
-                payload = await response.json();
+            const payload = maintenanceApi && typeof maintenanceApi.fetchState === "function"
+                ? await maintenanceApi.fetchState(requestedScope, { force: true })
+                : null;
+            if (!payload) {
+                throw { ok: false, message: "Maintenance API client unavailable." };
             }
-            if (!response.ok) throw (payload || {});
-            if (!payload.ok) throw payload;
             currentScope = String(payload.scope || requestedScope || "backups");
             config = payload.config || config;
             if (!preservePreview) {
@@ -1171,11 +1215,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function startMaintenanceStateAutoRefresh() {
-        if (stateAutoRefreshTimer) {
-            window.clearInterval(stateAutoRefreshTimer);
-            stateAutoRefreshTimer = null;
+    function stopMaintenanceStateAutoRefresh() {
+        if (!stateAutoRefreshTimer) {
+            return;
         }
+        window.clearInterval(stateAutoRefreshTimer);
+        stateAutoRefreshTimer = null;
+    }
+
+    function startMaintenanceStateAutoRefresh() {
+        stopMaintenanceStateAutoRefresh();
         stateAutoRefreshTimer = window.setInterval(runAutoRefreshTick, STATE_AUTO_REFRESH_MS);
     }
 
@@ -1223,10 +1272,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const path = String(target.value || "");
         if (!path) return;
         if (target.checked) {
+            const maxCount = getManualSelectionCap();
+            if (manualSelectedPaths.size >= maxCount) {
+                target.checked = false;
+                showError("Selection limit reached.", `You can select up to ${maxCount} eligible file(s) for manual cleanup.`);
+                syncManualSelectionCount();
+                return;
+            }
             manualSelectedPaths.add(path);
         } else {
             manualSelectedPaths.delete(path);
         }
+        syncManualSelectionCount();
     });
     errorModal?.addEventListener("click", (event) => {
         if (event.target === errorModal) closeError();
@@ -1465,26 +1522,59 @@ document.addEventListener("DOMContentLoaded", () => {
     const missedRuns = getMissedRuns();
     const hasMissedRuns = missedRuns.length > 0;
     historyViewMode = hasMissedRuns ? "missed" : "successful";
-    setActionView(hasMissedRuns ? "history" : "rules");
-    syncPaneHeadActions();
+    setActionView(hasMissedRuns ? "history" : "rules");    syncPaneHeadActions();
     syncMaintenanceOverflowState();
     startMaintenanceStateAutoRefresh();
-    document.addEventListener("visibilitychange", () => {
+    registerCleanup(stopMaintenanceStateAutoRefresh);
+
+    function handleVisibilityChange() {
         if (!document.hidden) {
             runAutoRefreshTick();
         }
-    });
-    window.addEventListener("resize", syncMaintenanceOverflowState);
+    }
+
+    addScopedListener(document, "visibilitychange", handleVisibilityChange);
+    addScopedListener(window, "resize", syncMaintenanceOverflowState);
+    addScopedListener(window, "pagehide", clearUnsavedActions);
+
     if (window.ResizeObserver) {
         const ro = new ResizeObserver(syncMaintenanceOverflowState);
         if (actionContent) ro.observe(actionContent);
         if (maintenanceFileListPane) ro.observe(maintenanceFileListPane);
+        registerCleanup(() => ro.disconnect());
     }
 
-    document.querySelectorAll(".nav-link").forEach((link) => {
-        link.addEventListener("click", clearUnsavedActions);
+    // Shell remounts and direct full-page loads both funnel through the same
+    // teardown so timers/listeners cannot stack across visits.
+    teardownMaintenancePage = function () {
+        const fns = cleanupFns.slice().reverse();
+        cleanupFns.length = 0;
+        fns.forEach((fn) => {
+            try {
+                fn();
+            } catch (_) {
+                // Ignore teardown failures during page transitions.
+            }
+        });
+    };
+}
+
+if (pageModules && typeof pageModules.register === "function") {
+    pageModules.register("maintenance", {
+        mount: mountMaintenancePage,
+        unmount: function () {
+            if (typeof teardownMaintenancePage === "function") {
+                teardownMaintenancePage();
+            }
+        },
     });
-    window.addEventListener("pagehide", clearUnsavedActions);
-});
+}
 
-
+if (!document.getElementById("mcweb-app-content")) {
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", mountMaintenancePage, { once: true });
+    } else {
+        mountMaintenancePage();
+    }
+}
+})(window);

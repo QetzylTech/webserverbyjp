@@ -13,7 +13,8 @@ class OperationReconcilerTests(unittest.TestCase):
     def _db_path(self, stem):
         return Path("data") / f"{stem}_{uuid.uuid4().hex[:8]}.sqlite3"
 
-    def _ctx(self, db_path, *, service_status="inactive", restore_payload=None):
+    def _ctx(self, db_path, *, service_status="inactive", restore_payload=None, intent=""):
+        intent_state = {"value": intent}
         return SimpleNamespace(
             APP_STATE_DB_PATH=Path(db_path),
             OPERATION_RECONCILE_INTERVAL_SECONDS=0.1,
@@ -26,6 +27,9 @@ class OperationReconcilerTests(unittest.TestCase):
             operation_reconciler_start_lock=threading.Lock(),
             get_status=lambda: service_status,
             get_restore_status=lambda since_seq=0, job_id=None: (restore_payload or {"running": True, "result": None}),
+            get_service_status_intent=lambda: intent_state["value"],
+            set_service_status_intent=lambda value: intent_state.__setitem__("value", value),
+            _intent_state=intent_state,
             log_mcweb_exception=lambda *_args, **_kwargs: None,
         )
 
@@ -81,6 +85,23 @@ class OperationReconcilerTests(unittest.TestCase):
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "restore-op-1")
         self.assertEqual(item["status"], "observed")
+
+    def test_reconcile_stop_marks_observed_and_clears_stale_shutdown_intent(self):
+        db_path = self._db_path("test_ops_reconcile")
+        state_store_service.create_operation(
+            db_path,
+            op_id="stop-op-1",
+            op_type="stop",
+            target="minecraft",
+            status="in_progress",
+            payload={},
+        )
+        ctx = self._ctx(db_path, service_status="inactive", intent="shutting")
+        updated = dashboard_runtime.reconcile_operations_once(ctx)
+        self.assertGreaterEqual(updated, 1)
+        item = state_store_service.get_operation(db_path, "stop-op-1")
+        self.assertEqual(item["status"], "observed")
+        self.assertIsNone(ctx._intent_state["value"])
 
 
 if __name__ == "__main__":

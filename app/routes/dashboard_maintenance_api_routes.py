@@ -1,6 +1,7 @@
-﻿"""Maintenance route registration for the MC web dashboard."""
+"""Maintenance route registration for the MC web dashboard."""
 
 from flask import jsonify, render_template, request
+from markupsafe import Markup
 
 from app.commands import maintenance_commands as maintenance_commands_service
 from app.core import profiling
@@ -44,29 +45,42 @@ def _json_or_passthrough(result):
     return jsonify(result)
 
 
-def register_maintenance_routes(app, state):
+def register_maintenance_routes(app, state, *, render_shell_page=None):
     """Register maintenance page and maintenance API routes."""
     ctx = getattr(state, "ctx", state)
     maintenance_queries_service.invalidate_state_cache()
     maintenance_commands_service.start_cleanup_scheduler_once(ctx)
 
+    def _maintenance_template_context(scope):
+        model = maintenance_queries_service.get_page_model(ctx, state, scope)
+        return {
+            "csrf_token": state["_ensure_csrf_token"](),
+            "maintenance_snapshot": model["snapshot"],
+            "maintenance_preview": model["preview"],
+            "maintenance_scope": model["scope"],
+            "maintenance_device_map": model["device_map"],
+            "maintenance_timezone": str(state["DISPLAY_TZ"]),
+            "maintenance_active_world": model["active_world"],
+            "maintenance_backup_dir": model["backup_dir"],
+            "maintenance_stale_dir": model["stale_dir"],
+        }
+
     @app.route("/maintenance")
     def maintenance_page():
         with profiling.timed("maintenance.route.page"):
             scope = maintenance_queries_service.normalize_scope(request.args.get("scope", "backups"))
-            model = maintenance_queries_service.get_page_model(ctx, state, scope)
+            context = _maintenance_template_context(scope)
+            if callable(render_shell_page):
+                return render_shell_page(
+                    "fragments/maintenance_fragment.html",
+                    current_page="maintenance",
+                    page_title="Cleanup",
+                    **context,
+                )
             return render_template(
                 "maintenance.html",
                 current_page="maintenance",
-                csrf_token=state["_ensure_csrf_token"](),
-                maintenance_snapshot=model["snapshot"],
-                maintenance_preview=model["preview"],
-                maintenance_scope=model["scope"],
-                maintenance_device_map=model["device_map"],
-                maintenance_timezone=str(state["DISPLAY_TZ"]),
-                maintenance_active_world=model["active_world"],
-                maintenance_backup_dir=model["backup_dir"],
-                maintenance_stale_dir=model["stale_dir"],
+                **context,
             )
 
     @app.route("/maintenance/api/state", methods=["GET"])
@@ -75,7 +89,7 @@ def register_maintenance_routes(app, state):
             limited = _maintenance_enforce_rate_limit("maintenance_api_state", limit=30, window_seconds=10.0)
             if limited is not None:
                 return limited
-            force_refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
+            force_refresh = str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "on"}
             scope = maintenance_queries_service.normalize_scope(request.args.get("scope", "backups"))
             return jsonify(maintenance_queries_service.get_state_payload(ctx, state, scope, force_refresh=force_refresh))
 
@@ -130,5 +144,4 @@ def register_maintenance_routes(app, state):
         if isinstance(result, dict) and result.get("ok"):
             maintenance_queries_service.invalidate_state_cache(result.get("scope"))
         return _json_or_passthrough(result)
-
 

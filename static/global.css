@@ -34,20 +34,29 @@ button,
 input,
 textarea,
 select {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: Arial, Helvetica, Roboto, sans-serif;
+}
+
+html {
+    background: #eef2ff;
+    color-scheme: light;
+}
+
+body {
+    background: transparent;
 }
 
 html.theme-dark {
     --ui-input-bg: #0d1117;
+    background: #0d1117;
+    color-scheme: dark;
 }
 
-.title {
-    width: 100%;
-    min-width: 0;
+html.theme-dark body {
+    background: transparent;
 }
 
-.pane-title,
-.title h1 {
+.pane-title {
     margin: 0;
     font-size: 1.4rem;
     letter-spacing: 0.2px;
@@ -55,14 +64,40 @@ html.theme-dark {
     line-height: 1.2;
 }
 
-.title-row {
+.page-panes {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.pane-head-row {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
     flex-wrap: wrap;
     gap: 12px;
-    margin-bottom: 8px;
+    min-width: 0;
     width: 100%;
+    min-height: var(--btn-height);
+}
+
+.pane-head > .pane-title {
+    display: flex;
+    align-items: center;
+    min-height: var(--btn-height);
+}
+
+.page-pane {
+    min-width: 0;
+    min-height: 0;
+}
+
+.pane-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .nav-link {
@@ -449,9 +484,7 @@ html.theme-dark .list li {
 }
 
 .maintenance-file-list.has-vscroll {
-    margin-right: -12px;
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
+    margin-right: 0;
 }
 
 .maintenance-file-list .list {
@@ -965,6 +998,7 @@ select:disabled:hover {
 .debug-props-form,
 .sidebar,
 .list,
+.maintenance-action-content,
 .maintenance-file-list {
     border-radius: var(--pane-content-radius);
     scrollbar-color: var(--pane-scrollbar-thumb) var(--pane-scrollbar-track);
@@ -978,6 +1012,7 @@ select:disabled:hover {
 .debug-props-form::-webkit-scrollbar,
 .sidebar::-webkit-scrollbar,
 .list::-webkit-scrollbar,
+.maintenance-action-content::-webkit-scrollbar,
 .maintenance-file-list::-webkit-scrollbar {
     width: var(--pane-scrollbar-size);
     height: var(--pane-scrollbar-size);
@@ -990,6 +1025,7 @@ select:disabled:hover {
 .debug-props-form::-webkit-scrollbar-track,
 .sidebar::-webkit-scrollbar-track,
 .list::-webkit-scrollbar-track,
+.maintenance-action-content::-webkit-scrollbar-track,
 .maintenance-file-list::-webkit-scrollbar-track {
     background: var(--pane-scrollbar-track);
 }
@@ -1001,6 +1037,7 @@ select:disabled:hover {
 .debug-props-form::-webkit-scrollbar-thumb,
 .sidebar::-webkit-scrollbar-thumb,
 .list::-webkit-scrollbar-thumb,
+.maintenance-action-content::-webkit-scrollbar-thumb,
 .maintenance-file-list::-webkit-scrollbar-thumb {
     background: var(--pane-scrollbar-thumb);
     border-radius: var(--pane-content-radius);
@@ -1016,6 +1053,7 @@ select:disabled:hover {
 .debug-props-form::-webkit-scrollbar-thumb:hover,
 .sidebar::-webkit-scrollbar-thumb:hover,
 .list::-webkit-scrollbar-thumb:hover,
+.maintenance-action-content::-webkit-scrollbar-thumb:hover,
 .maintenance-file-list::-webkit-scrollbar-thumb:hover {
     background: var(--pane-scrollbar-thumb-hover);
 }
@@ -1150,6 +1188,7 @@ html.theme-dark .debug-table-wrap,
 html.theme-dark .debug-props-form,
 html.theme-dark .sidebar,
 html.theme-dark .list,
+html.theme-dark .maintenance-action-content,
 html.theme-dark .maintenance-file-list {
     scrollbar-color: var(--pane-scrollbar-thumb-dark) var(--pane-scrollbar-track-dark);
 }
@@ -1161,6 +1200,7 @@ html.theme-dark .debug-table-wrap::-webkit-scrollbar-track,
 html.theme-dark .debug-props-form::-webkit-scrollbar-track,
 html.theme-dark .sidebar::-webkit-scrollbar-track,
 html.theme-dark .list::-webkit-scrollbar-track,
+html.theme-dark .maintenance-action-content::-webkit-scrollbar-track,
 html.theme-dark .maintenance-file-list::-webkit-scrollbar-track {
     background: var(--pane-scrollbar-track-dark);
 }
@@ -1172,6 +1212,7 @@ html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb,
 html.theme-dark .debug-props-form::-webkit-scrollbar-thumb,
 html.theme-dark .sidebar::-webkit-scrollbar-thumb,
 html.theme-dark .list::-webkit-scrollbar-thumb,
+html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb,
 html.theme-dark .maintenance-file-list::-webkit-scrollbar-thumb {
     background: var(--pane-scrollbar-thumb-dark);
     border-color: var(--pane-scrollbar-track-dark);
@@ -1184,6 +1225,9 @@ html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb:hover,
 html.theme-dark .debug-props-form::-webkit-scrollbar-thumb:hover,
 html.theme-dark .sidebar::-webkit-scrollbar-thumb:hover,
 html.theme-dark .list::-webkit-scrollbar-thumb:hover,
+html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb:hover,
 html.theme-dark .maintenance-file-list::-webkit-scrollbar-thumb:hover {
     background: var(--pane-scrollbar-thumb-hover-dark);
 }
+
+

@@ -13,11 +13,11 @@
     <div class="layout">
         {% include "partials/nav.html" %}
         <main class="content">
-            <div class="wrap">
-                <section class="panel pane-primary" aria-labelledby="file-panel-title">
-                <div class="title">
-                    <div class="title-row">
-                        <h1 id="file-panel-title" class="pane-title">{{ panel_title }}</h1>
+            <div class="wrap page-panes page-panes--files">
+                <section class="panel page-pane page-pane--list pane-primary" aria-labelledby="file-panel-title">
+                    <div class="pane-head">
+                        <div class="pane-head-row">
+                            <h1 id="file-panel-title" class="pane-title">{{ panel_title }}</h1>
                     {% if current_page == "backups" %}
                     <div class="backup-controls">
                         <div class="filter-row">
@@ -70,31 +70,42 @@
                     </div>
                     {% endif %}
                     {% endif %}
+                        </div>
                     </div>
-                </div>
-                <div id="download-error" class="download-error"></div>
-                <div id="list-loading" class="empty">Loading...</div>
-                <ul class="list"></ul>
-                <div id="list-empty-dynamic" class="empty" style="display:none;">{{ empty_text }}</div>
+                    <div class="pane-content">
+                        <div id="download-error" class="download-error"></div>
+                        <div class="file-action-token-template" hidden aria-hidden="true">
+                            <button class="file-download-btn" type="button"></button>
+                            <button class="file-restore-btn" type="button"></button>
+                        </div>
+                        <ul class="list">
+                            <li id="list-loading" class="list-state empty" style="display:none;">Loading...</li>
+                        </ul>
+                        <div id="list-empty-dynamic" class="empty" style="display:none;">{{ empty_text }}</div>
+                    </div>
                 </section>
                 <div id="file-viewer-resizer" class="file-viewer-resizer" aria-hidden="true"></div>
-                <aside id="file-viewer" class="file-viewer pane-editor" aria-hidden="true">
-                    <div class="file-viewer-header">
-                        <h2 id="file-viewer-title" class="file-viewer-title pane-title">File Viewer</h2>
-                        <div class="file-viewer-actions">
+                <aside id="file-viewer" class="panel page-pane page-pane--viewer file-viewer pane-editor" aria-hidden="true">
+                    <div class="pane-head">
+                        <div class="pane-head-row">
+                            <h2 id="pane-title-viewer" class="pane-title pane-title--viewer">File Viewer</h2>
+                            <div class="pane-head-actions pane-head-actions-group pane-head-actions-group--viewer">
                             {% if current_page != "backups" %}
                             <button id="file-viewer-download" class="file-viewer-download" type="button" disabled>Download</button>
                             <button id="file-viewer-close" class="file-viewer-close" type="button">Close</button>
                             {% endif %}
+                            <div id="backup-restore-controls" class="pane-head-actions-group pane-head-actions-group--restore pane-editor" hidden>
+                                <div class="pane-action-cluster pane-action-cluster--restore">
+                                    <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
+                                    <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
+                                </div>
+                            </div>
+                            </div>
                         </div>
                     </div>
-                    <div id="backup-restore-controls" class="backup-restore-controls pane-editor" hidden>
-                        <div class="backup-restore-actions">
-                            <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
-                            <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
-                        </div>
+                    <div class="pane-content">
+                        <pre id="file-viewer-content" class="file-viewer-content"></pre>
                     </div>
-                    <pre id="file-viewer-content" class="file-viewer-content"></pre>
                 </aside>
             </div>
         </main>
@@ -149,6 +160,12 @@
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
 <script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='page_module_registry.js', v=static_version('page_module_registry.js')) }}"></script>
+<script src="{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}"></script>
+<script src="{{ url_for('static', filename='log_render_utils.js', v=static_version('log_render_utils.js')) }}"></script>
+<script src="{{ url_for('static', filename='file_viewer_runtime.js', v=static_version('file_viewer_runtime.js')) }}"></script>
+<script src="{{ url_for('static', filename='file_page_data_runtime.js', v=static_version('file_page_data_runtime.js')) }}"></script>
 <script src="{{ url_for('static', filename='file_browser_page.js', v=static_version('file_browser_page.js')) }}"></script>
 </body>
 </html>
+

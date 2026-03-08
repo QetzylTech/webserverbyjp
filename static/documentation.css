@@ -37,10 +37,14 @@ body {
   overflow: visible;
 }
 
-.content {
+.docs-shell {
   height: auto;
   min-height: 100dvh;
   overflow: visible;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Match mcweb home scrollbar styling. */
@@ -85,23 +89,45 @@ body {
   background: var(--scrollbar-thumb-hover);
 }
 
-main {
+/* Documentation also follows the shared pane pattern: panel -> pane-head + pane-content. */
+.page-panes--docs {
+  position: relative;
+  min-height: 100dvh;
+  padding: 12px;
+}
+
+.page-panes--docs .page-pane--docs {
   width: auto;
   max-width: none;
-  margin: 12px;
-  padding: var(--canvas-padding) var(--canvas-padding) 2rem;
+  margin: 0;
   background: var(--surface);
   border-radius: var(--radius);
   box-shadow: none;
-  transition: margin-left 220ms ease, margin-right 220ms ease;
-  height: calc(100dvh - 24px);
-  min-height: 0;
+  min-height: calc(100dvh - 24px);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  overflow: hidden;
+  line-height: 1.6;
+}
+
+.pane-head {
+  padding: 0.9rem 1.1rem;
+}
+
+.pane-content {
+  min-width: 0;
+  min-height: 0;
+}
+
+.page-panes--docs .page-pane--docs > .pane-head {
+  border-bottom: 1px solid var(--border);
+}
+
+.docs-content-body {
+  flex: 1 1 auto;
   overflow-x: hidden;
   overflow-y: auto;
-  line-height: 1.6;
+  padding: var(--canvas-padding) var(--canvas-padding) 2rem;
 }
 
 @media (max-width: 600px) {
@@ -131,9 +157,8 @@ main {
     --toc-top: 0px;
   }
 
-  main {
-    /* Keep main pane strictly between nav and TOC with 12px gutters. */
-    margin: 12px calc(var(--toc-width) + 24px) 12px 12px;
+  .page-panes--docs .page-pane--docs {
+    margin-right: calc(var(--toc-width) + 12px);
   }
 
   .toc-sidebar {
@@ -683,23 +708,28 @@ article {
   border: none;
   border-radius: var(--radius);
   box-shadow: none;
-  padding: 0.75rem 0.9rem 0.9rem;
+  padding: 0;
   z-index: 1050;
   transform: translateX(calc(100% + 12px));
-  transition: transform 240ms ease;
   display: flex;
   flex-direction: column;
 }
-
 
 .toc-sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.5rem;
+  margin: 0;
   font-weight: 700;
   font-size: 0.95rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.toc-sidebar-content {
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding: 0.75rem 0.9rem 0.9rem;
 }
 
 
@@ -713,6 +743,7 @@ article {
   flex: 1 1 auto;
   overflow: auto;
   min-height: 0;
+  height: 100%;
 }
 
 .toc-body li {
@@ -756,6 +787,10 @@ article {
   }
 }
 
+.toc-sidebar.is-animated {
+  transition: transform 240ms ease;
+}
+
 .toc-sidebar.is-visible {
   transform: translateX(0);
 }
@@ -774,10 +809,6 @@ article {
 
   #content h1 {
     border-bottom-color: #334155;
-  }
-
-  #content h2 {
-    background: #1f2733;
   }
 
   #content h6 {
@@ -898,7 +929,7 @@ article {
   }
 
 
-  main {
+  .page-panes--docs .page-pane--docs {
     background: #161b22;
   }
 
@@ -927,7 +958,7 @@ html.theme-dark body {
   color: #e6edf3;
 }
 
-html.theme-dark main,
+html.theme-dark .page-panes--docs .page-pane--docs,
 html.theme-dark .toc-sidebar {
   background: #161b22;
 }
@@ -952,4 +983,27 @@ html.theme-dark .code-header {
 
 html.theme-dark .code-lang {
   color: #e6edf3;
+}
+
+
+
+@media (max-width: 1100px) {
+  .page-panes--docs {
+    min-height: auto;
+  }
+
+  .page-panes--docs .page-pane--docs {
+    min-height: calc(100dvh - 24px);
+    margin-right: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .page-panes--docs {
+    padding: 12px;
+  }
+
+  .page-panes--docs .page-pane--docs {
+    min-height: auto;
+  }
 }

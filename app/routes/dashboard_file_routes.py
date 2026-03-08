@@ -9,6 +9,7 @@ import tracemalloc
 import time
 
 from flask import Response, abort, after_this_request, jsonify, render_template, request, send_file, send_from_directory, stream_with_context
+from markupsafe import Markup
 from app.core import profiling
 from app.core import state_store as state_store_service
 from app.ports import ports
@@ -206,14 +207,32 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             return spec, None
         return spec, safe_name
 
+    def _wants_fragment_response():
+        return str(request.headers.get("X-MCWEB-Fragment", "") or "").strip() == "1"
+
+    def _render_shell_page(fragment_template, *, current_page, page_title, **context):
+        fragment_html = render_template(fragment_template, current_page=current_page, **context)
+        if _wants_fragment_response():
+            response = app.make_response(fragment_html)
+            response.headers["X-MCWEB-Page-Title"] = page_title
+            response.headers["X-MCWEB-Page-Key"] = current_page
+            return response
+        return render_template(
+            "app_shell.html",
+            current_page=current_page,
+            page_title=page_title,
+            initial_page_html=Markup(fragment_html),
+            initial_metrics_snapshot=state["get_cached_dashboard_metrics"](),
+        )
+
     # Route: /backups
     @app.route("/backups")
     def backups_page():
-        """Render the backup page shell; the file list hydrates client-side."""
+        """Render the backup page shell or backup fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
-        return render_template(
-            state["FILES_TEMPLATE_NAME"],
+        return _render_shell_page(
+            "fragments/files_fragment.html",
             current_page="backups",
             page_title="Backup & Restore",
             panel_title="Backup & Restore",
@@ -229,11 +248,11 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     # Route: /crash-logs
     @app.route("/crash-logs")
     def crash_logs_page():
-        """Render the crash-log page shell; the file list hydrates client-side."""
+        """Render the crash-log shell or crash-log fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
-        return render_template(
-            state["FILES_TEMPLATE_NAME"],
+        return _render_shell_page(
+            "fragments/files_fragment.html",
             current_page="crash_logs",
             page_title="Crash Reports",
             panel_title="Crash Reports",
@@ -249,11 +268,11 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     # Route: /minecraft-logs
     @app.route("/minecraft-logs")
     def minecraft_logs_page():
-        """Render the log-browser shell; log file inventories hydrate client-side."""
+        """Render the log-browser shell or log-browser fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
-        return render_template(
-            state["FILES_TEMPLATE_NAME"],
+        return _render_shell_page(
+            "fragments/files_fragment.html",
             current_page="minecraft_logs",
             page_title="Log Files",
             panel_title="Log Files",
@@ -595,3 +614,6 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
                     state["metrics_cache_cond"].notify_all()
 
         return _sse_response(generate())
+
+
+

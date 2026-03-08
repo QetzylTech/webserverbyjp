@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page_title }}</title>
+{% include "partials/theme_init.html" %}
+<link rel="icon" type="image/svg+xml" href="https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246">
+<link rel="stylesheet" href="{{ url_for('static', filename='global.css', v=static_version('global.css')) }}">
+<script>
+window.__MCWEB_SHELL_CONFIG = {
+    currentPage: {{ current_page | tojson }},
+    currentTitle: {{ page_title | tojson }},
+};
+window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
+</script>
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-light="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-dark="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" crossorigin="anonymous">
+<script>
+    (function () {
+      var link = document.getElementById("hljs-theme");
+      if (!link) return;
+      var prefersDark = false;
+      try {
+        prefersDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      } catch (_err) {
+        prefersDark = false;
+      }
+      var nextHref = prefersDark ? link.getAttribute("data-dark") : link.getAttribute("data-light");
+      if (nextHref && link.getAttribute("href") !== nextHref) {
+        link.setAttribute("href", nextHref);
+      }
+    })();
+</script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/powershell.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dos.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" crossorigin="anonymous"></script>
+</head>
+<body data-page="{{ current_page }}" data-shell="persistent">
+<div class="layout">
+    {% include "partials/nav.html" %}
+    <div id="mcweb-app-content" data-current-page="{{ current_page }}">
+{{ initial_page_html|safe }}
+    </div>
+</div>
+<script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
+<script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='pane_animations.js', v=static_version('pane_animations.js')) }}"></script>
+<script src="{{ url_for('static', filename='offline_recovery.js', v=static_version('offline_recovery.js')) }}"></script>
+<script src="{{ url_for('static', filename='page_module_registry.js', v=static_version('page_module_registry.js')) }}"></script>
+<script src="{{ url_for('static', filename='app_shell.js', v=static_version('app_shell.js')) }}"></script>
+</body>
+</html>

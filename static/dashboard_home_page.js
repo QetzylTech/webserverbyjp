@@ -1,9 +1,16 @@
+(function () {
     // `alert_message` is set server-side when an action fails validation.
     const __MCWEB_HOME_CONFIG = window.__MCWEB_HOME_CONFIG || {};
     const alertMessage = __MCWEB_HOME_CONFIG.alertMessage ?? "";
     const alertMessageCode = __MCWEB_HOME_CONFIG.alertMessageCode ?? "";
     const csrfToken = __MCWEB_HOME_CONFIG.csrfToken ?? "";
     const http = window.MCWebHttp || null;
+    const shell = window.MCWebShell || null;
+    const domUtils = window.MCWebDomUtils || {};
+    const logUtils = window.MCWebLogUtils || {};
+    const homeLogRuntime = window.MCWebHomeLogRuntime || {};
+    const homeTimeUtils = window.MCWebHomeTimeUtils || {};
+    const pageModules = window.MCWebPageModules || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
     const METRICS_FAST_RUNNING_POLL_INTERVAL_MS = 1000;
     function sendHomePageHeartbeat() {
@@ -33,97 +40,40 @@
     let serverTimeZoneLabel = "";
     let pendingSudoForm = null;
     const LOG_SOURCE_KEYS = ["minecraft", "backup", "mcweb", "mcweb_log"];
-    const LOG_SOURCE_BUFFER_LIMITS = {
-        minecraft: 500,
-        backup: 200,
-        mcweb: 200,
-        mcweb_log: 200,
-    };
-    const LOG_SOURCE_STREAM_PATHS = {
-        minecraft: "/log-stream/minecraft",
-        backup: "/log-stream/backup",
-        mcweb: "/log-stream/mcweb",
-        mcweb_log: "/log-stream/mcweb_log",
-    };
-    const LOG_SOURCE_TEXT_PATHS = {
-        minecraft: "/log-text/minecraft",
-        backup: "/log-text/backup",
-        mcweb: "/log-text/mcweb",
-        mcweb_log: "/log-text/mcweb_log",
-    };
     let selectedLogSource = "minecraft";
-    let logSourceBuffers = {
-        minecraft: [],
-        backup: [],
-        mcweb: [],
-        mcweb_log: [],
-    };
-    let pendingLogLines = {
-        minecraft: [],
-        backup: [],
-        mcweb: [],
-        mcweb_log: [],
-    };
-    let pendingLogFlushTimers = {
-        minecraft: null,
-        backup: null,
-        mcweb: null,
-        mcweb_log: null,
-    };
-    const HOME_CACHE_KEY = "mcweb.home.cache.v1";
-    const HOME_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
-    const HOME_CACHE_WRITE_INTERVAL_MS = 2000;
-    const LOG_STREAM_BATCH_FLUSH_MS = 75;
-    let logStreams = {
-        minecraft: null,
-        backup: null,
-        mcweb: null,
-        mcweb_log: null,
-    };
-    let deviceNameMap = {};
     let logAutoScrollEnabled = true;
 
     // Refresh cadence configuration (milliseconds).
     const TIMER_REBASE_TOLERANCE_SECONDS = 2;
 
     let metricsFastPollTimer = null;
+    let teardownHomePage = null;
+    let logScrollbarCleanup = null;
     let countdownTimer = null;
     let serverClockTimer = null;
     const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
     let cachedMetricsSnapshot = null;
-    let lastHomeCacheWriteAt = 0;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
-    const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    function isLogNearBottom(target, thresholdPx = 24) {
-        if (!target) return true;
-        const distance = target.scrollHeight - target.clientHeight - target.scrollTop;
-        return distance <= thresholdPx;
-    }
-    function syncVerticalScrollbarClass(target) {
-        if (!target) return;
-        const hasVerticalScrollbar = target.scrollHeight > target.clientHeight + 1;
-        target.classList.toggle("has-vscroll", hasVerticalScrollbar);
-    }
-    function watchVerticalScrollbarClass(target) {
-        if (!target) return;
-        syncVerticalScrollbarClass(target);
-        target.addEventListener("scroll", () => syncVerticalScrollbarClass(target), { passive: true });
-        window.addEventListener("resize", () => syncVerticalScrollbarClass(target));
-        if (window.ResizeObserver) {
-            const ro = new ResizeObserver(() => syncVerticalScrollbarClass(target));
-            ro.observe(target);
-        }
+    const watchVerticalScrollbarClass = typeof domUtils.watchVerticalScrollbarClass === "function"
+        ? (target) => domUtils.watchVerticalScrollbarClass(target)
+        : () => {};
+    const homeLogController = homeLogRuntime && typeof homeLogRuntime.createHomeLogController === "function"
+        ? homeLogRuntime.createHomeLogController({ shell, logUtils, watchVerticalScrollbarClass })
+        : null;
+    if (homeLogController) {
+        selectedLogSource = homeLogController.getSelectedSource();
+        logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
     }
 
     function scrollLogToBottom() {
-        const target = document.getElementById("minecraft-log");
-        if (!target) return;
-        target.scrollTop = target.scrollHeight;
+        if (homeLogController) {
+            homeLogController.scrollLogToBottom();
+        }
     }
 
     function getLogSource() {
@@ -133,314 +83,79 @@
         return "minecraft";
     }
 
-    function capTail(lines, maxLines) {
-        if (!Array.isArray(lines)) return [];
-        return lines.length > maxLines ? lines.slice(-maxLines) : lines;
-    }
-
-    function sourceBufferLimit(source) {
-        return LOG_SOURCE_BUFFER_LIMITS[source] || 200;
-    }
-
-    function readHomeCache() {
-        try {
-            const raw = window.sessionStorage.getItem(HOME_CACHE_KEY);
-            if (!raw) return null;
-            const payload = JSON.parse(raw);
-            if (!payload || typeof payload !== "object") return null;
-            const ts = Number(payload.ts || 0);
-            if (!Number.isFinite(ts) || ts <= 0) return null;
-            if ((Date.now() - ts) > HOME_CACHE_MAX_AGE_MS) return null;
-            return payload;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    function writeHomeCache(force = false) {
-        const now = Date.now();
-        if (!force && (now - lastHomeCacheWriteAt) < HOME_CACHE_WRITE_INTERVAL_MS) return;
-        if (!cachedMetricsSnapshot) return;
-        const compactLogs = {};
-        LOG_SOURCE_KEYS.forEach((source) => {
-            const lines = (logSourceBuffers[source] || []).map((entry) => String(entry.raw || ""));
-            compactLogs[source] = capTail(lines, sourceBufferLimit(source));
-        });
-        const payload = {
-            v: 1,
-            ts: now,
-            selectedLogSource: selectedLogSource,
-            metrics: cachedMetricsSnapshot,
-            logs: compactLogs,
-        };
-        try {
-            window.sessionStorage.setItem(HOME_CACHE_KEY, JSON.stringify(payload));
-            lastHomeCacheWriteAt = now;
-        } catch (_) {
-            // Ignore storage quota/unavailable errors.
-        }
-    }
-
-    function restoreHomeCache() {
-        const cached = readHomeCache();
-        if (!cached) return false;
-        if (cached.logs && typeof cached.logs === "object") {
-            LOG_SOURCE_KEYS.forEach((source) => {
-                const lines = Array.isArray(cached.logs[source]) ? cached.logs[source] : [];
-                logSourceBuffers[source] = capTail(lines, sourceBufferLimit(source)).map((line) => buildLogEntry(source, line));
-            });
-        }
-        const cachedSource = String(cached.selectedLogSource || "").trim();
-        if (LOG_SOURCE_KEYS.includes(cachedSource)) {
-            selectedLogSource = cachedSource;
-            const select = document.getElementById("log-source");
-            if (select) select.value = cachedSource;
-        }
-        if (cached.metrics && typeof cached.metrics === "object") {
-            applyMetricsData(cached.metrics, { fromCache: true });
-        }
-        renderActiveLog();
-        return true;
+    function persistHomeViewState(patch = {}) {
+        if (!shell || typeof shell.updateHomeViewState !== "function") return;
+        shell.updateHomeViewState(patch);
     }
 
     function setSourceLogText(source, rawText) {
-        const lines = capTail((rawText || "").split("\n"), sourceBufferLimit(source));
-        logSourceBuffers[source] = lines.map((line) => buildLogEntry(source, line));
-        writeHomeCache();
+        if (!homeLogController) return;
+        homeLogController.setSourceLogText(source, rawText);
     }
 
-    function appendSourceLogLine(source, line) {
-        if (!LOG_SOURCE_KEYS.includes(source)) return;
-        pendingLogLines[source].push(line || "");
-        if (pendingLogFlushTimers[source]) return;
-        pendingLogFlushTimers[source] = window.setTimeout(() => {
-            pendingLogFlushTimers[source] = null;
-            flushPendingLogLines(source);
-        }, LOG_STREAM_BATCH_FLUSH_MS);
-    }
-
-    function flushPendingLogLines(source) {
-        const pending = pendingLogLines[source];
-        if (!pending || pending.length === 0) return;
-        pendingLogLines[source] = [];
-
-        const nextEntries = pending.map((line) => buildLogEntry(source, line));
-        const targetBuffer = logSourceBuffers[source];
-        const previousLength = targetBuffer.length;
-        targetBuffer.push(...nextEntries);
-
-        const limit = sourceBufferLimit(source);
-        const overflow = Math.max(0, targetBuffer.length - limit);
-        if (overflow > 0) {
-            targetBuffer.splice(0, overflow);
-        }
-        if (selectedLogSource !== source) return;
-
-        appendRenderedEntriesToActiveLog(nextEntries, {
-            previousLength,
-            droppedCount: overflow,
-            currentLength: targetBuffer.length,
-        });
-        writeHomeCache();
-    }
-
-    function appendRenderedEntriesToActiveLog(entries, meta) {
-        const target = document.getElementById("minecraft-log");
-        if (!target) return;
-        const wasNearBottom = isLogNearBottom(target);
-        if ((meta.previousLength || 0) === 0) {
-            target.innerHTML = "";
-        }
-        const htmlChunk = entries.map((entry) => entry.html).join("");
-        if (htmlChunk) {
-            target.insertAdjacentHTML("beforeend", htmlChunk);
-        }
-        const droppedCount = Number(meta.droppedCount || 0);
-        for (let i = 0; i < droppedCount; i += 1) {
-            if (!target.firstElementChild) break;
-            target.removeChild(target.firstElementChild);
-        }
-        if ((meta.currentLength || 0) === 0) {
-            target.innerHTML = formatNonMinecraftLogLine("(no logs)");
-        }
-        if (logAutoScrollEnabled && wasNearBottom) {
-            scrollLogToBottom();
-        }
-    }
-
-    function escapeHtml(text) {
-        return (text || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/\"/g, "&quot;")
-            .replace(/'/g, "&#39;");
-    }
-
-    function ipReplacement(ipText) {
-        const ip = (ipText || "").trim();
-        if (!ip) return "unmapped-device";
-        const mapped = deviceNameMap[ip];
-        return mapped && mapped.trim() ? mapped.trim() : "unmapped-device";
-    }
-
-    function replaceIpsWithDeviceNames(text) {
-        const raw = text || "";
-        const withIpv4 = raw.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, (ip) => ipReplacement(ip));
-        return withIpv4.replace(/\b(?:[A-Fa-f0-9]{0,4}:){3,7}[A-Fa-f0-9]{0,4}\b/g, (ip) => ipReplacement(ip));
-    }
-
-    function bracketClass(token) {
-        if (/^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]$/.test(token)) return "log-ts";
-        if (/[/]\s*error\]/i.test(token) || /[/]\s*fatal\]/i.test(token)) return "log-level-error";
-        if (/[/]\s*warn\]/i.test(token)) return "log-level-warn";
-        if (/[/]\s*info\]/i.test(token)) return "log-level-info";
-        return "log-bracket";
-    }
-
-    function formatTextSegment(text, isLineStart) {
-        if (!text) return "";
-        if (isLineStart) {
-            const m = text.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})(\s+.*)?$/);
-            if (m) {
-                const ts = `<span class="log-ts">${escapeHtml(m[1])}</span>`;
-                const rest = m[2] ? `<span class="log-text">${escapeHtml(m[2])}</span>` : "";
-                return ts + rest;
-            }
-        }
-        return `<span class="log-text">${escapeHtml(text)}</span>`;
-    }
-
-    function formatBracketAwareLogLine(line, highlightErrorLine) {
-        const raw = replaceIpsWithDeviceNames(line || "");
-        if (highlightErrorLine) {
-            const lower = raw.toLowerCase();
-            if (lower.includes("error") || lower.includes("overloaded") || lower.includes("delayed")) {
-                return `<span class="log-line log-level-error">${escapeHtml(raw)}</span>`;
-            }
-        }
-        const bracketRe = /\[[^\]]*\]/g;
-        let out = "";
-        let cursor = 0;
-        let firstSegment = true;
-        let match;
-        while ((match = bracketRe.exec(raw)) !== null) {
-            const start = match.index;
-            const end = start + match[0].length;
-            out += formatTextSegment(raw.slice(cursor, start), firstSegment);
-            out += `<span class="${bracketClass(match[0])}">${escapeHtml(match[0])}</span>`;
-            cursor = end;
-            firstSegment = false;
-        }
-        out += formatTextSegment(raw.slice(cursor), firstSegment);
-        return `<span class="log-line">${out || '<span class="log-muted">(empty line)</span>'}</span>`;
-    }
-
-    function formatMinecraftLogLine(line) {
-        return formatBracketAwareLogLine(line, true);
-    }
-
-    function formatNonMinecraftLogLine(line) {
-        // For backup/mcweb logs: color only timestamps and bracketed tokens.
-        return formatBracketAwareLogLine(line, false);
-    }
-
-    function buildLogEntry(source, line) {
-        const raw = line || "";
-        const formatter = source === "minecraft" ? formatMinecraftLogLine : formatNonMinecraftLogLine;
-        return { raw, html: formatter(raw) };
+    function syncHomeLogSource(source, lines) {
+        if (!homeLogController) return;
+        homeLogController.syncShellLogSource(source, lines);
+        selectedLogSource = homeLogController.getSelectedSource();
+        logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
     }
 
     function renderActiveLog() {
-        const target = document.getElementById("minecraft-log");
-        if (!target) return;
-        const wasNearBottom = isLogNearBottom(target);
-        const entries = logSourceBuffers[selectedLogSource] || [];
-        if (entries.length === 0) {
-            target.innerHTML = formatNonMinecraftLogLine("(no logs)");
-        } else {
-            target.innerHTML = entries.map((entry) => entry.html).join("");
-        }
-        if (logAutoScrollEnabled && wasNearBottom) {
-            scrollLogToBottom();
-        }
+        if (!homeLogController) return;
+        homeLogController.renderActiveLog();
+        selectedLogSource = homeLogController.getSelectedSource();
+        logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
+    }
+
+    function activateLogStream(source) {
+        if (!homeLogController) return;
+        homeLogController.activateLogStream(source);
+    }
+
+    async function loadLogSourceFromServer(source) {
+        if (!homeLogController) return;
+        await homeLogController.loadLogSourceFromServer(source);
+        selectedLogSource = homeLogController.getSelectedSource();
+        logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
+    }
+
+    async function loadDeviceNameMap() {
+        if (!homeLogController) return;
+        await homeLogController.loadDeviceNameMap();
     }
 
     function parseCountdown(text) {
         if (!text || text === "--:--") return null;
-        const match = text.match(/^([0-9]{2}):([0-9]{2})$/);
-        if (!match) return null;
-        return (parseInt(match[1], 10) * 60) + parseInt(match[2], 10);
+        return typeof homeTimeUtils.parseCountdown === "function"
+            ? homeTimeUtils.parseCountdown(text)
+            : null;
     }
 
     function parseSessionDuration(text) {
         if (!text || text === "--") return null;
-        const match = String(text).trim().match(/^([0-9]+):([0-9]{2}):([0-9]{2})$/);
-        if (!match) return null;
-        return (parseInt(match[1], 10) * 3600) + (parseInt(match[2], 10) * 60) + parseInt(match[3], 10);
+        return typeof homeTimeUtils.parseSessionDuration === "function"
+            ? homeTimeUtils.parseSessionDuration(text)
+            : null;
     }
 
     function formatCountdown(totalSeconds) {
         if (totalSeconds === null) return "--:--";
-        const s = Math.max(0, totalSeconds);
-        const mins = Math.floor(s / 60).toString().padStart(2, "0");
-        const secs = (s % 60).toString().padStart(2, "0");
-        return `${mins}:${secs}`;
+        return typeof homeTimeUtils.formatCountdown === "function"
+            ? homeTimeUtils.formatCountdown(totalSeconds)
+            : "--:--";
     }
 
     function formatSessionDuration(totalSeconds) {
         if (totalSeconds === null) return "--";
-        const s = Math.max(0, totalSeconds);
-        const hours = Math.floor(s / 3600).toString().padStart(2, "0");
-        const mins = Math.floor((s % 3600) / 60).toString().padStart(2, "0");
-        const secs = (s % 60).toString().padStart(2, "0");
-        return `${hours}:${mins}:${secs}`;
+        return typeof homeTimeUtils.formatSessionDuration === "function"
+            ? homeTimeUtils.formatSessionDuration(totalSeconds)
+            : "--";
     }
 
     function parseServerTimeText(text) {
-        const raw = String(text || "").trim();
-        if (!raw) return null;
-        const match = raw.match(
-            /^([A-Za-z]{3})\s+([0-9]{1,2}),\s+([0-9]{4})\s+([0-9]{2}):([0-9]{2}):([0-9]{2})\s+(AM|PM)\s+(.+)$/
-        );
-        if (!match) return null;
-        const monthIdx = MONTH_ABBREV.indexOf(match[1]);
-        if (monthIdx < 0) return null;
-        const day = parseInt(match[2], 10);
-        const year = parseInt(match[3], 10);
-        let hour = parseInt(match[4], 10);
-        const minute = parseInt(match[5], 10);
-        const second = parseInt(match[6], 10);
-        const amPm = match[7];
-        const zoneLabel = String(match[8] || "").trim();
-        if (hour === 12) {
-            hour = (amPm === "AM") ? 0 : 12;
-        } else if (amPm === "PM") {
-            hour += 12;
-        }
-        if ([day, year, hour, minute, second].some((n) => Number.isNaN(n))) return null;
-        return {
-            utcMs: Date.UTC(year, monthIdx, day, hour, minute, second),
-            zoneLabel,
-        };
-    }
-
-    function formatServerTimeText(utcMs, zoneLabel) {
-        if (utcMs === null || Number.isNaN(utcMs)) return "";
-        const date = new Date(utcMs);
-        const month = MONTH_ABBREV[date.getUTCMonth()];
-        const day = String(date.getUTCDate()).padStart(2, "0");
-        const year = String(date.getUTCFullYear());
-        let hour24 = date.getUTCHours();
-        const minute = String(date.getUTCMinutes()).padStart(2, "0");
-        const second = String(date.getUTCSeconds()).padStart(2, "0");
-        const amPm = hour24 >= 12 ? "PM" : "AM";
-        hour24 = hour24 % 12;
-        const hour12 = String(hour24 === 0 ? 12 : hour24).padStart(2, "0");
-        const label = String(zoneLabel || "").trim();
-        return label
-            ? `${month} ${day}, ${year} ${hour12}:${minute}:${second} ${amPm} ${label}`
-            : `${month} ${day}, ${year} ${hour12}:${minute}:${second} ${amPm}`;
+        return typeof homeTimeUtils.parseServerTimeText === "function"
+            ? homeTimeUtils.parseServerTimeText(text)
+            : null;
     }
 
     function setServerTimeFromEpoch(epochMs, zoneLabel, options = {}) {
@@ -516,7 +231,7 @@
 
     function setServerTimeFromText(text, options = {}) {
         const force = options.force === true;
-        const parsed = parseServerTimeText(text);
+        const parsed = homeTimeUtils.parseServerTimeText(text);
         if (!parsed) return false;
         const nextMs = parsed.utcMs;
         const currentMs = currentServerTimeUtcMs();
@@ -537,7 +252,7 @@
         if (!serverTimeNode) return;
         const nowUtcMs = currentServerTimeUtcMs();
         if (nowUtcMs === null) return;
-        const nextText = formatServerTimeText(nowUtcMs, serverTimeZoneLabel);
+        const nextText = homeTimeUtils.formatServerTimeText(nowUtcMs, serverTimeZoneLabel);
         if (nextText) serverTimeNode.textContent = nextText;
     }
 
@@ -549,7 +264,7 @@
             } else {
                 const remaining = currentIdleCountdownSeconds();
                 idleCountdownSeconds = remaining;
-                idleCountdown.textContent = formatCountdown(remaining);
+                idleCountdown.textContent = homeTimeUtils.formatCountdown(remaining);
             }
         }
 
@@ -562,7 +277,7 @@
         ) {
             const current = currentSessionDurationSeconds();
             sessionDurationSeconds = current;
-            sessionDuration.textContent = formatSessionDuration(current);
+            sessionDuration.textContent = homeTimeUtils.formatSessionDuration(current);
         }
     }
 
@@ -595,87 +310,6 @@
         if (explicitStatus) return explicitStatus === "running";
         const fallback = String(data && data.service_running_status ? data.service_running_status : "").trim().toLowerCase();
         return fallback === "active";
-    }
-
-    function ensureLogStreamStarted(source) {
-        if (logStreams[source]) return;
-        const path = LOG_SOURCE_STREAM_PATHS[source];
-        if (!path) return;
-        const stream = new EventSource(path);
-        stream.onmessage = (event) => {
-            appendSourceLogLine(source, event.data || "");
-        };
-        stream.onerror = () => {
-            // EventSource reconnects automatically.
-        };
-        logStreams[source] = stream;
-    }
-
-    function closeLogStream(source) {
-        const stream = logStreams[source];
-        if (!stream) return;
-        try {
-            stream.close();
-        } catch (_) {
-            // Ignore close errors during navigation teardown.
-        }
-        logStreams[source] = null;
-    }
-
-    function activateLogStream(source) {
-        LOG_SOURCE_KEYS.forEach((key) => {
-            if (key !== source) {
-                closeLogStream(key);
-            }
-        });
-        ensureLogStreamStarted(source);
-    }
-
-    async function loadLogSourceFromServer(source) {
-        try {
-            const result = http
-                ? await http.getJson(LOG_SOURCE_TEXT_PATHS[source])
-                : { response: await fetch(LOG_SOURCE_TEXT_PATHS[source], { cache: "no-store" }), payload: null };
-            const response = result.response;
-            if (!response.ok) {
-                setSourceLogText(source, "(no logs)");
-                return;
-            }
-            let payload = result.payload;
-            if (!payload) {
-                payload = await response.json().catch(() => ({}));
-            }
-            setSourceLogText(source, payload.logs || "");
-        } catch (err) {
-            setSourceLogText(source, "(no logs)");
-        }
-        if (selectedLogSource === source) {
-            renderActiveLog();
-        }
-    }
-
-    async function loadDeviceNameMap() {
-        try {
-            const result = http
-                ? await http.getJson("/device-name-map")
-                : { response: await fetch("/device-name-map", { cache: "no-store" }), payload: null };
-            const response = result.response;
-            if (!response.ok) return;
-            let payload = result.payload;
-            if (!payload) {
-                payload = await response.json().catch(() => ({}));
-            }
-            const nextMap = payload && payload.map ? payload.map : {};
-            deviceNameMap = (nextMap && typeof nextMap === "object") ? nextMap : {};
-            LOG_SOURCE_KEYS.forEach((source) => {
-                if ((logSourceBuffers[source] || []).length > 0) {
-                    logSourceBuffers[source] = logSourceBuffers[source].map((entry) => buildLogEntry(source, entry.raw));
-                }
-            });
-            renderActiveLog();
-        } catch (_) {
-            // Keep current labels when map fetch fails.
-        }
     }
 
     function openSudoModal(form) {
@@ -887,12 +521,6 @@
         }).join(" | ");
     }
 
-    function handleSharedMetricsSnapshot(event) {
-        const data = event && event.detail && typeof event.detail === "object" ? event.detail : null;
-        if (!data) return;
-        applyMetricsData(data);
-    }
-
     function applyMetricsData(data, options = {}) {
         if (!data) return;
         const fromCache = options.fromCache === true;
@@ -927,13 +555,13 @@
         if (players && data.players_online) players.textContent = data.players_online;
         if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
         if (data.idle_countdown !== undefined) {
-            setIdleCountdownFromParsedSeconds(parseCountdown(data.idle_countdown));
+            setIdleCountdownFromParsedSeconds(homeTimeUtils.parseCountdown(data.idle_countdown));
             if (idleCountdown && idleCountdownSeconds === null) idleCountdown.textContent = data.idle_countdown;
         }
         if (sessionDuration && data.session_duration !== undefined) {
-            setSessionDurationFromParsedSeconds(parseSessionDuration(data.session_duration));
+            setSessionDurationFromParsedSeconds(homeTimeUtils.parseSessionDuration(data.session_duration));
             if (sessionDurationSeconds !== null) {
-                sessionDuration.textContent = formatSessionDuration(sessionDurationSeconds);
+                sessionDuration.textContent = homeTimeUtils.formatSessionDuration(sessionDurationSeconds);
             } else {
                 sessionDuration.textContent = data.session_duration;
             }
@@ -974,6 +602,7 @@
         const lowStorageMessage = (data.low_storage_message || "").trim();
         const backupWarningSeq = Number(data.backup_warning_seq || 0);
         const backupWarningMessage = (data.backup_warning_message || "").trim();
+        const serviceStateLabel = String(data.service_status || "").trim().toLowerCase();
         if (data.service_running_status === "active") {
             if (startBtn) startBtn.disabled = true;
             if (stopBtn) stopBtn.disabled = false;
@@ -987,7 +616,12 @@
         } else {
             if (startBtn) startBtn.disabled = lowStorageBlocked;
             if (stopBtn) stopBtn.disabled = true;
-            if (rconInput) rconInput.disabled = true;
+            if (rconInput) {
+                rconInput.disabled = true;
+                rconInput.placeholder = serviceStateLabel === "off"
+                    ? "Server is off"
+                    : "Loading server state...";
+            }
             if (rconSubmit) rconSubmit.disabled = true;
         }
         if (!fromCache && lowStorageBlocked) {
@@ -1011,7 +645,6 @@
             lastBackupWarningSeq = backupWarningSeq;
         }
         cachedMetricsSnapshot = data;
-        writeHomeCache();
         applyRefreshMode(data.service_status);
         applyFastMetricsMode(sessionDurationRunning);
     }
@@ -1031,10 +664,10 @@
         if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
         if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
         if (data.idle_countdown !== undefined) {
-            setIdleCountdownFromParsedSeconds(parseCountdown(data.idle_countdown));
+            setIdleCountdownFromParsedSeconds(homeTimeUtils.parseCountdown(data.idle_countdown));
         }
         if (data.session_duration !== undefined) {
-            setSessionDurationFromParsedSeconds(parseSessionDuration(data.session_duration));
+            setSessionDurationFromParsedSeconds(homeTimeUtils.parseSessionDuration(data.session_duration));
         }
         if (data.server_time || data.server_time_epoch_ms) {
             setServerTimeFromEpoch(data.server_time_epoch_ms, data.server_time_zone)
@@ -1042,7 +675,6 @@
             tickServerClock();
         }
         cachedMetricsSnapshot = data;
-        writeHomeCache();
     }
 
 
@@ -1212,30 +844,39 @@
         scheduleRuntimeSimulationTick();
     }
 
+    // Tear down page-local timers/listeners when the shell unmounts Home.
     function teardownRealtimeConnections() {
-        LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
-        LOG_SOURCE_KEYS.forEach((source) => {
-            const timerId = pendingLogFlushTimers[source];
-            if (timerId) {
-                clearTimeout(timerId);
-                pendingLogFlushTimers[source] = null;
-            }
-            pendingLogLines[source] = [];
-        });
-        window.removeEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
+        if (homeLogController) {
+            homeLogController.teardown();
+        }
+        if (typeof homeMetricsUnsubscribe === "function") {
+            homeMetricsUnsubscribe();
+            homeMetricsUnsubscribe = null;
+        }
+        if (typeof homeLogsUnsubscribe === "function") {
+            homeLogsUnsubscribe();
+            homeLogsUnsubscribe = null;
+        }
         stopFastMetricsPolling();
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
             homeHeartbeatTimer = null;
         }
+        if (typeof logScrollbarCleanup === "function") {
+            logScrollbarCleanup();
+            logScrollbarCleanup = null;
+        }
         clearRefreshTimers();
         clearServerClockTimer();
+        refreshMode = null;
     }
 
     function handleVisibilityRefreshMode() {
         if (document.hidden) {
-            LOG_SOURCE_KEYS.forEach((source) => closeLogStream(source));
+            if (homeLogController && (!shell || typeof shell.activateHomeLogStream !== "function")) {
+                homeLogController.teardown();
+            }
             stopFastMetricsPolling();
             clearServerClockTimer();
             return;
@@ -1245,8 +886,7 @@
         refreshMetrics();
         sendHomePageHeartbeat();
     }
-
-    window.addEventListener("load", async () => {
+    async function startHomePage() {
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
             form.addEventListener("submit", async (event) => {
                 event.preventDefault();
@@ -1347,64 +987,117 @@
         scrollLogToBottom();
         const idleCountdown = document.getElementById("idle-countdown");
         if (idleCountdown) {
-            setIdleCountdownFromParsedSeconds(parseCountdown(idleCountdown.textContent.trim()));
+            setIdleCountdownFromParsedSeconds(homeTimeUtils.parseCountdown(idleCountdown.textContent.trim()));
         }
         const existingSessionDuration = document.getElementById("session-duration");
         if (existingSessionDuration) {
-            setSessionDurationFromParsedSeconds(parseSessionDuration(existingSessionDuration.textContent.trim()));
+            setSessionDurationFromParsedSeconds(homeTimeUtils.parseSessionDuration(existingSessionDuration.textContent.trim()));
         }
         const existingServerTime = document.getElementById("server-time");
         if (existingServerTime) {
             setServerTimeFromText(existingServerTime.textContent.trim(), { force: true });
         }
         const logSource = document.getElementById("log-source");
-        restoreHomeCache();
+        if (shell && typeof shell.subscribeHomeLogs === "function") {
+            homeLogsUnsubscribe = shell.subscribeHomeLogs((source, lines) => {
+                if (!LOG_SOURCE_KEYS.includes(source)) return;
+                syncHomeLogSource(source, lines);
+            });
+            if (homeLogController) {
+                homeLogController.hydrateFromShell();
+            }
+        }
+        if (logSource && LOG_SOURCE_KEYS.includes(selectedLogSource)) {
+            logSource.value = selectedLogSource;
+        }
         if (logSource) {
             logSource.addEventListener("change", async () => {
                 selectedLogSource = getLogSource();
+                if (homeLogController) {
+                    selectedLogSource = homeLogController.setSelectedSource(selectedLogSource);
+                    logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
+                }
                 activateLogStream(selectedLogSource);
-                if ((logSourceBuffers[selectedLogSource] || []).length === 0) {
+                if (homeLogController && !homeLogController.sourceHasEntries(selectedLogSource)) {
                     await loadLogSourceFromServer(selectedLogSource);
                 }
                 renderActiveLog();
-                scrollLogToBottom();
-                writeHomeCache(true);
+                if (logAutoScrollEnabled) {
+                    scrollLogToBottom();
+                }
             });
         }
         const existingLog = document.getElementById("minecraft-log");
-        if (existingLog) {
-            existingLog.addEventListener("scroll", () => {
-                logAutoScrollEnabled = isLogNearBottom(existingLog);
-            });
-            watchVerticalScrollbarClass(existingLog);
+        if (existingLog && homeLogController) {
+            logScrollbarCleanup = homeLogController.bindLogElement(existingLog);
         }
         selectedLogSource = getLogSource();
-        await loadDeviceNameMap();
-        if ((logSourceBuffers.minecraft || []).length === 0) {
+        if (homeLogController && !homeLogController.sourceHasEntries("minecraft")) {
             setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
         }
         if (existingLog) {
             renderActiveLog();
             scrollLogToBottom();
         }
+        loadDeviceNameMap();
         activateLogStream(selectedLogSource);
-        loadLogSourceFromServer(selectedLogSource);
-        window.addEventListener("mcweb:metrics-snapshot", handleSharedMetricsSnapshot);
+        if (homeLogController && !homeLogController.sourceHasEntries(selectedLogSource)) {
+            loadLogSourceFromServer(selectedLogSource);
+        }
+        if (shell && typeof shell.subscribeMetrics === "function") {
+            homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {
+                if (payload && typeof payload === "object") {
+                    applyMetricsData(payload);
+                }
+            });
+        }
         if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
             applyMetricsData(window.__MCWEB_LAST_METRICS_SNAPSHOT);
+        } else if (shell && typeof shell.fetchMetricsSnapshot === "function") {
+            shell.fetchMetricsSnapshot().catch(() => {});
         } else {
             refreshMetrics();
         }
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
-        writeHomeCache(true);
-    });
+        document.addEventListener("visibilitychange", handleVisibilityRefreshMode);
+        window.addEventListener("pagehide", teardownRealtimeConnections);
+        window.addEventListener("beforeunload", teardownRealtimeConnections);
+        teardownHomePage = () => {
+            teardownRealtimeConnections();
+            document.removeEventListener("visibilitychange", handleVisibilityRefreshMode);
+            window.removeEventListener("pagehide", teardownRealtimeConnections);
+            window.removeEventListener("beforeunload", teardownRealtimeConnections);
+        };
+    }
 
-    document.addEventListener("visibilitychange", handleVisibilityRefreshMode);
+    function mountHomePage() {
+        if (typeof teardownHomePage === "function") {
+            try {
+                teardownHomePage();
+            } catch (_) {
+                // Ignore stale home teardown failures before remounting.
+            }
+        }
+        return startHomePage();
+    }
 
-    window.addEventListener("pagehide", teardownRealtimeConnections);
-    window.addEventListener("beforeunload", teardownRealtimeConnections);
+    if (pageModules && typeof pageModules.register === "function") {
+        pageModules.register("home", {
+            mount: mountHomePage,
+            unmount: function () {
+                if (typeof teardownHomePage === "function") {
+                    teardownHomePage();
+                }
+            },
+        });
+    }
+
+    if (!document.getElementById("mcweb-app-content")) {
+        mountHomePage();
+    }
+})();
 
 
 

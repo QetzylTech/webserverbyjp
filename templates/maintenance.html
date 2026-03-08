@@ -13,12 +13,12 @@
 <div class="layout">
     {% include "partials/nav.html" %}
     <main class="content">
-        <div class="wrap maintenance-wrap">
-            <section class="panel maintenance-panel pane-primary maintenance-top-header">
-                <div class="maintenance-title-wrap title">
-                    <div class="maintenance-title-row title-row">
+        <div class="wrap page-panes page-panes--maintenance">
+            <section class="panel page-pane page-pane--header pane-primary">
+                <div class="pane-head">
+                    <div class="pane-head-row">
                         <h1 class="pane-title">Cleanup</h1>
-                        <div class="maintenance-header-actions">
+                        <div class="pane-head-actions pane-head-actions-group pane-head-actions-group--header">
                             <div class="maintenance-scope-toggle" role="group" aria-label="Cleanup scope">
                                 <button id="maint-scope-backups" class="nav-link maintenance-header-btn" type="button">Backups</button>
                                 <button id="maint-scope-stale" class="nav-link maintenance-header-btn" type="button">Stale Worlds</button>
@@ -29,6 +29,8 @@
                             <button id="maint-open-manual" class="nav-link maintenance-header-btn" type="button">Manual Cleanup</button>
                         </div>
                     </div>
+                </div>
+                <div class="pane-content">
                     <div class="maintenance-stats">
                         <div class="stats-group">
                             <p class="group-title">Server Stats</p>
@@ -60,36 +62,37 @@
                 </div>
             </section>
 
-            <section class="panel maintenance-panel pane-primary maintenance-left-pane">
-                <div class="maintenance-pane-head">
+            <section class="panel page-pane page-pane--list pane-primary">
+                <div class="pane-head">
                     <h2 class="pane-title">File and Cleanup Eligibility List</h2>
                 </div>
-                <div class="maintenance-left-content">
+                <div class="pane-content">
+                    <div id="maintenance-manual-selection-count" class="maintenance-selection-count" hidden>0/0 Files selected</div>
                     <div class="maintenance-file-list">
                         <ul id="cleanup-file-list" class="list"></ul>
                     </div>
                 </div>
             </section>
 
-            <section id="maintenance-action-pane" class="panel maintenance-panel pane-primary maintenance-right-pane">
+            <section id="maintenance-action-pane" class="panel page-pane page-pane--action pane-primary">
                 <input id="maintenance-csrf-token" type="hidden" value="{{ csrf_token }}">
                 <div id="maintenance-bootstrap-data" data-config='{{ maintenance_snapshot.config|tojson|safe }}' data-preview='{{ maintenance_preview|tojson|safe }}' data-non-normal='{{ maintenance_snapshot.non_normal|tojson|safe }}' data-storage='{{ maintenance_snapshot.storage|tojson|safe }}' data-history='{{ maintenance_snapshot.history|tojson|safe }}' data-next-run='{{ maintenance_snapshot.next_run_at|tojson|safe }}' data-scope='{{ maintenance_scope|tojson|safe }}' data-device-map='{{ maintenance_device_map|tojson|safe }}' hidden></div>
 
-                <div class="maintenance-pane-head">
-                    <div class="maintenance-pane-title-row">
-                        <h2 id="maintenance-action-title" class="pane-title">Cleanup Rules</h2>
-                    </div>
-                    <div class="maintenance-pane-head-actions">
-                        <div id="history-view-toggle" class="maintenance-scope-toggle" role="group" aria-label="History view" hidden>
-                            <button id="history-show-success" class="nav-link maintenance-header-btn" type="button">Successful</button>
-                            <button id="history-show-missed" class="nav-link maintenance-header-btn" type="button">Missed</button>
+                <div class="pane-head">
+                    <div class="pane-head-row">
+                        <h2 id="pane-title-action" class="pane-title">Cleanup Rules</h2>
+                        <div class="pane-head-actions">
+                            <div id="history-view-toggle" class="maintenance-scope-toggle" role="group" aria-label="History view" hidden>
+                                <button id="history-show-success" class="nav-link maintenance-header-btn" type="button">Successful</button>
+                                <button id="history-show-missed" class="nav-link maintenance-header-btn" type="button">Missed</button>
+                            </div>
+                            <button id="rules-save-btn" class="btn-backup" type="button" hidden>Save</button>
+                            <button id="rules-edit-toggle-btn" class="btn-backup" type="button" hidden>Edit</button>
                         </div>
-                        <button id="rules-save-btn" class="btn-backup" type="button" hidden>Save</button>
-                        <button id="rules-edit-toggle-btn" class="btn-backup" type="button" hidden>Edit</button>
                     </div>
                 </div>
 
-                <div class="maintenance-action-content">
+                <div class="pane-content maintenance-action-content">
                     <div id="maintenance-action-toolbar" class="maintenance-action-toolbar">
                         <p id="maintenance-action-description" class="maintenance-meta"></p>
                     </div>
@@ -195,8 +198,9 @@
 </div>
 
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
-<script src="{{ url_for('static', filename='maintenance_bootstrap.js', v=static_version('maintenance_bootstrap.js')) }}"></script>
 <script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>
+<script src="{{ url_for('static', filename='page_module_registry.js', v=static_version('page_module_registry.js')) }}"></script>
+<script src="{{ url_for('static', filename='maintenance_api_runtime.js', v=static_version('maintenance_api_runtime.js')) }}"></script>
 <script src="{{ url_for('static', filename='maintenance_page.js', v=static_version('maintenance_page.js')) }}"></script>
 </body>
 </html>

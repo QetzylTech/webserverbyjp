@@ -476,7 +476,8 @@ def _transition_intent(ctx):
 
 def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, latest_stop, latest_restore):
     raw = str(service_status_raw or "inactive").strip().lower()
-    if raw == "active":
+    off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    if raw == "active" or raw in off_states:
         return raw
     if _active_operation(latest_restore) or _active_operation(latest_stop):
         return "shutting_down"
@@ -745,6 +746,12 @@ def reconcile_operations_once(ctx):
 
                 if op_type == "stop":
                     if service_status in ctx.OFF_STATES:
+                        clear_intent = getattr(ctx, "set_service_status_intent", None)
+                        if callable(clear_intent):
+                            try:
+                                clear_intent(None)
+                            except Exception:
+                                pass
                         _queue_update(
                             op_id,
                             status="observed",

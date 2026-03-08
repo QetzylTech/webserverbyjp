@@ -1,0 +1,151 @@
+<main
+    id="mcweb-page-root"
+    class="content"
+    data-page-key="{{ current_page }}"
+    data-page-title="{{ page_title }}"
+    data-page-styles='["{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='log_render_utils.js', v=static_version('log_render_utils.js')) }}", "{{ url_for('static', filename='file_viewer_runtime.js', v=static_version('file_viewer_runtime.js')) }}", "{{ url_for('static', filename='file_page_data_runtime.js', v=static_version('file_page_data_runtime.js')) }}", "{{ url_for('static', filename='file_browser_page.js', v=static_version('file_browser_page.js')) }}"]'
+>
+    <div class="wrap page-panes page-panes--files">
+        <section class="panel page-pane page-pane--list pane-primary" aria-labelledby="file-panel-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h1 id="file-panel-title" class="pane-title">{{ panel_title }}</h1>
+            {% if current_page == "backups" %}
+            <div class="backup-controls">
+                <div class="filter-row">
+                    <span class="filter-label">Filter</span>
+                    <label class="filter-check"><input class="backup-filter" type="checkbox" value="manual" checked>Manual</label>
+                    <label class="filter-check"><input class="backup-filter" type="checkbox" value="auto" checked>Auto</label>
+                    <label class="filter-check"><input class="backup-filter" type="checkbox" value="session" checked>Session</label>
+                    <label class="filter-check"><input class="backup-filter" type="checkbox" value="prerestore" checked>Prerestore</label>
+                    <label class="filter-check"><input class="backup-filter" type="checkbox" value="others" checked>Others</label>
+                </div>
+                <div class="sort-row">
+                    <label for="backup-sort" class="sort-label">Sort by</label>
+                    <select id="backup-sort" class="sort-select">
+                        <option value="newest">Latest to oldest</option>
+                        <option value="oldest">Oldest to latest</option>
+                        <option value="size">Size</option>
+                    </select>
+                </div>
+            </div>
+            {% else %}
+            {% if current_page == "minecraft_logs" %}
+            <div class="log-view-controls">
+                <div class="sort-row">
+                    <label for="file-sort" class="sort-label">Sort by</label>
+                    <select id="file-sort" class="sort-select">
+                        <option value="newest">Newest to oldest</option>
+                        <option value="oldest">Oldest to newest</option>
+                        <option value="size">Size</option>
+                        <option value="alpha">Alphabetical</option>
+                        <option value="reverse_alpha">Reverse alphabetical</option>
+                    </select>
+                </div>
+                <div class="log-view-toggles" role="group" aria-label="Log source views">
+                    <button class="nav-link log-source-toggle" type="button" data-log-source="minecraft">Minecraft Logs</button>
+                    <button class="nav-link log-source-toggle" type="button" data-log-source="backup">Backup Logs</button>
+                    <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb">Control Panel Activity</button>
+                    <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb_log">Control Panel Errors/System</button>
+                </div>
+            </div>
+            {% else %}
+            <div class="sort-row">
+                <label for="file-sort" class="sort-label">Sort by</label>
+                <select id="file-sort" class="sort-select">
+                    <option value="newest">Newest to oldest</option>
+                    <option value="oldest">Oldest to newest</option>
+                    <option value="size">Size</option>
+                    <option value="alpha">Alphabetical</option>
+                    <option value="reverse_alpha">Reverse alphabetical</option>
+                </select>
+            </div>
+            {% endif %}
+            {% endif %}
+            </div>
+        </div>
+        <div class="pane-content">
+            <div id="download-error" class="download-error"></div>
+            <div class="file-action-token-template" hidden aria-hidden="true">
+                <button class="file-download-btn" type="button"></button>
+                <button class="file-restore-btn" type="button"></button>
+            </div>
+            <ul class="list">
+                <li id="list-loading" class="list-state empty" style="display:none;">Loading...</li>
+            </ul>
+            <div id="list-empty-dynamic" class="empty" style="display:none;">{{ empty_text }}</div>
+        </div>
+        </section>
+        <div id="file-viewer-resizer" class="file-viewer-resizer" aria-hidden="true"></div>
+        <aside id="file-viewer" class="panel page-pane page-pane--viewer file-viewer pane-editor" aria-hidden="true">
+            <div class="pane-head">
+                <div class="pane-head-row">
+                    <h2 id="pane-title-viewer" class="pane-title pane-title--viewer">File Viewer</h2>
+                    <div class="pane-head-actions pane-head-actions-group pane-head-actions-group--viewer">
+                        {% if current_page != "backups" %}
+                        <button id="file-viewer-download" class="file-viewer-download" type="button" disabled>Download</button>
+                        <button id="file-viewer-close" class="file-viewer-close" type="button">Close</button>
+                        {% endif %}
+                        <div id="backup-restore-controls" class="pane-head-actions-group pane-head-actions-group--restore pane-editor" hidden>
+                            <div class="pane-action-cluster pane-action-cluster--restore">
+                                <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
+                                <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="pane-content">
+                <pre id="file-viewer-content" class="file-viewer-content"></pre>
+            </div>
+        </aside>
+    </div>
+    <div id="download-password-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="download-password-title">
+            <h3 id="download-password-title" class="modal-title">Enter Password</h3>
+            <p class="modal-text">Enter sudo password to download this backup.</p>
+            <input id="download-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Password">
+            <div class="modal-actions">
+                <button id="download-password-cancel" class="modal-btn-cancel" type="button">Cancel</button>
+                <button id="download-password-submit" class="modal-btn-submit" type="button">Continue</button>
+            </div>
+        </div>
+    </div>
+    <div id="message-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
+            <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
+            <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
+            <p id="message-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="message-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+    <div id="success-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="success-modal-title">
+            <h3 id="success-modal-title" class="modal-title">Action Completed</h3>
+            <p id="success-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="success-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+    <div id="error-modal" class="modal-overlay" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="error-modal-title">
+            <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
+            <p id="error-modal-text" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="error-modal-ok" class="modal-btn-submit" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+<script type="application/json" id="mcweb-page-config">
+{{ {
+    "csrfToken": csrf_token,
+    "heartbeatIntervalMs": file_page_heartbeat_interval_ms,
+    "listApiPath": list_api_path,
+    "emptyText": empty_text,
+} | tojson }}
+</script>
+</main>
