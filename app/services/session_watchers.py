@@ -106,8 +106,6 @@ def backup_session_watcher(ctx):
                             periodic_due_runs = due_runs
                 elif is_off and session_started_at is not None:
                     should_run_shutdown_backup = True
-                    ctx.clear_session_start_time()
-                    backup_state.periodic_runs = 0
 
             if should_run_periodic_backup:
                 if ctx.run_backup_script(count_skip_as_success=False, trigger="auto"):
@@ -115,7 +113,10 @@ def backup_session_watcher(ctx):
                         backup_state.periodic_runs = max(backup_state.periodic_runs, periodic_due_runs)
 
             if should_run_shutdown_backup:
-                ctx.run_backup_script(trigger="session_end")
+                if ctx.run_backup_script(count_skip_as_success=False, trigger="session_end"):
+                    ctx.clear_session_start_time()
+                    with backup_state.lock:
+                        backup_state.periodic_runs = 0
         except Exception as exc:
             ctx.log_mcweb_exception("backup_session_watcher", exc)
 

@@ -8,7 +8,7 @@ import threading
 import tracemalloc
 import time
 
-from flask import Response, abort, after_this_request, jsonify, render_template, request, send_file, send_from_directory, stream_with_context
+from flask import Response, abort, after_this_request, jsonify, redirect, render_template, request, send_file, send_from_directory, stream_with_context, url_for
 from markupsafe import Markup
 from app.core import profiling
 from app.core import state_store as state_store_service
@@ -161,6 +161,14 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
                 "download_base": "/download/minecraft-logs",
                 "view_base": "/view-file/minecraft_logs",
             }
+        if normalized == "crash":
+            return {
+                "key": "crash",
+                "base_dir": state["CRASH_REPORTS_DIR"],
+                "patterns": ("*.txt",),
+                "download_base": "/download/log-files/crash",
+                "view_base": "/view-log-file/crash",
+            }
         if normalized == "backup":
             return {
                 "key": "backup",
@@ -248,42 +256,33 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     # Route: /crash-logs
     @app.route("/crash-logs")
     def crash_logs_page():
-        """Render the crash-log shell or crash-log fragment payload."""
-        state["ensure_file_page_cache_refresher_started"]()
-        state["_mark_file_page_client_active"]()
-        return _render_shell_page(
-            "fragments/files_fragment.html",
-            current_page="crash_logs",
-            page_title="Crash Reports",
-            panel_title="Crash Reports",
-            panel_hint=f"Latest to oldest from {state['CRASH_REPORTS_DIR']}",
-            items=[],
-            download_base="/download/crash-logs",
-            empty_text="No crash reports found.",
-            list_api_path="/file-page-items/crash_logs",
-            csrf_token=state["_ensure_csrf_token"](),
-            file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
-        )
+        """Redirect the retired crash-report page to the unified log browser."""
+        return redirect(url_for("minecraft_logs_page", source="crash"))
 
     # Route: /minecraft-logs
     @app.route("/minecraft-logs")
     def minecraft_logs_page():
-        """Render the log-browser shell or log-browser fragment payload."""
+        """Render the unified log-browser shell or fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
+        initial_log_source = str(request.args.get("source", "minecraft") or "minecraft").strip().lower()
+        if _log_file_source_spec(initial_log_source) is None:
+            initial_log_source = "minecraft"
         return _render_shell_page(
             "fragments/files_fragment.html",
             current_page="minecraft_logs",
             page_title="Log Files",
             panel_title="Log Files",
-            panel_hint=f"Latest to oldest from {state['MINECRAFT_LOGS_DIR']}",
+            panel_hint="Select a log source to browse recent files.",
             items=[],
             download_base="/download/minecraft-logs",
-            empty_text="No log files (.log/.gz) found.",
+            empty_text="No log files found.",
             list_api_path="/log-files/minecraft",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
+            initial_log_source=initial_log_source,
         )
+
 
     # Route: /file-page-heartbeat
     @app.route("/file-page-heartbeat", methods=["POST"])
@@ -424,6 +423,8 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             return jsonify({"ok": False, "message": "Invalid log file source."}), 404
         if spec["key"] == "minecraft":
             items = state["get_cached_file_page_items"]("minecraft_logs")
+        elif spec["key"] == "crash":
+            items = state["get_cached_file_page_items"]("crash_logs")
         else:
             items = _log_file_items_from_spec(spec)
         return jsonify(

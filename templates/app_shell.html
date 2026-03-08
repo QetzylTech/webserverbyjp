@@ -14,7 +14,7 @@ window.__MCWEB_SHELL_CONFIG = {
 };
 window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
 </script>
-<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-light="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" data-dark="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" crossorigin="anonymous">
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" data-light="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" data-dark="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" crossorigin="anonymous">
 <script>
     (function () {
       var link = document.getElementById("hljs-theme");
@@ -44,7 +44,7 @@ window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
 <body data-page="{{ current_page }}" data-shell="persistent">
 <div class="layout">
     {% include "partials/nav.html" %}
-    <div id="mcweb-app-content" data-current-page="{{ current_page }}">
+    <div id="mcweb-app-content" class="content" data-current-page="{{ current_page }}">
 {{ initial_page_html|safe }}
     </div>
 </div>

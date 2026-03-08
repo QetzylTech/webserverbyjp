@@ -43,6 +43,13 @@ body {
   box-shadow: none;
 }
 
+#mcweb-app-content > .docs-shell {
+  height: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* Match mcweb home scrollbar styling. */
 .toc-body,
 #content pre,
@@ -129,6 +136,11 @@ body {
 @media (max-width: 600px) {
   :root {
     --canvas-padding: 0.9rem;
+  }
+
+  .code-block {
+    width: 100%;
+    max-width: 100%;
   }
 }
 
@@ -319,12 +331,7 @@ article {
   border-radius: 0;
   margin: 0;
   padding: 0;
-  color: var(--text);
   font-size: 1em;
-}
-
-.hljs {
-  background: transparent !important;
 }
 
 .tok-command {
@@ -337,12 +344,12 @@ article {
 }
 
 .code-block {
-  border: 0;
-  border-radius: var(--radius);
+  border-radius: 6px;
   margin-bottom: 0.5em;
   overflow: hidden;
-  background: var(--theme-control-surface);
-  width: 100%;
+  background: #f6f8fa;
+  width: min(75%, 100%);
+  max-width: 75%;
 }
 
 .code-header {
@@ -351,8 +358,7 @@ article {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.35rem 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--theme-control-surface);
+  background: var(--pane-content-surface);
   font-size: 1rem;
   letter-spacing: 0.02em;
 }
@@ -360,7 +366,7 @@ article {
 .code-lang {
   font-weight: 600;
   text-transform: lowercase;
-  color: var(--muted);
+  color: #57606a;
 }
 
 .code-copy {

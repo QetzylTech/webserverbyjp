@@ -72,6 +72,7 @@ function mountFileBrowserPage() {
         const pageId = document.body.getAttribute("data-page") || "files";
         const listApiPath = String(__MCWEB_FILES_CONFIG.listApiPath || "").trim();
         const emptyText = String(__MCWEB_FILES_CONFIG.emptyText || "No files found.").trim();
+        const initialLogFileSource = String(__MCWEB_FILES_CONFIG.initialLogSource || "").trim().toLowerCase();
         const dataClient = (dataRuntime && typeof dataRuntime.createFilePageDataClient === "function")
             ? dataRuntime.createFilePageDataClient({ shell, pageId, listApiPath })
             : null;
@@ -620,7 +621,7 @@ function mountFileBrowserPage() {
 
         function applyFileSort(mode) {
             if (!fileList) return;
-            const items = Array.from(fileList.querySelectorAll("li"));
+            const items = Array.from(fileList.querySelectorAll("li:not(.list-state)"));
             sortItems(items, mode).forEach((item) => fileList.appendChild(item));
         }
 
@@ -810,6 +811,7 @@ function mountFileBrowserPage() {
                 applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
             }
             applyActiveFileRowHighlight();
+            syncRestoreAvailabilityUi();
             restoreFileListScroll();
             restoreShellViewStateAfterListLoad();
         }
@@ -848,6 +850,7 @@ function mountFileBrowserPage() {
             applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
             setActiveViewedFilename("");
             applyActiveFileRowHighlight();
+            syncRestoreAvailabilityUi();
             restoreFileListScroll();
             restoreShellViewStateAfterListLoad();
         }
@@ -895,7 +898,7 @@ function mountFileBrowserPage() {
                     .filter((input) => input && input.checked)
                     .map((input) => input.value)
             );
-            const items = Array.from(fileList.querySelectorAll("li"));
+            const items = Array.from(fileList.querySelectorAll("li:not(.list-state)"));
             sortItems(items, selectedSort).forEach((item) => {
                 const name = item.getAttribute("data-name") || "";
                 const category = backupCategoryFromName(name);
@@ -1445,7 +1448,7 @@ function mountFileBrowserPage() {
             }
             window.addEventListener("beforeunload", stopRestoreOperationPolling);
         }
-        if (pageId === "backups" || pageId === "crash_logs") {
+        if (pageId === "backups") {
             loadStandardFileList();
         }
         // Release page-local timers and subscriptions before the shell swaps
@@ -1495,7 +1498,7 @@ function mountFileBrowserPage() {
             });
         });
         if (pageId === "minecraft_logs") {
-            currentLogFileSource = currentLogFileSource || "minecraft";
+            currentLogFileSource = initialLogFileSource || currentLogFileSource || "minecraft";
             persistFileViewState({ currentLogFileSource });
             setActiveLogSource(activeLogSource || currentLogFileSource || "minecraft");
             if (logSourceToggles.length > 0) {
@@ -1506,7 +1509,7 @@ function mountFileBrowserPage() {
 }
 
 if (pageModules && typeof pageModules.register === "function") {
-    pageModules.register(["backups", "crash_logs", "minecraft_logs"], {
+    pageModules.register(["backups", "minecraft_logs"], {
         mount: mountFileBrowserPage,
         unmount: function () {
             if (typeof teardownFileBrowserPage === "function") {

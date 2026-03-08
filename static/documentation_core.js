@@ -431,6 +431,8 @@
     let navToggle = null;
     let sideNav = null;
     let navBackdrop = null;
+    let scrollContainer = null;
+    let removeScrollListener = null;
 
     const bindPageElements = () => {
       contentElement = document.getElementById('content');
@@ -445,7 +447,55 @@
       navToggle = document.getElementById('nav-toggle');
       sideNav = document.getElementById('side-nav');
       navBackdrop = document.getElementById('nav-backdrop');
+      scrollContainer = document.getElementById('mcweb-page-root');
+      removeScrollListener = null;
     };
+    const isElementScrollContainer = () => {
+      return !!(scrollContainer && scrollContainer instanceof Element && document.getElementById('mcweb-app-content'));
+    };
+
+    const getScrollTop = () => {
+      if (isElementScrollContainer()) {
+        return scrollContainer.scrollTop;
+      }
+      return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+    };
+
+    const scrollToPosition = (top, behavior) => {
+      const nextTop = Math.max(0, Number(top) || 0);
+      const nextBehavior = behavior || 'auto';
+      if (isElementScrollContainer()) {
+        scrollContainer.scrollTo({ top: nextTop, behavior: nextBehavior });
+        return;
+      }
+      window.scrollTo({ top: nextTop, behavior: nextBehavior });
+    };
+
+    const getTargetTop = (target, offset) => {
+      if (!target) return 0;
+      const safeOffset = Number(offset) || 0;
+      const targetRect = target.getBoundingClientRect();
+      if (isElementScrollContainer()) {
+        const containerRect = scrollContainer.getBoundingClientRect();
+        return targetRect.top - containerRect.top + scrollContainer.scrollTop - safeOffset;
+      }
+      return targetRect.top + getScrollTop() - safeOffset;
+    };
+
+    const addScrollListener = (handler) => {
+      if (typeof removeScrollListener === 'function') {
+        removeScrollListener();
+        removeScrollListener = null;
+      }
+      if (isElementScrollContainer()) {
+        scrollContainer.addEventListener('scroll', handler, { passive: true });
+        removeScrollListener = () => scrollContainer.removeEventListener('scroll', handler);
+        return;
+      }
+      window.addEventListener('scroll', handler, { passive: true });
+      removeScrollListener = () => window.removeEventListener('scroll', handler);
+    };
+
     const initMcwebNav = () => {
       if (!navToggle || !sideNav || !navBackdrop) return;
 
@@ -613,7 +663,7 @@
       backToTopButton.textContent = 'Back to top';
       backToTopButton.addEventListener('click', (event) => {
         event.preventDefault();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        scrollToPosition(0, 'smooth');
       });
 
       let tocPinned = true;
@@ -634,8 +684,8 @@
       const scrollToTarget = (target) => {
         if (!target) return;
         const offset = (stickyHeader?.offsetHeight || 0) + 12;
-        const targetTop = target.getBoundingClientRect().top + window.scrollY - offset;
-        window.scrollTo({ top: targetTop, behavior: 'smooth' });
+        const targetTop = getTargetTop(target, offset);
+        scrollToPosition(targetTop, 'smooth');
       };
 
       const buildTocListFromHeadings = () => {
@@ -799,7 +849,7 @@
         let currentH1 = null;
         let currentH2 = null;
         let currentH3 = null;
-        const scrollY = window.scrollY + (stickyHeader?.offsetHeight || 0) + 12;
+        const scrollY = getScrollTop() + (stickyHeader?.offsetHeight || 0) + 12;
 
         for (const heading of headings) {
           if (!shouldTrackHeading(heading)) continue;
@@ -836,12 +886,12 @@
       updateTocVisibility();
       updateSticky();
       window.addEventListener('resize', syncStickyOffset);
-      window.addEventListener('scroll', () => {
+      addScrollListener(() => {
         if (!ticking) {
           window.requestAnimationFrame(updateSticky);
           ticking = true;
         }
-      }, { passive: true });
+      });
     };
 
     const loadReadmeFromUrl = (url) => {

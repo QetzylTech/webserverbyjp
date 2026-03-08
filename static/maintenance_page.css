@@ -145,6 +145,16 @@ body {
   padding: 0 0 12px;
 }
 
+.page-panes--maintenance .page-pane--list > .pane-head .pane-head-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.page-panes--maintenance .page-pane--list > .pane-head .pane-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .page-panes--maintenance .page-pane--list > .pane-content {
   min-height: 0;
   display: flex;
@@ -161,10 +171,11 @@ body {
 
 .maintenance-selection-count {
   flex: 0 0 auto;
-  margin: 0 0 12px;
+  margin: 0 0 0 auto;
   color: var(--muted);
   font-size: 0.92rem;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 #cleanup-file-list .maintenance-file {

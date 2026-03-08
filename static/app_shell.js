@@ -1094,6 +1094,9 @@
         if (typeof token === "number" && !isLatestNavigationToken(token)) {
             return;
         }
+        if (typeof window.MCWebEnhanceCustomSelects === "function") {
+            window.MCWebEnhanceCustomSelects(contentRoot);
+        }
     }
 
     async function navigateTo(url, options = {}) {

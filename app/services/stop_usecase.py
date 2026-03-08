@@ -1,4 +1,4 @@
-﻿"""Stop/shutdown control-plane use cases."""
+"""Stop/shutdown control-plane use cases."""
 
 from app.services.restore_workflow_helpers import (
     clear_session_start_time,
@@ -40,8 +40,11 @@ def stop_server_automatically(ctx, trigger="session_end"):
     _invalidate_runtime_status(ctx)
     _publish_transition_metrics(ctx)
     result = graceful_stop_minecraft(ctx, trigger=trigger)
-    clear_session_start_time(ctx)
-    reset_backup_schedule_state(ctx)
+    systemd_ok = bool((result or {}).get("systemd_ok")) if isinstance(result, dict) else bool(result)
+    backup_ok = bool((result or {}).get("backup_ok")) if isinstance(result, dict) else True
+    if systemd_ok and backup_ok:
+        clear_session_start_time(ctx)
+        reset_backup_schedule_state(ctx)
     _invalidate_runtime_status(ctx)
     _publish_transition_metrics(ctx)
     return result

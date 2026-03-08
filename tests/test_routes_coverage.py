@@ -1,4 +1,4 @@
-﻿import tempfile
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -227,7 +227,9 @@ class FileRoutesCoverageTests(unittest.TestCase):
                 _assert_rule_methods(self, app, "/metrics-stream", {"GET"})
 
                 self.assertEqual(client.get("/backups").status_code, 200)
-                self.assertEqual(client.get("/crash-logs").status_code, 200)
+                crash_redirect = client.get("/crash-logs")
+                self.assertEqual(crash_redirect.status_code, 302)
+                self.assertIn("/minecraft-logs?source=crash", crash_redirect.headers.get("Location", ""))
                 self.assertEqual(client.get("/minecraft-logs").status_code, 200)
                 self.assertEqual(client.post("/file-page-heartbeat").status_code, 204)
                 self.assertEqual(client.post("/download/backups/a.zip", data={"sudo_password": "ok"}).status_code, 200)
@@ -235,9 +237,12 @@ class FileRoutesCoverageTests(unittest.TestCase):
                 self.assertEqual(client.get("/download/crash-logs/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/download/minecraft-logs/latest.log").status_code, 200)
                 self.assertEqual(client.get("/download/log-files/backup/backup.log").status_code, 200)
+                self.assertEqual(client.get("/download/log-files/crash/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/log-files/minecraft").status_code, 200)
+                self.assertEqual(client.get("/log-files/crash").status_code, 200)
                 self.assertEqual(client.get("/view-file/crash_logs/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/view-log-file/backup/backup.log").status_code, 200)
+                self.assertEqual(client.get("/view-log-file/crash/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/log-text/backup").status_code, 200)
                 self.assertEqual(client.get("/metrics").status_code, 200)
 

@@ -76,6 +76,7 @@ class TemplateContractsTests(unittest.TestCase):
             'id="message-modal"',
             'id="success-modal"',
             'id="error-modal"',
+            'data-log-source="crash"',
         ]
         for token in required_tokens:
             self.assertIn(token, text)
@@ -106,6 +107,9 @@ class TemplateContractsTests(unittest.TestCase):
         for token in required_tokens:
             self.assertIn(token, text)
 
+    def test_app_shell_template_preserves_content_container_class(self):
+        text = self._read("templates/app_shell.html")
+        self.assertIn('id="mcweb-app-content" class="content"', text)
     def test_frontend_scripts_send_csrf_headers_for_sensitive_calls(self):
         files_js = self._read("static/file_browser_page.js")
         home_js = self._read("static/dashboard_home_page.js")

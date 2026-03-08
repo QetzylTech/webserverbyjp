@@ -52,6 +52,7 @@
                         </div>
                         <div class="log-view-toggles" role="group" aria-label="Log source views">
                             <button class="nav-link log-source-toggle" type="button" data-log-source="minecraft">Minecraft Logs</button>
+                            <button class="nav-link log-source-toggle" type="button" data-log-source="crash">Crash Reports</button>
                             <button class="nav-link log-source-toggle" type="button" data-log-source="backup">Backup Logs</button>
                             <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb">Control Panel Activity</button>
                             <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb_log">Control Panel Errors/System</button>
@@ -155,6 +156,7 @@
         heartbeatIntervalMs: {{ file_page_heartbeat_interval_ms | tojson }},
         listApiPath: {{ list_api_path | tojson }},
         emptyText: {{ empty_text | tojson }},
+        initialLogSource: {{ initial_log_source | default("") | tojson }},
     };
 </script>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
