@@ -1,8 +1,4 @@
     :root {
-        --surface: #ffffff;
-        --border: #d8dee6;
-        --text: #1f2a37;
-        --muted: #5a6878;
         --accent: #1e40af;
         --accent-hover: #1b3a9a;
         --console-border: #1f2d45;
@@ -18,7 +14,7 @@
 
     body {
         margin: 0;
-        background: #eef2ff;
+        background: var(--pane-content-surface);
         color: var(--text);
     }
 
@@ -91,7 +87,7 @@
     .stats-group {
         border: 0;
         border-radius: 10px;
-        background: #eef2ff;
+        background: var(--pane-content-surface);
         padding: 8px 10px;
         min-width: 0;
         margin: 0;
@@ -102,7 +98,7 @@
         font-size: 0.78rem;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #64748b;
+        color: var(--muted);
         font-weight: 700;
     }
 
@@ -201,7 +197,7 @@
     .page-panes--home .page-pane--live > .pane-head {
         padding: 12px;
         border-bottom: 0;
-        background: #ffffff;
+        background: var(--surface);
     }
 
     .home-log-row {
@@ -245,13 +241,13 @@
         height: 40px;
         padding: 0 10px;
         font-size: 0.9rem;
-        color: #1f2a37;
-        background: #eef2ff;
+        color: var(--text);
+        background: var(--pane-content-surface);
     }
 
     .panel-controls input[type="text"]:disabled {
-        background: #e2e8f0;
-        color: #64748b;
+        background: var(--theme-control-surface-disabled);
+        color: var(--muted);
         cursor: not-allowed;
     }
 
@@ -269,10 +265,10 @@
         border: 0;
         border-radius: 12px;
         background-clip: padding-box;
-        background: #eef2ff;
-        color: #1f2a37;
+        background: var(--pane-content-surface);
+        color: var(--text);
         flex: 1;
-        scrollbar-color: #94a3b8 #ffffff;
+        scrollbar-color: var(--pane-scrollbar-thumb) var(--pane-scrollbar-track);
         scrollbar-width: thin;
     }
     .console-box.has-vscroll {
@@ -286,29 +282,29 @@
     }
 
     .console-box::-webkit-scrollbar-track {
-        background: #ffffff;
+        background: var(--surface);
     }
 
     .console-box::-webkit-scrollbar-thumb {
-        background: #94a3b8;
+        background: var(--pane-scrollbar-thumb);
         border-radius: 10px;
         border-style: solid;
         border-width: 2px 0 2px 2px;
-        border-color: #ffffff;
+        border-color: var(--pane-scrollbar-track);
     }
 
     .console-box::-webkit-scrollbar-thumb:hover {
-        background: #64748b;
+        background: var(--pane-scrollbar-thumb-hover);
     }
 
     .log-line { display: block; }
-    .log-text { color: #1f2a37; }
+    .log-text { color: var(--text); }
     .log-ts { color: #0f766e; }
     .log-bracket { color: #1d4ed8; }
     .log-level-info { color: #166534; }
     .log-level-warn { color: #b45309; }
     .log-level-error { color: #b91c1c; }
-    .log-muted { color: #64748b; }
+    .log-muted { color: var(--muted); }
 
     .modal-overlay {
         position: fixed;
@@ -327,7 +323,7 @@
 
     .modal-card {
         width: min(420px, 100%);
-        background: #ffffff;
+        background: var(--surface);
         border: 0;
         border-radius: 12px;
         box-shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
@@ -340,13 +336,13 @@
     .modal-title {
         margin: 0 0 8px 0;
         font-size: 1rem;
-        color: #0f172a;
+        color: var(--text);
     }
 
     .modal-text {
         margin: 0 0 12px 0;
         font-size: 0.9rem;
-        color: #334155;
+        color: var(--theme-text-soft);
     }
 
     .modal-image {
@@ -354,13 +350,13 @@
         max-height: 220px;
         object-fit: cover;
         border-radius: 8px;
-        border: 1px solid #cbd5e1;
+        border: 1px solid var(--border);
         margin: 0 0 12px 0;
     }
 
     .modal-input {
         width: 100%;
-        border: 1px solid #cbd5e1;
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 8px 10px;
         font-size: 0.92rem;
@@ -379,64 +375,64 @@
         margin: 0 0 12px;
         padding: 10px;
         border-radius: 10px;
-        background: #eef2ff;
-        color: #1f2a37;
+        background: var(--pane-content-surface);
+        color: var(--text);
         font-size: 0.82rem;
         line-height: 1.4;
         white-space: pre-wrap;
         word-break: break-word;
     }
     html.theme-dark body {
-        background: #0d1117;
-        color: #e6edf3;
+        background: var(--pane-content-surface);
+        color: var(--text);
     }
 
     html.theme-dark .page-panes--home .page-pane--header,
     html.theme-dark .panel,
     html.theme-dark .modal-card {
-        background: #161b22;
-        color: #e6edf3;
+        background: var(--surface);
+        color: var(--text);
     }
 
     html.theme-dark .group-title,
     html.theme-dark .modal-text {
-        color: #9fb0c6;
+        color: var(--muted);
     }
 
     html.theme-dark .stats-group {
-        background: #1f2733;
+        background: var(--pane-content-surface);
     }
 
     html.theme-dark .status-row,
     html.theme-dark .server-time {
-        color: #b7c3d4;
+        color: var(--theme-text-soft);
     }
 
     html.theme-dark .status-row strong,
     html.theme-dark .page-panes--home .page-pane--header .pane-title,
     html.theme-dark .page-panes--home .page-pane--live .pane-title,
     html.theme-dark .modal-title {
-        color: #e6edf3;
+        color: var(--text);
     }
 
     html.theme-dark .page-panes--home .page-pane--live > .pane-head {
-        background: #161b22;
+        background: var(--surface);
     }
 
     html.theme-dark .panel-controls input[type="text"] {
-        background: #1f2733;
-        color: #e6edf3;
+        background: var(--theme-control-surface);
+        color: var(--text);
     }
 
     html.theme-dark .panel-controls input[type="text"]:disabled {
-        background: #2a3342;
-        color: #9fb0c6;
+        background: var(--theme-control-surface-disabled);
+        color: var(--muted);
     }
 
     html.theme-dark .console-box {
-        background: #111111;
+        background: var(--pane-content-surface);
         border: 0;
-        scrollbar-color: #334155 #11161d;
+        scrollbar-color: var(--pane-scrollbar-thumb-dark) var(--pane-scrollbar-track-dark);
         scrollbar-width: thin;
     }
 
@@ -446,11 +442,11 @@
     }
 
     html.theme-dark .console-box::-webkit-scrollbar-track {
-        background: #11161d;
+        background: var(--pane-scrollbar-track-dark);
     }
 
     html.theme-dark .console-box::-webkit-scrollbar-thumb {
-        background: #334155;
+        background: var(--pane-scrollbar-thumb-dark);
         border-radius: 10px;
         border-style: solid;
         border-width: 2px 0 2px 2px;
@@ -458,7 +454,7 @@
     }
 
     html.theme-dark .console-box::-webkit-scrollbar-thumb:hover {
-        background: #475569;
+        background: var(--pane-scrollbar-thumb-hover-dark);
     }
 
     html.theme-dark .log-text { color: #f8fafc; }
@@ -470,17 +466,17 @@
     html.theme-dark .log-muted { color: #94a3b8; }
 
     html.theme-dark .modal-input {
-        background: #1f2733;
-        border-color: #334155;
-        color: #e6edf3;
+        background: var(--theme-control-surface);
+        border-color: var(--border);
+        color: var(--text);
     }
 
     html.theme-dark .modal-image {
-        border-color: #334155;
+        border-color: var(--border);
     }
     html.theme-dark .modal-details {
-        background: #1f2733;
-        color: #e6edf3;
+        background: var(--theme-control-surface);
+        color: var(--text);
     }
 
     @media (max-width: 1300px) and (min-width: 901px) {
