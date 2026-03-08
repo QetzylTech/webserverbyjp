@@ -1,4 +1,4 @@
-﻿"""Read-side maintenance query helpers and async state caching."""
+"""Read-side maintenance query helpers and async state caching."""
 
 from __future__ import annotations
 
@@ -85,6 +85,25 @@ def _compute_state_payload(ctx, state, scope):
     }
 
 
+def has_active_maintenance_clients(ctx=None):
+    now = time.time()
+    with _MAINTENANCE_ASYNC_LOCK:
+        scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
+        for item in scope_items.values():
+            if not isinstance(item, dict):
+                continue
+            last_requested_at = float(item.get("last_requested_at", 0.0) or 0.0)
+            if (now - last_requested_at) <= _MAINTENANCE_ASYNC_SCOPE_IDLE_SECONDS:
+                return True
+    return False
+
+
+def should_pause_maintenance_refresh(ctx):
+    service_status = str(ctx.get_status() or "inactive").strip().lower()
+    off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    return service_status in off_states and not has_active_maintenance_clients(ctx)
+
+
 def _payload_from_db(state, scope):
     db_path = state.get("APP_STATE_DB_PATH")
     if db_path is None:
@@ -138,6 +157,8 @@ def _async_worker():
             scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
             scope_rows = [(key, dict(value)) for key, value in scope_items.items() if isinstance(value, dict)]
         if state is None or ctx is None:
+            continue
+        if should_pause_maintenance_refresh(ctx):
             continue
         now = time.time()
         for scope, item in scope_rows:
@@ -208,13 +229,12 @@ def _set_async_item(scope, payload, *, computed_at=None):
 
 
 def get_page_model(ctx, state, scope):
-    full_cfg = _cleanup_load_config(ctx)
-    cfg = _cleanup_get_scope_view(full_cfg, scope)
+    payload = get_state_payload(ctx, state, scope, force_refresh=False)
     return {
-        "snapshot": _cleanup_state_snapshot(ctx, cfg),
-        "preview": _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="preview"),
+        "snapshot": {key: value for key, value in payload.items() if key not in {"ok", "preview", "scope", "device_map", "freshness"}},
+        "preview": payload.get("preview", {}) if isinstance(payload.get("preview"), dict) else {},
         "scope": scope,
-        "device_map": state["get_device_name_map"](),
+        "device_map": payload.get("device_map", {}) if isinstance(payload.get("device_map"), dict) else {},
         "active_world": str(_cleanup_active_world_path(ctx) or state["WORLD_DIR"]),
         "backup_dir": str(state["BACKUP_DIR"]),
         "stale_dir": str((_cleanup_data_dir(ctx) / "old_worlds").resolve()),
@@ -253,4 +273,6 @@ __all__ = [
     'invalidate_state_cache',
     'get_page_model',
     'get_state_payload',
+    'has_active_maintenance_clients',
+    'should_pause_maintenance_refresh',
 ]

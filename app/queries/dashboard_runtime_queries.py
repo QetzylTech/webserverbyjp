@@ -418,15 +418,25 @@ def warm_file_page_caches(ctx):
 def file_page_cache_refresher_loop(ctx):
     """Background refresher that updates file lists only when viewed."""
     while True:
+        service_status = str(ctx.get_status() or "inactive").strip().lower()
+        off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
         if has_active_file_page_clients(ctx):
             for cache_key in ("backups", "crash_logs", "minecraft_logs"):
                 try:
                     refresh_file_page_items(ctx, cache_key)
                 except Exception as exc:
                     ctx.log_mcweb_exception(f"file_page_cache_refresh/{cache_key}", exc)
-            time.sleep(ctx.FILE_PAGE_CACHE_REFRESH_SECONDS)
+            interval = ctx.FILE_PAGE_CACHE_REFRESH_SECONDS if service_status not in off_states else max(
+                float(ctx.FILE_PAGE_CACHE_REFRESH_SECONDS),
+                float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", ctx.FILE_PAGE_CACHE_REFRESH_SECONDS)),
+            )
+            time.sleep(interval)
         else:
-            time.sleep(1)
+            idle_sleep = max(
+                float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", 15.0)),
+                float(ctx.FILE_PAGE_CACHE_REFRESH_SECONDS),
+            ) if service_status in off_states else 5.0
+            time.sleep(idle_sleep)
 
 
 def ensure_file_page_cache_refresher_started(ctx):

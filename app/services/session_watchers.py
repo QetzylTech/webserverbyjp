@@ -31,12 +31,14 @@ def get_idle_countdown(ctx, service_status=None, players_online=None):
 def idle_player_watcher(ctx):
     """Background loop that triggers auto-stop after sustained zero players."""
     while True:
+        should_auto_stop = False
         try:
             service_status = ctx.get_status()
             players_online = ctx.get_players_online()
             now = time.time()
 
-            # Track the zero-player window under lock so UI and watcher stay consistent.
+            # Decide shutdown while holding the countdown lock, but run the stop flow
+            # outside the lock because publishing metrics reads the same countdown state.
             with ctx.idle_lock:
                 if service_status == "active" and players_online == "0":
                     if ctx.idle_zero_players_since is None:
@@ -49,12 +51,13 @@ def idle_player_watcher(ctx):
                                 intent = str(intent_getter() or "").strip().lower()
                             except Exception:
                                 intent = ""
-                        if intent != "shutting":
-                            ctx.stop_server_automatically()
+                        should_auto_stop = intent != "shutting"
                         # Keep the countdown pinned at zero until service state leaves active.
                         ctx.idle_zero_players_since = now - ctx.IDLE_ZERO_PLAYERS_SECONDS
                 else:
                     ctx.idle_zero_players_since = None
+            if should_auto_stop:
+                ctx.stop_server_automatically()
         except Exception as exc:
             ctx.log_mcweb_exception("idle_player_watcher", exc)
 
