@@ -367,9 +367,6 @@ log_stream_states = {
     for source in LOG_SOURCE_KEYS
 }
 
-# Single-file HTML template for the dashboard UI.
-HTML_TEMPLATE_NAME = "home.html"
-FILES_TEMPLATE_NAME = "files.html"
 
 _RUNTIME_CONTEXT_EXTRA_KEYS = frozenset({
     "APP_DIR",

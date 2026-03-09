@@ -1,4 +1,4 @@
-﻿"""Typed application runtime state container."""
+"""Typed application runtime state container."""
 from dataclasses import dataclass
 from collections.abc import Iterator, MutableMapping
 from typing import Any
@@ -41,13 +41,11 @@ _STATE_CORE_KEYS = (
     "DOC_README_URL",
     "DEVICE_MAP_CSV_PATH",
     "FAVICON_URL",
-    "FILES_TEMPLATE_NAME",
     "FILE_PAGE_ACTIVE_TTL_SECONDS",
     "FILE_PAGE_CACHE_REFRESH_SECONDS",
     "FILE_PAGE_HEARTBEAT_INTERVAL_MS",
     "HOME_PAGE_ACTIVE_TTL_SECONDS",
     "HOME_PAGE_HEARTBEAT_INTERVAL_MS",
-    "HTML_TEMPLATE_NAME",
     "IDLE_CHECK_INTERVAL_ACTIVE_SECONDS",
     "IDLE_CHECK_INTERVAL_OFF_SECONDS",
     "IDLE_ZERO_PLAYERS_SECONDS",

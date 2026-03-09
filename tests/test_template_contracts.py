@@ -12,8 +12,8 @@ class TemplateContractsTests(unittest.TestCase):
     def _read(self, rel_path):
         return (self.repo_root / rel_path).read_text(encoding="utf-8", errors="ignore")
 
-    def test_home_template_has_required_panes_stats_inputs_and_modals(self):
-        text = self._read("templates/home.html")
+    def test_home_fragment_has_required_panes_stats_inputs_and_modals(self):
+        text = self._read("templates/fragments/home_fragment.html")
         required_tokens = [
             'id="control-panel-title"',
             'id="start-btn"',
@@ -62,8 +62,8 @@ class TemplateContractsTests(unittest.TestCase):
         for token in required_tokens:
             self.assertIn(token, text)
 
-    def test_files_template_has_backup_restore_controls_and_modals(self):
-        text = self._read("templates/files.html")
+    def test_files_fragment_has_backup_restore_controls_and_modals(self):
+        text = self._read("templates/fragments/files_fragment.html")
         required_tokens = [
             'id="backup-sort"',
             'class="backup-filter"',
@@ -81,8 +81,8 @@ class TemplateContractsTests(unittest.TestCase):
         for token in required_tokens:
             self.assertIn(token, text)
 
-    def test_documentation_template_has_main_content_and_toc(self):
-        text = self._read("templates/documentation.html")
+    def test_documentation_fragment_has_main_content_and_toc(self):
+        text = self._read("templates/fragments/documentation_fragment.html")
         required_tokens = [
             'id="tocSidebar"',
             'id="tocSidebarBody"',

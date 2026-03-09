@@ -16,7 +16,6 @@ class NavAlertIntentTests(unittest.TestCase):
             "_mark_home_page_client_active": lambda: None,
             "get_cached_dashboard_metrics": lambda: dict(metrics_payload),
             "is_storage_low": lambda: False,
-            "HTML_TEMPLATE_NAME": "home.html",
             "get_log_source_text": lambda source: "",
             "_ensure_csrf_token": lambda: "t",
             "HOME_PAGE_HEARTBEAT_INTERVAL_MS": 1000,

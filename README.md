@@ -35,7 +35,8 @@ Required files relative to `mcweb.py`:
 - `mcweb.env`
 - `doc/mcweb.env.sample` (template for generating local `mcweb.env`)
 - `scripts/backup.sh`
-- `templates/documentation.html`
+- `templates/app_shell.html`
+- `templates/fragments/*.html`
 - `doc/server_setup_doc.md`
 
 2. Main configuration (`mcweb.env`)

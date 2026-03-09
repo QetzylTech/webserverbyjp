@@ -681,19 +681,6 @@
         return entry;
     }
 
-    async function fetchMetricsSnapshot(options = {}) {
-        const forceNetwork = !!options.forceNetwork;
-        if (!forceNetwork && shellState.metricsSnapshot && typeof shellState.metricsSnapshot === "object") {
-            return shellState.metricsSnapshot;
-        }
-        const result = await fetchJson("/metrics");
-        if (!result.response.ok || !result.payload || typeof result.payload !== "object") {
-            throw new Error("Failed to load metrics.");
-        }
-        dispatchMetricsSnapshot(result.payload);
-        return result.payload;
-    }
-
     async function fetchDeviceNameMap(options = {}) {
         const force = !!options.force;
         const fresh = !force ? getFreshEntry(shellState.deviceMapEntry) : null;
@@ -1073,8 +1060,6 @@
         closeNav,
         getPersistentClientId,
         subscribeMetrics,
-        getLatestMetricsSnapshot: () => shellState.metricsSnapshot,
-        fetchMetricsSnapshot,
         fetchDeviceNameMap,
         getDeviceNameMapSnapshot,
         fetchConfiguredReadme,
