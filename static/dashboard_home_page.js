@@ -12,7 +12,6 @@
     const homeTimeUtils = window.MCWebHomeTimeUtils || {};
     const pageModules = window.MCWebPageModules || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
-    const METRICS_FAST_RUNNING_POLL_INTERVAL_MS = 1000;
     const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
     const START_BUTTON_COOLDOWN_MS = 10000;
     function sendHomePageHeartbeat() {
@@ -48,7 +47,6 @@
     // Refresh cadence configuration (milliseconds).
     const TIMER_REBASE_TOLERANCE_SECONDS = 2;
 
-    let metricsFastPollTimer = null;
     let teardownHomePage = null;
     let logScrollbarCleanup = null;
     let countdownTimer = null;
@@ -526,7 +524,6 @@
                 setBackupStatusOverride("");
                 announceBackupsListInvalidation();
             }
-            await refreshMetrics();
             return;
         }
         if (status === "failed") {
@@ -544,14 +541,12 @@
                     action,
                 }
             );
-            await refreshMetrics();
             return;
         }
         if (status === "intent" || status === "in_progress") {
             if (action === "/backup") {
                 setBackupStatusOverride(status === "in_progress" ? "Running" : "Queued");
             }
-            await refreshMetrics();
         }
         operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 700);
     }
@@ -766,53 +761,7 @@
         }
         cachedMetricsSnapshot = data;
         applyRefreshMode(data.service_status);
-        applyFastMetricsMode(true);
     }
-
-    function applyFastMetricsData(data) {
-        if (!data) return;
-        const ram = document.getElementById("ram-usage");
-        const cpu = document.getElementById("cpu-per-core");
-        const freq = document.getElementById("cpu-frequency");
-        const players = document.getElementById("players-online");
-        const tickRate = document.getElementById("tick-rate");
-        const backupStatus = document.getElementById("backup-status");
-        const backupBtn = document.getElementById("backup-btn");
-        if (ram && data.ram_usage) ram.textContent = data.ram_usage;
-        if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
-        if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
-        if (players && data.players_online) players.textContent = data.players_online;
-        if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
-        let backupStatusText = data.backup_status;
-        let backupStatusClass = data.backup_status_class;
-        if (backupStatusOverride === "Queued") {
-            backupStatusText = "Queued";
-            backupStatusClass = "stat-yellow";
-        } else if (backupStatusOverride === "Running") {
-            backupStatusText = "Running";
-            backupStatusClass = "stat-green";
-        }
-        if (backupStatus && backupStatusText) backupStatus.textContent = backupStatusText;
-        if (backupStatus && backupStatusClass) backupStatus.className = backupStatusClass;
-        if (backupBtn && backupStatusText) {
-            backupBtn.disabled = (backupStatusText === "Running" || backupStatusText === "Queued");
-        }
-        if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
-        if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
-        if (data.idle_countdown !== undefined) {
-            setIdleCountdownFromParsedSeconds(homeTimeUtils.parseCountdown(data.idle_countdown));
-        }
-        if (data.session_duration !== undefined) {
-            setSessionDurationFromParsedSeconds(homeTimeUtils.parseSessionDuration(data.session_duration));
-        }
-        if (data.server_time || data.server_time_epoch_ms) {
-            setServerTimeFromEpoch(data.server_time_epoch_ms, data.server_time_zone)
-                || setServerTimeFromText(data.server_time);
-            tickServerClock();
-        }
-        cachedMetricsSnapshot = data;
-    }
-
 
     async function submitFormAjax(form, sudoPassword = undefined) {
         if (!form) return;
@@ -881,7 +830,6 @@
                 if (action === "/start") {
                     beginQueuedStartState();
                 }
-                await refreshMetrics();
                 const opId = String(payload.op_id || "").trim();
                 if (opId) {
                     stopOperationPoll(opId);
@@ -889,7 +837,6 @@
                 }
                 return;
             }
-            await refreshMetrics();
         } catch (err) {
             if (action === "/start") {
                 clearQueuedStartState();
@@ -904,57 +851,6 @@
         }
     }
 
-    async function refreshMetrics() {
-        try {
-            const result = http
-                ? await http.getJson("/metrics")
-                : { response: await fetch("/metrics", { cache: "no-store" }), payload: null };
-            const response = result.response;
-            if (!response.ok) return;
-            let data = result.payload;
-            if (!data) {
-                data = await response.json().catch(() => ({}));
-            }
-            applyMetricsData(data);
-        } catch (err) {
-            // Keep current metrics on network/read errors.
-        }
-    }
-
-    async function refreshMetricsFast() {
-        if (document.hidden) return;
-        try {
-            const result = http
-                ? await http.getJson("/metrics")
-                : { response: await fetch("/metrics", { cache: "no-store" }), payload: null };
-            const response = result.response;
-            if (!response.ok) return;
-            let data = result.payload;
-            if (!data) {
-                data = await response.json().catch(() => ({}));
-            }
-            if (isServiceRunningInMetrics(data)) {
-                applyFastMetricsData(data);
-            } else {
-                applyMetricsData(data);
-            }
-        } catch (_) {
-            // Keep current metrics on network/read errors.
-        }
-    }
-
-    function startFastMetricsPolling() {
-        if (metricsFastPollTimer) return;
-        refreshMetricsFast();
-        metricsFastPollTimer = window.setInterval(refreshMetricsFast, METRICS_FAST_RUNNING_POLL_INTERVAL_MS);
-    }
-
-    function stopFastMetricsPolling() {
-        if (!metricsFastPollTimer) return;
-        clearInterval(metricsFastPollTimer);
-        metricsFastPollTimer = null;
-    }
-
     function clearRefreshTimers() {
         // Prevent duplicate interval loops when switching modes.
         if (countdownTimer) {
@@ -963,14 +859,6 @@
         }
     }
 
-
-    function applyFastMetricsMode(enabled) {
-        if (enabled && !document.hidden) {
-            startFastMetricsPolling();
-            return;
-        }
-        stopFastMetricsPolling();
-    }
 
     function applyRefreshMode(serviceStatusText) {
         // Status is rendered as labels (Off/Starting/Running/Shutting Down).
@@ -1003,7 +891,6 @@
             homeLogsUnsubscribe();
             homeLogsUnsubscribe = null;
         }
-        stopFastMetricsPolling();
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
         if (homeHeartbeatTimer) {
             clearInterval(homeHeartbeatTimer);
@@ -1024,13 +911,11 @@
             if (homeLogController && (!shell || typeof shell.activateHomeLogStream !== "function")) {
                 homeLogController.teardown();
             }
-            stopFastMetricsPolling();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
         scheduleServerClockTick();
-        refreshMetrics();
         sendHomePageHeartbeat();
     }
     async function startHomePage() {
@@ -1200,10 +1085,6 @@
         }
         if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
             applyMetricsData(window.__MCWEB_LAST_METRICS_SNAPSHOT);
-        } else if (shell && typeof shell.fetchMetricsSnapshot === "function") {
-            shell.fetchMetricsSnapshot().catch(() => {});
-        } else {
-            refreshMetrics();
         }
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
