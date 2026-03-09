@@ -514,7 +514,14 @@
     };
 
     const initMcwebNav = () => {
+      if (shell && typeof shell.startSidebarNav === 'function') {
+        shell.startSidebarNav();
+        return;
+      }
+
       if (!navToggle || !sideNav || !navBackdrop) return;
+      if (navToggle.dataset.docsNavBound === 'true') return;
+      navToggle.dataset.docsNavBound = 'true';
 
       const closeNav = () => {
         sideNav.classList.remove('open');
