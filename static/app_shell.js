@@ -829,6 +829,36 @@
         return result.payload;
     }
 
+    function invalidateFilePageListCache(pageKey) {
+        const normalized = String(pageKey || "").trim().toLowerCase();
+        if (!normalized) {
+            shellState.filePageListCache.clear();
+            shellState.filePageListPromises.clear();
+            return;
+        }
+        Array.from(shellState.filePageListCache.keys()).forEach((key) => {
+            if (key.startsWith(`${normalized}:`)) {
+                shellState.filePageListCache.delete(key);
+            }
+        });
+        Array.from(shellState.filePageListPromises.keys()).forEach((key) => {
+            if (key.startsWith(`${normalized}:`)) {
+                shellState.filePageListPromises.delete(key);
+            }
+        });
+    }
+
+    function invalidateLogFileListCache(source) {
+        const normalized = String(source || "").trim().toLowerCase();
+        if (!normalized) {
+            shellState.logFileListCache.clear();
+            shellState.logFileListPromises.clear();
+            return;
+        }
+        shellState.logFileListCache.delete(normalized);
+        shellState.logFileListPromises.delete(normalized);
+    }
+
     async function fetchViewedFile(path, options = {}) {
         const key = String(path || "").trim();
         if (!key) {
@@ -1051,6 +1081,8 @@
         fetchLogText,
         fetchFilePageItems,
         fetchLogFileList,
+        invalidateFilePageListCache,
+        invalidateLogFileListCache,
         fetchViewedFile,
         fetchMaintenanceState,
         postMaintenanceJson,

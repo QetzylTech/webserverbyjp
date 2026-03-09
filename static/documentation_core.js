@@ -422,7 +422,6 @@
     let contentElement = null;
     let backToTopButton = null;
     let stickyHeader = null;
-    let docsPaneTitle = null;
     let stickyHeaderTitle = null;
     let stickyMenuButton = null;
     let stickyMenuLabel = null;
@@ -438,7 +437,6 @@
       contentElement = document.getElementById('content');
       backToTopButton = document.getElementById('backToTop');
       stickyHeader = document.getElementById('stickyHeader');
-      docsPaneTitle = document.getElementById('docs-pane-title');
       stickyHeaderTitle = document.getElementById('stickyHeaderTitle');
       stickyMenuButton = document.getElementById('stickyMenu');
       stickyMenuLabel = document.getElementById('stickyMenuLabel');
@@ -447,25 +445,42 @@
       navToggle = document.getElementById('nav-toggle');
       sideNav = document.getElementById('side-nav');
       navBackdrop = document.getElementById('nav-backdrop');
-      scrollContainer = document.getElementById('mcweb-page-root');
+      scrollContainer = null;
       removeScrollListener = null;
     };
-    const isElementScrollContainer = () => {
-      return !!(scrollContainer && scrollContainer instanceof Element && document.getElementById('mcweb-app-content'));
+
+    const resolveScrollContainer = (target) => {
+      const start = target instanceof Element ? target : (contentElement || document.getElementById('content') || document.getElementById('mcweb-page-root'));
+      let current = start instanceof Element ? start : null;
+      while (current) {
+        const style = window.getComputedStyle(current);
+        const overflowY = style ? style.overflowY : '';
+        const canScroll = /(auto|scroll|overlay)/.test(overflowY) && current.scrollHeight > current.clientHeight + 1;
+        if (canScroll) {
+          scrollContainer = current;
+          return scrollContainer;
+        }
+        current = current.parentElement;
+      }
+      scrollContainer = document.scrollingElement || document.documentElement || document.body || null;
+      return scrollContainer;
     };
 
     const getScrollTop = () => {
-      if (isElementScrollContainer()) {
-        return scrollContainer.scrollTop;
+      const activeScrollContainer = resolveScrollContainer();
+      if (activeScrollContainer instanceof Element) {
+        return activeScrollContainer.scrollTop;
       }
       return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
     };
 
-    const scrollToPosition = (top, behavior) => {
+    const scrollToPosition = (top, behavior, target) => {
       const nextTop = Math.max(0, Number(top) || 0);
       const nextBehavior = behavior || 'auto';
-      if (isElementScrollContainer()) {
-        scrollContainer.scrollTo({ top: nextTop, behavior: nextBehavior });
+      const activeScrollContainer = resolveScrollContainer(target);
+      if (activeScrollContainer instanceof Element) {
+        activeScrollContainer.scrollTo({ top: nextTop, behavior: nextBehavior });
+        activeScrollContainer.scrollTop = nextTop;
         return;
       }
       window.scrollTo({ top: nextTop, behavior: nextBehavior });
@@ -474,12 +489,13 @@
     const getTargetTop = (target, offset) => {
       if (!target) return 0;
       const safeOffset = Number(offset) || 0;
+      const activeScrollContainer = resolveScrollContainer(target);
       const targetRect = target.getBoundingClientRect();
-      if (isElementScrollContainer()) {
-        const containerRect = scrollContainer.getBoundingClientRect();
-        return targetRect.top - containerRect.top + scrollContainer.scrollTop - safeOffset;
+      if (activeScrollContainer instanceof Element) {
+        const containerRect = activeScrollContainer.getBoundingClientRect();
+        return Math.max(0, targetRect.top - containerRect.top + activeScrollContainer.scrollTop - safeOffset);
       }
-      return targetRect.top + getScrollTop() - safeOffset;
+      return Math.max(0, targetRect.top + getScrollTop() - safeOffset);
     };
 
     const addScrollListener = (handler) => {
@@ -487,9 +503,10 @@
         removeScrollListener();
         removeScrollListener = null;
       }
-      if (isElementScrollContainer()) {
-        scrollContainer.addEventListener('scroll', handler, { passive: true });
-        removeScrollListener = () => scrollContainer.removeEventListener('scroll', handler);
+      const activeScrollContainer = resolveScrollContainer();
+      if (activeScrollContainer instanceof Element) {
+        activeScrollContainer.addEventListener('scroll', handler, { passive: true });
+        removeScrollListener = () => activeScrollContainer.removeEventListener('scroll', handler);
         return;
       }
       window.addEventListener('scroll', handler, { passive: true });
@@ -556,10 +573,6 @@
       contentElement.innerHTML = html;
 
       const h1Title = contentElement.querySelector('h1');
-      const paneTitleText = h1Title ? h1Title.textContent.trim() : 'Instructions';
-      if (docsPaneTitle) {
-        docsPaneTitle.textContent = paneTitleText || 'Instructions';
-      }
       if (h1Title) {
         document.title = h1Title.textContent.trim();
       }
@@ -663,7 +676,7 @@
       backToTopButton.textContent = 'Back to top';
       backToTopButton.addEventListener('click', (event) => {
         event.preventDefault();
-        scrollToPosition(0, 'smooth');
+        scrollToPosition(0, 'smooth', contentElement);
       });
 
       let tocPinned = true;
@@ -685,7 +698,7 @@
         if (!target) return;
         const offset = (stickyHeader?.offsetHeight || 0) + 12;
         const targetTop = getTargetTop(target, offset);
-        scrollToPosition(targetTop, 'smooth');
+        scrollToPosition(targetTop, 'smooth', target);
       };
 
       const buildTocListFromHeadings = () => {

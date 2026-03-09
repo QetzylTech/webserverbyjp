@@ -13,6 +13,8 @@
     const pageModules = window.MCWebPageModules || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
     const METRICS_FAST_RUNNING_POLL_INTERVAL_MS = 1000;
+    const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
+    const START_BUTTON_COOLDOWN_MS = 10000;
     function sendHomePageHeartbeat() {
         if (document.hidden) return;
         fetch("/home-heartbeat", {
@@ -51,10 +53,14 @@
     let logScrollbarCleanup = null;
     let countdownTimer = null;
     let serverClockTimer = null;
+    let startCooldownTimer = null;
     const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
     let cachedMetricsSnapshot = null;
+    let backupStatusOverride = "";
+    let queuedStartPending = false;
+    let startCooldownUntilMs = 0;
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
@@ -312,6 +318,85 @@
         return fallback === "active";
     }
 
+    function announceBackupsListInvalidation() {
+        if (shell && typeof shell.invalidateFilePageListCache === "function") {
+            shell.invalidateFilePageListCache("backups");
+        }
+        window.dispatchEvent(new CustomEvent(FILE_LISTS_INVALIDATED_EVENT, { detail: { backups: true } }));
+    }
+
+    function isStartCooldownActive() {
+        return startCooldownUntilMs > Date.now();
+    }
+
+    function setBackupStatusOverride(nextStatus) {
+        backupStatusOverride = String(nextStatus || "").trim();
+        if (cachedMetricsSnapshot) {
+            applyMetricsData(cachedMetricsSnapshot, { fromCache: true });
+            return;
+        }
+        const backupStatus = document.getElementById("backup-status");
+        const backupBtn = document.getElementById("backup-btn");
+        if (!backupStatus) return;
+        if (!backupStatusOverride) return;
+        backupStatus.textContent = backupStatusOverride;
+        backupStatus.className = backupStatusOverride === "Running" ? "stat-green" : "stat-yellow";
+        if (backupBtn) {
+            backupBtn.disabled = true;
+        }
+    }
+
+    function clearStartCooldownTimer() {
+        if (!startCooldownTimer) return;
+        clearTimeout(startCooldownTimer);
+        startCooldownTimer = null;
+    }
+
+    function syncStartButtonCooldown() {
+        const startBtn = document.getElementById("start-btn");
+        if (!startBtn) return;
+        if (!isStartCooldownActive()) {
+            clearStartCooldownTimer();
+            if (startCooldownUntilMs !== 0) {
+                startCooldownUntilMs = 0;
+                if (cachedMetricsSnapshot) {
+                    applyMetricsData(cachedMetricsSnapshot, { fromCache: true });
+                }
+            }
+            return;
+        }
+        const remainingMs = Math.max(0, startCooldownUntilMs - Date.now());
+        clearStartCooldownTimer();
+        startCooldownTimer = window.setTimeout(syncStartButtonCooldown, remainingMs + 20);
+    }
+
+    function startStartButtonCooldown() {
+        startCooldownUntilMs = Date.now() + START_BUTTON_COOLDOWN_MS;
+        syncStartButtonCooldown();
+    }
+
+    function clearQueuedStartState() {
+        queuedStartPending = false;
+    }
+
+    function beginQueuedStartState() {
+        queuedStartPending = true;
+        startStartButtonCooldown();
+        if (cachedMetricsSnapshot) {
+            applyMetricsData(cachedMetricsSnapshot, { fromCache: true });
+            return;
+        }
+        const service = document.getElementById("service-status");
+        if (service) {
+            service.textContent = "Queued";
+            service.className = "stat-yellow";
+        }
+        const startBtn = document.getElementById("start-btn");
+        if (startBtn) {
+            startBtn.disabled = true;
+        }
+    }
+
     function openSudoModal(form) {
         pendingSudoForm = form;
         const modal = document.getElementById("sudo-modal");
@@ -437,11 +522,21 @@
         const status = String(operation.status || "").trim().toLowerCase();
         if (status === "observed") {
             stopOperationPoll(key);
+            if (action === "/backup") {
+                setBackupStatusOverride("");
+                announceBackupsListInvalidation();
+            }
             await refreshMetrics();
             return;
         }
         if (status === "failed") {
             stopOperationPoll(key);
+            if (action === "/start") {
+                clearQueuedStartState();
+            }
+            if (action === "/backup") {
+                setBackupStatusOverride("");
+            }
             showErrorModal(
                 String(operation.message || "Action failed."),
                 {
@@ -453,6 +548,9 @@
             return;
         }
         if (status === "intent" || status === "in_progress") {
+            if (action === "/backup") {
+                setBackupStatusOverride(status === "in_progress" ? "Running" : "Queued");
+            }
             await refreshMetrics();
         }
         operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 700);
@@ -566,14 +664,36 @@
                 sessionDuration.textContent = data.session_duration;
             }
         }
-        if (backupStatus && data.backup_status) backupStatus.textContent = data.backup_status;
-        if (backupStatus && data.backup_status_class) backupStatus.className = data.backup_status_class;
-        if (backupBtn && data.backup_status) backupBtn.disabled = (data.backup_status === "Running" || data.backup_status === "Queued");
+        let backupStatusText = data.backup_status;
+        let backupStatusClass = data.backup_status_class;
+        if (backupStatusOverride === "Queued") {
+            backupStatusText = "Queued";
+            backupStatusClass = "stat-yellow";
+        } else if (backupStatusOverride === "Running") {
+            backupStatusText = "Running";
+            backupStatusClass = "stat-green";
+        }
+        if (backupStatus && backupStatusText) backupStatus.textContent = backupStatusText;
+        if (backupStatus && backupStatusClass) backupStatus.className = backupStatusClass;
+        if (backupBtn && backupStatusText) backupBtn.disabled = (backupStatusText === "Running" || backupStatusText === "Queued");
         if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
         if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
         if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
-        if (service && data.service_status) service.textContent = data.service_status;
-        if (service && data.service_status_class) service.className = data.service_status_class;
+        let serviceStatusText = data.service_status;
+        let serviceStatusClass = data.service_status_class;
+        const observedServiceState = String(serviceStatusText || "").trim().toLowerCase();
+        if (queuedStartPending) {
+            if (observedServiceState === "starting" || observedServiceState === "running" || data.service_running_status === "active") {
+                clearQueuedStartState();
+                serviceStatusText = data.service_status;
+                serviceStatusClass = data.service_status_class;
+            } else {
+                serviceStatusText = "Queued";
+                serviceStatusClass = "stat-yellow";
+            }
+        }
+        if (service && serviceStatusText) service.textContent = serviceStatusText;
+        if (service && serviceStatusClass) service.className = serviceStatusClass;
         if (serverTime && (data.server_time || data.server_time_epoch_ms)) {
             const accepted = setServerTimeFromEpoch(data.server_time_epoch_ms, data.server_time_zone)
                 || setServerTimeFromText(data.server_time);
@@ -602,7 +722,7 @@
         const lowStorageMessage = (data.low_storage_message || "").trim();
         const backupWarningSeq = Number(data.backup_warning_seq || 0);
         const backupWarningMessage = (data.backup_warning_message || "").trim();
-        const serviceStateLabel = String(data.service_status || "").trim().toLowerCase();
+        const serviceStateLabel = String(serviceStatusText || data.service_status || "").trim().toLowerCase();
         if (data.service_running_status === "active") {
             if (startBtn) startBtn.disabled = true;
             if (stopBtn) stopBtn.disabled = false;
@@ -614,7 +734,7 @@
                     : "RCON unavailable (missing rcon.password)";
             }
         } else {
-            if (startBtn) startBtn.disabled = lowStorageBlocked;
+            if (startBtn) startBtn.disabled = lowStorageBlocked || isStartCooldownActive();
             if (stopBtn) stopBtn.disabled = true;
             if (rconInput) {
                 rconInput.disabled = true;
@@ -646,7 +766,7 @@
         }
         cachedMetricsSnapshot = data;
         applyRefreshMode(data.service_status);
-        applyFastMetricsMode(sessionDurationRunning);
+        applyFastMetricsMode(true);
     }
 
     function applyFastMetricsData(data) {
@@ -656,11 +776,27 @@
         const freq = document.getElementById("cpu-frequency");
         const players = document.getElementById("players-online");
         const tickRate = document.getElementById("tick-rate");
+        const backupStatus = document.getElementById("backup-status");
+        const backupBtn = document.getElementById("backup-btn");
         if (ram && data.ram_usage) ram.textContent = data.ram_usage;
         if (cpu && data.cpu_per_core_items) cpu.innerHTML = renderCpuPerCore(data.cpu_per_core_items);
         if (freq && data.cpu_frequency) freq.textContent = data.cpu_frequency;
         if (players && data.players_online) players.textContent = data.players_online;
         if (tickRate && data.tick_rate !== undefined) tickRate.textContent = data.tick_rate;
+        let backupStatusText = data.backup_status;
+        let backupStatusClass = data.backup_status_class;
+        if (backupStatusOverride === "Queued") {
+            backupStatusText = "Queued";
+            backupStatusClass = "stat-yellow";
+        } else if (backupStatusOverride === "Running") {
+            backupStatusText = "Running";
+            backupStatusClass = "stat-green";
+        }
+        if (backupStatus && backupStatusText) backupStatus.textContent = backupStatusText;
+        if (backupStatus && backupStatusClass) backupStatus.className = backupStatusClass;
+        if (backupBtn && backupStatusText) {
+            backupBtn.disabled = (backupStatusText === "Running" || backupStatusText === "Queued");
+        }
         if (ram && data.ram_usage_class) ram.className = data.ram_usage_class;
         if (freq && data.cpu_frequency_class) freq.className = data.cpu_frequency_class;
         if (data.idle_countdown !== undefined) {
@@ -683,11 +819,7 @@
         const action = form.getAttribute("action") || "/";
         const method = (form.getAttribute("method") || "POST").toUpperCase();
         if (action === "/backup") {
-            const backupStatus = document.getElementById("backup-status");
-            if (backupStatus) {
-                backupStatus.textContent = "Queued";
-                backupStatus.className = "stat-yellow";
-            }
+            setBackupStatusOverride("Queued");
         }
         const formData = new FormData(form);
         if (sudoPassword !== undefined) {
@@ -727,6 +859,12 @@
                     payload &&
                     payload.error === "password_incorrect" &&
                     (action === "/stop" || action === "/rcon");
+                if (action === "/start") {
+                    clearQueuedStartState();
+                }
+                if (action === "/backup") {
+                    setBackupStatusOverride("");
+                }
                 if (isPasswordRejected) {
                     showMessageModal(message);
                 } else {
@@ -740,6 +878,9 @@
 
             showSuccessModal(summarizeSuccess(action, payload));
             if (payload && payload.accepted === true && payload.op_id) {
+                if (action === "/start") {
+                    beginQueuedStartState();
+                }
                 await refreshMetrics();
                 const opId = String(payload.op_id || "").trim();
                 if (opId) {
@@ -750,6 +891,12 @@
             }
             await refreshMetrics();
         } catch (err) {
+            if (action === "/start") {
+                clearQueuedStartState();
+            }
+            if (action === "/backup") {
+                setBackupStatusOverride("");
+            }
             showErrorModal("Network request failed.", {
                 errorCode: "network_error",
                 action,
@@ -817,8 +964,8 @@
     }
 
 
-    function applyFastMetricsMode(isRunning) {
-        if (isRunning) {
+    function applyFastMetricsMode(enabled) {
+        if (enabled && !document.hidden) {
             startFastMetricsPolling();
             return;
         }
@@ -836,7 +983,6 @@
 
         if (refreshMode === "off") {
             sessionDurationRunning = false;
-            stopFastMetricsPolling();
             return;
         }
 
@@ -869,6 +1015,7 @@
         }
         clearRefreshTimers();
         clearServerClockTimer();
+        clearStartCooldownTimer();
         refreshMode = null;
     }
 

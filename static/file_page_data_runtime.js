@@ -4,10 +4,10 @@
         const pageId = String(options && options.pageId ? options.pageId : "").trim().toLowerCase();
         const listApiPath = String(options && options.listApiPath ? options.listApiPath : "").trim();
 
-        async function loadStandardFileList() {
+        async function loadStandardFileList(options = {}) {
             if (!listApiPath || pageId === "minecraft_logs") return null;
             if (shell && typeof shell.fetchFilePageItems === "function") {
-                return shell.fetchFilePageItems(pageId, listApiPath);
+                return shell.fetchFilePageItems(pageId, listApiPath, { force: !!options.force });
             }
             const response = await fetch(listApiPath, {
                 method: "GET",
@@ -18,11 +18,11 @@
             return response.json();
         }
 
-        async function loadLogFileList(source) {
+        async function loadLogFileList(source, options = {}) {
             const sourceKey = String(source || "").trim().toLowerCase();
             if (!sourceKey) return null;
             if (shell && typeof shell.fetchLogFileList === "function") {
-                return shell.fetchLogFileList(sourceKey);
+                return shell.fetchLogFileList(sourceKey, { force: !!options.force });
             }
             const response = await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
                 method: "GET",

@@ -78,6 +78,7 @@ function mountFileBrowserPage() {
             : null;
         const viewerWidthStorageKey = `mcweb.viewerWidth.${pageId}`;
         const viewerHeightStorageKey = `mcweb.viewerHeight.${pageId}`;
+        const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
         const PANE_ANIMATION_DURATION_MS = 220;
         const paneAnimations = window.MCWebPaneAnimations || null;
         let selectedRestoreFilename = "";
@@ -432,6 +433,7 @@ function mountFileBrowserPage() {
                 return;
             }
             if (status === "observed") {
+                announceFileListInvalidation({ backups: true });
                 stopRestoreOperationPolling();
                 return;
             }
@@ -480,6 +482,7 @@ function mountFileBrowserPage() {
             } else {
                 stopRestorePolling();
                 if (payload.result && payload.result.ok) {
+                    announceFileListInvalidation({ backups: true });
                     setDownloadError("");
                 } else if (payload.result && payload.result.message) {
                     showErrorModal(payload.result.message || "Restore failed.", {
@@ -796,6 +799,16 @@ function mountFileBrowserPage() {
 </li>`.trim();
         }
 
+        function announceFileListInvalidation(detail = {}) {
+            if (detail.backups && shell && typeof shell.invalidateFilePageListCache === "function") {
+                shell.invalidateFilePageListCache("backups");
+            }
+            if (detail.logFiles && shell && typeof shell.invalidateLogFileListCache === "function") {
+                shell.invalidateLogFileListCache(detail.logFiles === true ? "" : detail.logFiles);
+            }
+            window.dispatchEvent(new CustomEvent(FILE_LISTS_INVALIDATED_EVENT, { detail }));
+        }
+
         function renderStandardFileList(payload) {
             setDownloadError("");
             const list = ensureFileListElement();
@@ -816,15 +829,15 @@ function mountFileBrowserPage() {
             restoreShellViewStateAfterListLoad();
         }
 
-        async function loadStandardFileList() {
+        async function loadStandardFileList(options = {}) {
             if (!listApiPath || pageId === "minecraft_logs") return;
             const loadToken = nextFileListLoadToken();
             setListLoadingState(true);
             try {
                 const payload = dataClient && typeof dataClient.loadStandardFileList === "function"
-                    ? await dataClient.loadStandardFileList()
+                    ? await dataClient.loadStandardFileList({ force: !!options.force })
                     : (shell && typeof shell.fetchFilePageItems === "function")
-                        ? await shell.fetchFilePageItems(pageId, listApiPath)
+                        ? await shell.fetchFilePageItems(pageId, listApiPath, { force: !!options.force })
                         : await fetch(listApiPath, {
                             method: "GET",
                             headers: { "X-Requested-With": "XMLHttpRequest" },
@@ -855,16 +868,16 @@ function mountFileBrowserPage() {
             restoreShellViewStateAfterListLoad();
         }
 
-        async function loadLogFileSourceList(source) {
+        async function loadLogFileSourceList(source, options = {}) {
             const sourceKey = String(source || "").trim().toLowerCase();
             if (!sourceKey) return;
             const loadToken = nextFileListLoadToken();
             setListLoadingState(true);
             try {
                 const payload = dataClient && typeof dataClient.loadLogFileList === "function"
-                    ? await dataClient.loadLogFileList(sourceKey)
+                    ? await dataClient.loadLogFileList(sourceKey, { force: !!options.force })
                     : (shell && typeof shell.fetchLogFileList === "function")
-                        ? await shell.fetchLogFileList(sourceKey)
+                        ? await shell.fetchLogFileList(sourceKey, { force: !!options.force })
                         : await fetch(`/log-files/${encodeURIComponent(sourceKey)}`, {
                             method: "GET",
                             headers: { "X-Requested-With": "XMLHttpRequest" },
@@ -1448,6 +1461,18 @@ function mountFileBrowserPage() {
             }
             window.addEventListener("beforeunload", stopRestoreOperationPolling);
         }
+        function handleFileListInvalidated(event) {
+            const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
+            if (pageId === "backups" && detail.backups) {
+                loadStandardFileList({ force: true });
+                return;
+            }
+            if (pageId === "minecraft_logs" && detail.logFiles) {
+                const source = currentLogFileSource || activeLogSource || initialLogFileSource || "minecraft";
+                loadLogFileSourceList(source, { force: true });
+            }
+        }
+        window.addEventListener(FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
         if (pageId === "backups") {
             loadStandardFileList();
         }
@@ -1479,6 +1504,7 @@ function mountFileBrowserPage() {
                 fileListScrollbarCleanup();
                 fileListScrollbarCleanup = null;
             }
+            window.removeEventListener(FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
             window.removeEventListener("pagehide", teardownFilePageLifecycle);
             window.removeEventListener("beforeunload", stopRestoreOperationPolling);
             if (teardownFileBrowserPage === teardownFilePageLifecycle) {

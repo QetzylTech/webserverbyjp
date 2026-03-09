@@ -195,19 +195,21 @@
 
     function bootOfflineState() {
         const persistedState = readPersistedBannerState();
-        if (persistedState === "offline") {
-            showOfflineBanner();
-            offlineActive = true;
-        } else if (persistedState === "restored") {
-            showRecoveredBanner();
-        }
         if (!navigator.onLine) {
             setOfflineActive("navigator_offline");
             return;
         }
-        if (!offlineActive) {
-            clearOfflineActive();
+        if (persistedState === "offline" || persistedState === "restored") {
+            probeServerReachable().then((ok) => {
+                if (!ok) {
+                    setOfflineActive("persisted_offline_state");
+                    return;
+                }
+                clearOfflineActive();
+            });
+            return;
         }
+        clearOfflineActive();
     }
 
     function registerServiceWorker() {

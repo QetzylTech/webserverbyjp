@@ -1,4 +1,4 @@
-﻿"""Dashboard metrics aggregation and publication services."""
+"""Dashboard metrics aggregation and publication services."""
 
 from datetime import datetime
 import time
@@ -263,15 +263,38 @@ def has_active_home_page_clients(ctx):
     return (time.time() - last_seen) <= ctx.HOME_PAGE_ACTIVE_TTL_SECONDS
 
 
+def has_active_file_page_clients(ctx):
+    """Return whether file-page activity is still within active TTL."""
+    with ctx.metrics_cache_cond:
+        last_seen = getattr(ctx, "file_page_last_seen", 0.0)
+    return (time.time() - last_seen) <= getattr(ctx, "FILE_PAGE_ACTIVE_TTL_SECONDS", 0.0)
+
+
+def has_active_flask_app_clients(ctx):
+    """Return whether any tracked Flask app client is currently active."""
+    with ctx.metrics_cache_cond:
+        stream_clients = int(getattr(ctx, "metrics_stream_client_count", 0) or 0)
+    return stream_clients > 0 or has_active_home_page_clients(ctx) or has_active_file_page_clients(ctx)
+
+
+def _metrics_interval_seconds(ctx, snapshot):
+    if has_active_flask_app_clients(ctx):
+        return ctx.METRICS_COLLECT_INTERVAL_SECONDS
+    service_status = str((snapshot or {}).get("service_running_status", "") or "").strip().lower()
+    if service_status == "active":
+        return getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", ctx.METRICS_COLLECT_INTERVAL_SECONDS)
+    return getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS)
+
+
 def collect_and_publish_metrics(ctx):
     """Collect dashboard metrics and publish them to cache/streams."""
     try:
         snapshot = collect_dashboard_metrics(ctx)
     except Exception as exc:
         ctx.log_mcweb_exception("metrics_collect", exc)
-        return False
+        return None
     publish_metrics_snapshot(ctx, snapshot)
-    return True
+    return snapshot
 
 
 def metrics_collector_loop(ctx):
@@ -283,17 +306,16 @@ def metrics_collector_loop(ctx):
             with ctx.metrics_cache_cond:
                 # Wait until either SSE consumers exist or the page heartbeat is active.
                 ctx.metrics_cache_cond.wait_for(
-                    lambda: ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx),
+                    lambda: has_active_flask_app_clients(ctx),
                     timeout=1,
                 )
-                should_collect = ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx)
+                should_collect = has_active_flask_app_clients(ctx)
             if not should_collect:
                 continue
-        collect_and_publish_metrics(ctx)
-        service_status = ctx.get_status()
-        interval = ctx.METRICS_COLLECT_INTERVAL_SECONDS if service_status == "active" else ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS
+        snapshot = collect_and_publish_metrics(ctx)
+        interval = _metrics_interval_seconds(ctx, snapshot)
         with ctx.metrics_cache_cond:
-            if always_collect or ctx.metrics_stream_client_count > 0 or has_active_home_page_clients(ctx):
+            if always_collect or has_active_flask_app_clients(ctx):
                 ctx.metrics_cache_cond.wait(timeout=interval)
 
 

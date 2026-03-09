@@ -125,6 +125,7 @@
         let stateRefreshInFlight = false;
         let stateAutoRefreshTimer = null;
         const STATE_AUTO_REFRESH_MS = 5000;
+        const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
         const RULE_FIELD_UPDATERS = {
             "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
             "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
@@ -1166,6 +1167,13 @@
         throw { ok: false, message: "Maintenance API client unavailable." };
     }
 
+    function announceBackupsListInvalidation() {
+        if (shell && typeof shell.invalidateFilePageListCache === "function") {
+            shell.invalidateFilePageListCache("backups");
+        }
+        window.dispatchEvent(new CustomEvent(FILE_LISTS_INVALIDATED_EVENT, { detail: { backups: true } }));
+    }
+
     async function refreshState(options = {}) {
         if (stateRefreshInFlight) return;
         stateRefreshInFlight = true;
@@ -1353,6 +1361,9 @@
                 return;
             }
             if ((actionKey === "run-rules" || actionKey === "manual-delete") && payload?.result) {
+                if (!payload?.dry_run && currentScope === "backups") {
+                    announceBackupsListInvalidation();
+                }
                 showCompleteModal(payload.result, actionKey);
             }
         } catch (err) {

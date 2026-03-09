@@ -56,7 +56,7 @@ def build_world_bindings(namespace):
     def _static_asset_version(filename):
         try:
             path = ns["APP_DIR"] / "static" / filename
-            return int(path.stat().st_mtime)
+            return int(getattr(path.stat(), "st_mtime_ns", int(path.stat().st_mtime * 1000000000)))
         except OSError:
             return 0
 
