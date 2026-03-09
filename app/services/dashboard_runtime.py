@@ -4,6 +4,7 @@ import time
 
 from app.queries import dashboard_runtime_queries as _query
 from app.services import metrics_aggregator as _metrics
+from app.services import page_activity as _activity
 
 _QUERY_EXPORTS = (
     "invalidate_observed_state_cache",
@@ -18,8 +19,6 @@ _QUERY_EXPORTS = (
     "get_cached_mcweb_log_text",
     "set_file_page_items",
     "refresh_file_page_items",
-    "mark_file_page_client_active",
-    "has_active_file_page_clients",
     "get_cached_file_page_items",
     "warm_file_page_caches",
     "file_page_cache_refresher_loop",
@@ -30,6 +29,12 @@ _QUERY_EXPORTS = (
     "reconcile_operations_once",
     "operation_reconciler_loop",
     "start_operation_reconciler",
+)
+_ACTIVITY_EXPORTS = (
+    "mark_file_page_client_active",
+    "has_active_file_page_clients",
+    "mark_home_page_client_active",
+    "has_active_home_page_clients",
 )
 _METRIC_EXPORTS = (
     "class_from_percent",
@@ -43,8 +48,6 @@ _METRIC_EXPORTS = (
     "get_slow_metrics",
     "collect_dashboard_metrics",
     "publish_metrics_snapshot",
-    "mark_home_page_client_active",
-    "has_active_home_page_clients",
     "collect_and_publish_metrics",
     "metrics_collector_loop",
     "ensure_metrics_collector_started",
@@ -56,6 +59,8 @@ _OBSERVED_OPS_CACHE = _query._OBSERVED_OPS_CACHE
 
 for _name in _QUERY_EXPORTS:
     globals()[_name] = getattr(_query, _name)
+for _name in _ACTIVITY_EXPORTS:
+    globals()[_name] = getattr(_activity, _name)
 for _name in _METRIC_EXPORTS:
     globals()[_name] = getattr(_metrics, _name)
 
@@ -67,5 +72,6 @@ __all__ = [
     "state_store_service",
     "time",
     *_QUERY_EXPORTS,
+    *_ACTIVITY_EXPORTS,
     *_METRIC_EXPORTS,
 ]

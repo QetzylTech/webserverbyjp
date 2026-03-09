@@ -5,6 +5,7 @@ import time
 
 from app.core import state_store as state_store_service
 from app.queries.dashboard_runtime_queries import get_backups_status, get_observed_state
+from app.services.page_activity import has_active_flask_app_clients
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 def class_from_percent(value):
@@ -248,33 +249,6 @@ def publish_metrics_snapshot(ctx, snapshot):
         ctx.metrics_cache_seq = int(event_id or (ctx.metrics_cache_seq + 1))
         ctx.metrics_cache_cond.notify_all()
 
-
-def mark_home_page_client_active(ctx):
-    """Record recent home-page activity for metrics throttling."""
-    with ctx.metrics_cache_cond:
-        ctx.home_page_last_seen = time.time()
-        ctx.metrics_cache_cond.notify_all()
-
-
-def has_active_home_page_clients(ctx):
-    """Return whether home-page activity is still within active TTL."""
-    with ctx.metrics_cache_cond:
-        last_seen = ctx.home_page_last_seen
-    return (time.time() - last_seen) <= ctx.HOME_PAGE_ACTIVE_TTL_SECONDS
-
-
-def has_active_file_page_clients(ctx):
-    """Return whether file-page activity is still within active TTL."""
-    with ctx.metrics_cache_cond:
-        last_seen = getattr(ctx, "file_page_last_seen", 0.0)
-    return (time.time() - last_seen) <= getattr(ctx, "FILE_PAGE_ACTIVE_TTL_SECONDS", 0.0)
-
-
-def has_active_flask_app_clients(ctx):
-    """Return whether any tracked Flask app client is currently active."""
-    with ctx.metrics_cache_cond:
-        stream_clients = int(getattr(ctx, "metrics_stream_client_count", 0) or 0)
-    return stream_clients > 0 or has_active_home_page_clients(ctx) or has_active_file_page_clients(ctx)
 
 
 def _metrics_interval_seconds(ctx, snapshot):

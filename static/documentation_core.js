@@ -427,9 +427,6 @@
     let stickyMenuLabel = null;
     let tocSidebar = null;
     let tocSidebarBody = null;
-    let navToggle = null;
-    let sideNav = null;
-    let navBackdrop = null;
     let scrollContainer = null;
     let removeScrollListener = null;
 
@@ -442,9 +439,6 @@
       stickyMenuLabel = document.getElementById('stickyMenuLabel');
       tocSidebar = document.getElementById('tocSidebar');
       tocSidebarBody = document.getElementById('tocSidebarBody');
-      navToggle = document.getElementById('nav-toggle');
-      sideNav = document.getElementById('side-nav');
-      navBackdrop = document.getElementById('nav-backdrop');
       scrollContainer = null;
       removeScrollListener = null;
     };
@@ -511,38 +505,6 @@
       }
       window.addEventListener('scroll', handler, { passive: true });
       removeScrollListener = () => window.removeEventListener('scroll', handler);
-    };
-
-    const initMcwebNav = () => {
-      if (shell && typeof shell.startSidebarNav === 'function') {
-        shell.startSidebarNav();
-        return;
-      }
-
-      if (!navToggle || !sideNav || !navBackdrop) return;
-      if (navToggle.dataset.docsNavBound === 'true') return;
-      navToggle.dataset.docsNavBound = 'true';
-
-      const closeNav = () => {
-        sideNav.classList.remove('open');
-        navBackdrop.classList.remove('open');
-        navToggle.classList.remove('nav-open');
-        navToggle.setAttribute('aria-expanded', 'false');
-      };
-
-      const toggleNav = () => {
-        const nextOpen = !sideNav.classList.contains('open');
-        sideNav.classList.toggle('open', nextOpen);
-        navBackdrop.classList.toggle('open', nextOpen);
-        navToggle.classList.toggle('nav-open', nextOpen);
-        navToggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-      };
-
-      navToggle.addEventListener('click', toggleNav);
-      navBackdrop.addEventListener('click', closeNav);
-      window.addEventListener('resize', () => {
-        if (window.innerWidth > 1100) closeNav();
-      });
     };
 
     const addMediaListener = (mql, handler) => {
@@ -962,7 +924,6 @@
       bindPageElements();
       if (!contentElement) return null;
       contentElement.innerHTML = '';
-      initMcwebNav();
       loadConfiguredReadme();
       return null;
     }

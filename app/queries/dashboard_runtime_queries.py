@@ -9,6 +9,7 @@ from app.core import state_store as state_store_service
 from app.core import profiling
 from app.ports import ports
 from app.services import file_inventory_index as file_inventory_index_service
+from app.services.page_activity import has_active_file_page_clients, mark_file_page_client_active
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 _OBSERVED_OPS_CACHE_LOCK = threading.Lock()
@@ -377,18 +378,6 @@ def refresh_file_page_items(ctx, cache_key, *, compute_snapshot_sizes=True):
     set_file_page_items(ctx, cache_key, items)
     return items
 
-
-def mark_file_page_client_active(ctx):
-    """Record recent file-page activity for refresher throttling."""
-    with ctx.file_page_cache_lock:
-        ctx.file_page_last_seen = time.time()
-
-
-def has_active_file_page_clients(ctx):
-    """Return whether file-page clients are still considered active."""
-    with ctx.file_page_cache_lock:
-        last_seen = ctx.file_page_last_seen
-    return (time.time() - last_seen) <= ctx.FILE_PAGE_ACTIVE_TTL_SECONDS
 
 
 def get_cached_file_page_items(ctx, cache_key):

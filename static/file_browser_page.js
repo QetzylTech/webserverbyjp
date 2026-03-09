@@ -20,20 +20,13 @@ function mountFileBrowserPage() {
         const dataRuntime = window.MCWebFilePageDataRuntime || {};
         const escapeHtml = typeof logUtils.escapeHtml === "function" ? logUtils.escapeHtml : (text) => String(text || "");
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
-        function sendFilePageHeartbeat() {
-            if (document.hidden) return;
-            fetch("/file-page-heartbeat", {
-                method: "POST",
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest",
-                    "X-CSRF-Token": csrfToken || "",
-                },
-                cache: "no-store",
-                keepalive: true,
-            }).catch(() => {});
-        }
-        sendFilePageHeartbeat();
-        let fileHeartbeatTimer = window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
+        const pageActivityRuntime = window.MCWebPageActivityRuntime;
+        const fileHeartbeatController = pageActivityRuntime.createHeartbeatController({
+            path: "/file-page-heartbeat",
+            csrfToken,
+            intervalMs: FILE_PAGE_HEARTBEAT_INTERVAL_MS,
+        });
+        fileHeartbeatController.start();
 
 
         const errorBox = document.getElementById("download-error");
@@ -566,15 +559,11 @@ function mountFileBrowserPage() {
         }
 
         function stopFileHeartbeatPolling() {
-            if (!fileHeartbeatTimer) return;
-            window.clearInterval(fileHeartbeatTimer);
-            fileHeartbeatTimer = null;
+            fileHeartbeatController.stop();
         }
 
         function startFileHeartbeatPolling() {
-            sendFilePageHeartbeat();
-            if (fileHeartbeatTimer) return;
-            fileHeartbeatTimer = window.setInterval(sendFilePageHeartbeat, FILE_PAGE_HEARTBEAT_INTERVAL_MS);
+            fileHeartbeatController.start();
         }
 
         function handleVisibilityStateChange() {
@@ -1481,10 +1470,7 @@ function mountFileBrowserPage() {
         function teardownFilePageLifecycle() {
             pageRuntimeActive = false;
             fileListLoadToken += 1;
-            if (fileHeartbeatTimer) {
-                window.clearInterval(fileHeartbeatTimer);
-                fileHeartbeatTimer = null;
-            }
+            stopFileHeartbeatPolling();
             stopRestorePaneAlertHeartbeat();
             stopRestorePolling();
             stopRestoreOperationPolling();

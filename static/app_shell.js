@@ -1051,13 +1051,9 @@
         });
         return getFilePageViewState(normalized);
     }
-
-    // Public shell API used by page runtimes for shared caches, live metrics, and
-    // the persistent restore-pane/browser identity.
+    // Public shell API for page runtimes. Shell boot concerns like theme and nav
+    // stay internal; pages consume shared caches, live metrics, and view state.
     window.MCWebShell = Object.assign({}, window.MCWebShell || {}, {
-        startSidebarNav,
-        startThemePreferenceWatcher,
-        closeNav,
         getPersistentClientId,
         subscribeMetrics,
         fetchDeviceNameMap,

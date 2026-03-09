@@ -173,17 +173,17 @@ Process role:
 
 8. Live update model
 
-The UI uses a hybrid model (push + pull):
-- `/metrics-stream` (SSE): continuous push of metrics snapshots
-- `/metrics` (HTTP): one-shot snapshot (initial hydration/fallback polling)
-- `/log-stream/<source>` (SSE): continuous log push
-- additional polling endpoints exist for specific workflows (operation status, nav attention, etc.)
+The UI uses a shell-owned live-update model:
+- `/metrics-stream` (SSE): the continuous metrics channel used by the shell and page runtimes
+- `/log-stream/<source>` (SSE): continuous log push for the active Home log source
+- one-shot HTTP endpoints are still used for cache-backed reads such as file lists, viewed files, README content, and maintenance snapshots
+- targeted polling remains only for workflow-specific state such as operation status, nav attention, and restore progress
 
-So it is not a single massive broadcast-only channel.
+So the dashboard is not broadcast-only, but continuous metrics delivery is SSE-first and shell-owned.
 
 Status transition timing note:
-- start/stop button handlers set intent immediately, but the visible dashboard state is still read through cached observed-state and metrics snapshots
-- default cache values (`_OBSERVED_OPS_CACHE_TTL_SECONDS=1.5`, `_OBSERVED_STATE_CACHE_TTL_SECONDS=1.25`, `/metrics` route cache `1.0s`, and client fast polling `1000ms`) can add about 1 second of delay before `Starting` or `Shutting Down` appears
+- start/stop button handlers set intent immediately, but the visible dashboard state is still read through cached observed-state and streamed metrics snapshots
+- default cache values (`_OBSERVED_OPS_CACHE_TTL_SECONDS=1.5`, `_OBSERVED_STATE_CACHE_TTL_SECONDS=1.25`, and active metrics collection `1.0s`) can add about 1 to 2 seconds before `Starting` or `Shutting Down` appears
 - `Running` can take a bit longer because the final state also waits on live service status plus Minecraft readiness/RCON checks
 
 9. Offline/recovery behavior
@@ -198,48 +198,19 @@ Behavior:
 - when signal is restored, banner turns green (`Signal restored. Reconnecting...`) for ~1 second, then page reloads
 - service worker caches static/offline assets; dynamic HTML pages are not cached
 
-9.1 Frontend architecture TODO (persistent shell / good version)
+9.1 Frontend shell runtime
 
-Current state:
-- the app is still multi-page Flask with shell + hydrate behavior on individual pages
-- shared metrics/nav state is reused on the client, but full document navigations still tear down and recreate page runtimes
-- repeated page switches therefore still reopen `/metrics-stream`, rerun page boot code, and re-request page-specific data
+Current architecture:
+- full page loads render `templates/app_shell.html`
+- shell navigation requests send `X-MCWEB-Fragment: 1` and receive fragment-only HTML
+- `static/app_shell.js` intercepts internal navigation, swaps fragment HTML into `#mcweb-app-content`, and mounts/unmounts page modules through `MCWebPageModules`
+- the shell owns theme preference wiring, sidebar nav wiring, metrics SSE, persistent client identity, shared home-log state, and cross-page caches for README/file/log/maintenance data
+- page scripts own page-specific DOM wiring, page-scoped timers, and teardown only
 
-Target state:
-- keep one persistent browser shell alive across navigation
-- keep one shared client state store alive across navigation
-- keep one shared metrics SSE owner alive across navigation
-- switch page views client-side instead of doing full document reloads
-- mount only the active page view and hydrate it from the shared store/cache
-- treat server-rendered HTML as an app shell / fragment source, not as the primary repeated navigation payload
-
-Expected benefits:
-- faster perceived navigation
-- fewer repeated server-side template renders
-- fewer repeated SSE reconnects on page switches
-- fewer repeated bootstrap requests such as `/device-name-map`, `/log-text/<source>`, and `/file-page-items/<page>`
-- lower steady-state server load when users move between pages frequently
-
-Scope of rewrite:
-- mostly JavaScript/frontend architecture
-- moderate template restructuring
-- small backend support changes for lighter shell/fragment/data responses
-- core backend control/backup/restore logic should remain mostly unchanged
-
-Planned implementation phases:
-1. Introduce one persistent app shell with client-side navigation interception.
-2. Add a shared client store for metrics, nav attention, device-name mappings, log buffers, and file-list caches.
-3. Promote metrics SSE to a single long-lived shell-owned runtime connection.
-4. Refactor each page script into explicit `mount()` / `unmount()` modules instead of full-page boot scripts.
-5. Convert page routes/templates into shell-friendly fragments or lightweight data endpoints where needed.
-6. Migrate pages incrementally: `readme` or another simple page first, then `home`, then file/log pages, then maintenance.
-7. Remove legacy full-page boot assumptions and duplicate per-page timers/subscriptions once the persistent shell is complete.
-
-Guardrails for the good version:
-- do not keep every page's timers, fetchers, and DOM trees alive forever
-- keep shared runtime state alive, not uncontrolled duplicated page runtimes
-- prefer one SSE owner and one source of truth for live metrics/nav state
-- keep page-specific heavy data lazy and cacheable
+Guardrails:
+- do not duplicate shell boot concerns such as theme or nav binding inside page scripts
+- do not add a second continuous metrics owner; live metrics stay under the shell SSE runtime
+- keep heavy page data lazy and cacheable, and tear down page-specific listeners and timers on unmount
 
 10. Nginx reverse proxy (optional, no `:8080` in URL)
 

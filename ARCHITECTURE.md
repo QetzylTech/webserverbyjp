@@ -24,9 +24,8 @@ Disallowed:
 - Shared shell behavior (theme, nav shell wiring, persistent client identity, shared metrics SSE ownership) must live in shared shell/bootstrap modules, not duplicated per page.
 - Page scripts should own page-specific mount/unmount logic only.
 - Live dissemination should prefer one shared client runtime owner per page shell, not duplicated SSE or polling owners for the same topic.
-- Shell-first hydration is the current contract: route handlers should render lightweight shells and leave live/page-specific data hydration to client runtime code or dedicated data endpoints.
-- The long-term frontend target is a persistent browser shell with client-side view switching; new work should not deepen dependence on full document reloads.
-
+- Shell-first hydration is the current contract: full page loads render `app_shell.html`, shell navigation fetches fragment responses, and page modules mount/unmount inside the persistent shell.
+- Theme/nav boot, metrics SSE ownership, and other cross-page runtime concerns stay in the shell; page modules must not duplicate them.
 
 ## Process Rules
 
@@ -39,12 +38,12 @@ Disallowed:
 - Runtime receives typed, validated config values.
 - Services should use explicit/typed dependencies or context objects, not generic mega mutable state dicts.
 
-## Migration Direction (Persistent Shell)
+## Persistent Shell Guardrails
 
-- Move toward one persistent browser shell, one shared client store, and one shared metrics SSE owner across navigation.
-- Refactor page boot scripts into explicit `mount()` / `unmount()` modules so navigation no longer depends on full page lifecycle hooks.
+- Keep one persistent browser shell, one shared client state/cache surface, and one shared metrics SSE owner across navigation.
+- Refactor page code into explicit `mount()` / `unmount()` modules; new work should not reintroduce full-page boot ownership into page scripts.
 - Add lightweight fragment/data endpoints where needed, but keep backend business logic in the existing layers.
-- Avoid "keep every page alive forever" implementations that leave hidden timers, fetchers, or duplicate DOM/runtime owners mounted.
+- Avoid keeping hidden timers, fetchers, or duplicate DOM/runtime owners mounted after a page unmounts.
 
 ## Enforcement Layers
 

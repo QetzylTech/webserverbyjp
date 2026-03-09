@@ -33,12 +33,6 @@
         const shell = global.MCWebShell || null;
         const MAINTENANCE_CSRF_HEADER = "X-CSRF-Token";
         const maintenanceApiRuntime = global.MCWebMaintenanceApiRuntime || null;
-        if (shell && typeof shell.startThemePreferenceWatcher === "function") {
-            shell.startThemePreferenceWatcher();
-        }
-        if (shell && typeof shell.startSidebarNav === "function") {
-            shell.startSidebarNav();
-        }
 
         // DOM wiring and mutable page state for maintenance interactions.
         const csrfToken = document.getElementById("maintenance-csrf-token")?.value || "";

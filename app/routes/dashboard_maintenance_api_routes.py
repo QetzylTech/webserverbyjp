@@ -1,12 +1,12 @@
 """Maintenance route registration for the MC web dashboard."""
 
 from flask import jsonify, render_template, request
-from markupsafe import Markup
 
 from app.commands import maintenance_commands as maintenance_commands_service
 from app.core import profiling
 from app.core.rate_limit import InMemoryRateLimiter
 from app.queries import maintenance_queries as maintenance_queries_service
+from app.routes.shell_page import render_shell_page as render_shell_page_helper
 
 _MAINTENANCE_RATE_LIMITER = InMemoryRateLimiter()
 
@@ -45,7 +45,7 @@ def _json_or_passthrough(result):
     return jsonify(result)
 
 
-def register_maintenance_routes(app, state, *, render_shell_page=None):
+def register_maintenance_routes(app, state):
     """Register maintenance page and maintenance API routes."""
     ctx = getattr(state, "ctx", state)
     maintenance_queries_service.invalidate_state_cache()
@@ -70,16 +70,13 @@ def register_maintenance_routes(app, state, *, render_shell_page=None):
         with profiling.timed("maintenance.route.page"):
             scope = maintenance_queries_service.normalize_scope(request.args.get("scope", "backups"))
             context = _maintenance_template_context(scope)
-            if callable(render_shell_page):
-                return render_shell_page(
-                    "fragments/maintenance_fragment.html",
-                    current_page="maintenance",
-                    page_title="Cleanup",
-                    **context,
-                )
-            return render_template(
-                "maintenance.html",
+            return render_shell_page_helper(
+                app,
+                state,
+                render_template,
+                "fragments/maintenance_fragment.html",
                 current_page="maintenance",
+                page_title="Cleanup",
                 **context,
             )
 

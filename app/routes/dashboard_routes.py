@@ -1,10 +1,8 @@
 """Route registration for the shell-first MC web dashboard."""
-import inspect
 import threading
 import time
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
-from markupsafe import Markup
 from app.core import profiling
 from app.queries import dashboard_queries as dashboard_queries_service
 
@@ -12,6 +10,7 @@ from app.routes.dashboard_control_routes import register_control_routes
 from app.routes.dashboard_file_routes import register_file_routes
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
 from app.commands.maintenance_commands import run_cleanup_event_if_enabled
+from app.routes.shell_page import render_shell_page as render_shell_page_helper
 
 
 def register_routes(app, state):
@@ -75,29 +74,12 @@ def register_routes(app, state):
             current_client_id=_current_request_client_id(),
         )
 
-    def _wants_fragment_response():
-        return str(request.headers.get("X-MCWEB-Fragment", "") or "").strip() == "1"
-
-    def _render_shell_page(fragment_template, *, current_page, page_title, **context):
-        fragment_html = render_template(fragment_template, current_page=current_page, **context)
-        if _wants_fragment_response():
-            response = app.make_response(fragment_html)
-            response.headers["X-MCWEB-Page-Title"] = page_title
-            response.headers["X-MCWEB-Page-Key"] = current_page
-            return response
-        return render_template(
-            "app_shell.html",
-            current_page=current_page,
-            page_title=page_title,
-            initial_page_html=Markup(fragment_html),
-            initial_metrics_snapshot=state["get_cached_dashboard_metrics"](),
-        )
 
     @app.route("/")
     def index():
         """Render the persistent dashboard shell or the home fragment payload."""
         home = dashboard_queries_service.get_dashboard_shell_model(state, request.args.get("msg", ""))
-        return _render_shell_page(
+        return render_shell_page_helper(app, state, render_template, 
             "fragments/home_fragment.html",
             current_page="home",
             page_title="Minecraft Control",
@@ -147,7 +129,7 @@ def register_routes(app, state):
     @app.route("/readme")
     def readme_page():
         """Render the documentation shell page or its client-side fragment."""
-        return _render_shell_page(
+        return render_shell_page_helper(app, state, render_template, 
             "fragments/documentation_fragment.html",
             current_page="readme",
             page_title="README Documentation",
@@ -220,11 +202,7 @@ def register_routes(app, state):
         return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
     register_file_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
-    maintenance_route_params = inspect.signature(register_maintenance_routes).parameters
-    if "render_shell_page" in maintenance_route_params:
-        register_maintenance_routes(app, state, render_shell_page=_render_shell_page)
-    else:
-        register_maintenance_routes(app, state)
+    register_maintenance_routes(app, state)
     register_control_routes(
         app,
         state,

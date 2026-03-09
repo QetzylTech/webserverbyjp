@@ -38,8 +38,8 @@ class TemplateContractsTests(unittest.TestCase):
         for token in required_tokens:
             self.assertIn(token, text)
 
-    def test_maintenance_template_has_scopes_views_actions_and_modals(self):
-        text = self._read("templates/maintenance.html")
+    def test_maintenance_fragment_has_scopes_views_actions_and_modals(self):
+        text = self._read("templates/fragments/maintenance_fragment.html")
         required_tokens = [
             'id="maint-scope-backups"',
             'id="maint-scope-stale"',

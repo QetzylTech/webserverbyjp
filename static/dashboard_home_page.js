@@ -12,22 +12,15 @@
     const homeTimeUtils = window.MCWebHomeTimeUtils || {};
     const pageModules = window.MCWebPageModules || null;
     const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
+    const pageActivityRuntime = window.MCWebPageActivityRuntime;
     const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
     const START_BUTTON_COOLDOWN_MS = 10000;
-    function sendHomePageHeartbeat() {
-        if (document.hidden) return;
-        fetch("/home-heartbeat", {
-            method: "POST",
-            headers: {
-                "X-Requested-With": "XMLHttpRequest",
-                "X-CSRF-Token": csrfToken || "",
-            },
-            cache: "no-store",
-            keepalive: true,
-        }).catch(() => {});
-    }
-    sendHomePageHeartbeat();
-    let homeHeartbeatTimer = window.setInterval(sendHomePageHeartbeat, HOME_PAGE_HEARTBEAT_INTERVAL_MS);
+    const homeHeartbeatController = pageActivityRuntime.createHeartbeatController({
+        path: "/home-heartbeat",
+        csrfToken,
+        intervalMs: HOME_PAGE_HEARTBEAT_INTERVAL_MS,
+    });
+    homeHeartbeatController.start();
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
@@ -892,10 +885,7 @@
             homeLogsUnsubscribe = null;
         }
         Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
-        if (homeHeartbeatTimer) {
-            clearInterval(homeHeartbeatTimer);
-            homeHeartbeatTimer = null;
-        }
+        homeHeartbeatController.stop();
         if (typeof logScrollbarCleanup === "function") {
             logScrollbarCleanup();
             logScrollbarCleanup = null;
@@ -911,12 +901,13 @@
             if (homeLogController && (!shell || typeof shell.activateHomeLogStream !== "function")) {
                 homeLogController.teardown();
             }
+            homeHeartbeatController.stop();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
         scheduleServerClockTick();
-        sendHomePageHeartbeat();
+        homeHeartbeatController.start();
     }
     async function startHomePage() {
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {

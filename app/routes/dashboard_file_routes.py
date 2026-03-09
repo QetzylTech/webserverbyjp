@@ -9,10 +9,10 @@ import tracemalloc
 import time
 
 from flask import Response, abort, after_this_request, jsonify, redirect, render_template, request, send_file, send_from_directory, stream_with_context, url_for
-from markupsafe import Markup
 from app.core import profiling
 from app.core import state_store as state_store_service
 from app.ports import ports
+from app.routes.shell_page import render_shell_page as render_shell_page_helper
 
 _METRICS_ROUTE_CACHE_LOCK = threading.Lock()
 # Short cache for /metrics JSON fallback requests. This improves burst behavior,
@@ -215,23 +215,6 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             return spec, None
         return spec, safe_name
 
-    def _wants_fragment_response():
-        return str(request.headers.get("X-MCWEB-Fragment", "") or "").strip() == "1"
-
-    def _render_shell_page(fragment_template, *, current_page, page_title, **context):
-        fragment_html = render_template(fragment_template, current_page=current_page, **context)
-        if _wants_fragment_response():
-            response = app.make_response(fragment_html)
-            response.headers["X-MCWEB-Page-Title"] = page_title
-            response.headers["X-MCWEB-Page-Key"] = current_page
-            return response
-        return render_template(
-            "app_shell.html",
-            current_page=current_page,
-            page_title=page_title,
-            initial_page_html=Markup(fragment_html),
-            initial_metrics_snapshot=state["get_cached_dashboard_metrics"](),
-        )
 
     # Route: /backups
     @app.route("/backups")
@@ -239,7 +222,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         """Render the backup page shell or backup fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
-        return _render_shell_page(
+        return render_shell_page_helper(app, state, render_template, 
             "fragments/files_fragment.html",
             current_page="backups",
             page_title="Backup & Restore",
@@ -268,7 +251,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         initial_log_source = str(request.args.get("source", "minecraft") or "minecraft").strip().lower()
         if _log_file_source_spec(initial_log_source) is None:
             initial_log_source = "minecraft"
-        return _render_shell_page(
+        return render_shell_page_helper(app, state, render_template, 
             "fragments/files_fragment.html",
             current_page="minecraft_logs",
             page_title="Log Files",
