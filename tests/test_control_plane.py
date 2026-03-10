@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.services import service_ops as control_plane
-from app.services import restore_workflow
+from app.services import restore_jobs
 from app.state import BackupState
 
 
@@ -35,9 +35,9 @@ class ControlPlaneTests(unittest.TestCase):
             "pre_restore_snapshot_name": "world_2026-01-01_00-00-00_pre_restore.zip",
         }
 
-        with patch.object(restore_workflow, "restore_world_backup", return_value=fake_result), \
-             patch.object(restore_workflow.state_store_service, "append_restore_run", return_value=None), \
-             patch.object(restore_workflow.state_store_service, "restore_backup_records_match", return_value=True):
+        with patch.object(restore_jobs, "restore_world_backup", return_value=fake_result), \
+             patch.object(restore_jobs.state_store_service, "append_restore_run", return_value=None), \
+             patch.object(restore_jobs.state_store_service, "restore_backup_records_match", return_value=True):
             started = control_plane.start_restore_job(ctx, "world_test_manual.zip")
             self.assertTrue(started["ok"])
             deadline = datetime.now().timestamp() + 1.0

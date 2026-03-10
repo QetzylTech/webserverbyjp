@@ -1,17 +1,207 @@
-const CACHE_NAME = "mcweb-shell-v1";
+﻿const STATIC_CACHE = "mcweb-static-v3";
+const HTML_CACHE = "mcweb-html-v3";
+const FRAGMENT_CACHE = "mcweb-fragments-v3";
 const OFFLINE_FALLBACK_URL = "/static/offline.html";
+const OFFLINE_FRAGMENT_HTML = "<main id=\"mcweb-page-root\" class=\"content\" data-page-key=\"offline\" data-page-title=\"Offline\" data-page-styles='[]' data-page-scripts='[]'><div class=\"wrap page-panes\"><section class=\"panel pane-primary\"><div class=\"pane-head\"><h1 class=\"pane-title\">Server offline</h1></div><div class=\"pane-content\"><p>Cached content is unavailable for this page. Reconnect to load data.</p></div></section></div></main>";
+
+const PRECACHE_STATIC_URLS = [
+    OFFLINE_FALLBACK_URL,
+    "/static/global.css",
+    "/static/custom_select.js",
+    "/static/http_client.js",
+    "/static/page_activity_runtime.js",
+    "/static/pane_animations.js",
+    "/static/offline_recovery.js",
+    "/static/page_module_registry.js",
+    "/static/app_shell.js",
+    "/static/dom_runtime_utils.js",
+    "/static/log_render_utils.js",
+    "/static/file_viewer_runtime.js",
+    "/static/file_page_data_runtime.js",
+    "/static/file_page_modals.js",
+    "/static/file_browser_page.js",
+    "/static/home_log_runtime.js",
+    "/static/home_time_utils.js",
+    "/static/dashboard_home.css",
+    "/static/dashboard_home_page.js",
+    "/static/file_browser.css",
+    "/static/documentation.css",
+    "/static/documentation_core.js",
+    "/static/maintenance_api_runtime.js",
+    "/static/maintenance_page.css",
+    "/static/maintenance_page_utils.js",
+    "/static/maintenance_page_files.js",
+    "/static/maintenance_page_rules.js",
+    "/static/maintenance_page_history.js",
+    "/static/maintenance_page_modals.js",
+    "/static/maintenance_page_core.js",
+    "/static/maintenance_page.js",
+];
+
+const PRECACHE_PAGE_ROUTES = [
+    "/",
+    "/backups",
+    "/minecraft-logs",
+    "/crash-logs",
+    "/maintenance",
+    "/readme",
+];
+
+function stripSearch(url) {
+    return url.origin + url.pathname;
+}
+
+async function cacheStaticResponse(request, response) {
+    if (!response || !response.ok) return;
+    const cache = await caches.open(STATIC_CACHE);
+    const url = new URL(request.url);
+    const stripped = new Request(stripSearch(url), { method: "GET" });
+    try {
+        await cache.put(stripped, response.clone());
+    } catch (_) {
+        // Ignore cache failures.
+    }
+}
+
+async function matchStatic(request) {
+    const cache = await caches.open(STATIC_CACHE);
+    const cached = await cache.match(request) || await cache.match(request, { ignoreSearch: true });
+    return cached || null;
+}
+
+async function handleNavigate(request) {
+    try {
+        const response = await fetch(request);
+        if (response && response.ok) {
+            const cache = await caches.open(HTML_CACHE);
+            try {
+                await cache.put(request, response.clone());
+            } catch (_) {
+                // Ignore cache failures.
+            }
+        }
+        return response;
+    } catch (_) {
+        const cache = await caches.open(HTML_CACHE);
+        const cached = await cache.match(request) || await cache.match(request, { ignoreSearch: true });
+        if (cached) return cached;
+        const fallback = await matchStatic(new Request(OFFLINE_FALLBACK_URL));
+        if (fallback) return fallback;
+        return new Response("Server offline.", {
+            status: 503,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+    }
+}
+
+async function handleFragment(request) {
+    const cache = await caches.open(FRAGMENT_CACHE);
+    try {
+        const response = await fetch(request);
+        if (response && response.ok) {
+            try {
+                await cache.put(request, response.clone());
+            } catch (_) {
+                // Ignore cache failures.
+            }
+        }
+        return response;
+    } catch (_) {
+        const cached = await cache.match(request) || await cache.match(request, { ignoreSearch: true });
+        if (cached) return cached;
+        return new Response(OFFLINE_FRAGMENT_HTML, {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+    }
+}
+
+async function handleStatic(request) {
+    const cached = await matchStatic(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    cacheStaticResponse(request, response.clone()).catch(() => {});
+    return response;
+}
+
+async function precacheStaticAssets() {
+    try {
+        const cache = await caches.open(STATIC_CACHE);
+        const tasks = PRECACHE_STATIC_URLS.map(async (url) => {
+            try {
+                await cache.add(url);
+            } catch (_) {
+                // Ignore missing assets during install.
+            }
+        });
+        await Promise.all(tasks);
+    } catch (_) {
+        // Ignore offline install failures.
+    }
+}
+
+async function precachePages() {
+    try {
+        const cache = await caches.open(HTML_CACHE);
+        const tasks = PRECACHE_PAGE_ROUTES.map(async (path) => {
+            try {
+                const response = await fetch(path, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                    cache: "no-store",
+                });
+                if (response && response.ok) {
+                    await cache.put(path, response.clone());
+                }
+            } catch (_) {
+                // Ignore offline failures.
+            }
+        });
+        await Promise.all(tasks);
+    } catch (_) {
+        // Ignore offline failures.
+    }
+}
+
+async function precacheFragments() {
+    try {
+        const cache = await caches.open(FRAGMENT_CACHE);
+        const tasks = PRECACHE_PAGE_ROUTES.map(async (path) => {
+            try {
+                const request = new Request(path, {
+                    headers: {
+                        "X-MCWEB-Fragment": "1",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    cache: "no-store",
+                });
+                const response = await fetch(request);
+                if (response && response.ok) {
+                    await cache.put(request, response.clone());
+                }
+            } catch (_) {
+                // Ignore offline failures.
+            }
+        });
+        await Promise.all(tasks);
+    } catch (_) {
+        // Ignore offline failures.
+    }
+}
 
 self.addEventListener("install", (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll([OFFLINE_FALLBACK_URL]))
-    );
+    event.waitUntil((async () => {
+        await precacheStaticAssets();
+        await precachePages();
+        await precacheFragments();
+    })());
     self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
     event.waitUntil(
         caches.keys().then((keys) => Promise.all(
-            keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+            keys.filter((key) => ![STATIC_CACHE, HTML_CACHE, FRAGMENT_CACHE].includes(key))
+                .map((key) => caches.delete(key))
         ))
     );
     self.clients.claim();
@@ -24,32 +214,19 @@ self.addEventListener("fetch", (event) => {
     const url = new URL(req.url);
     if (url.origin !== self.location.origin) return;
 
+    const isFragment = req.headers.get("X-MCWEB-Fragment") === "1";
+    if (isFragment) {
+        event.respondWith(handleFragment(req));
+        return;
+    }
+
     if (req.mode === "navigate") {
-        event.respondWith(
-            fetch(req)
-                .then((res) => res)
-                .catch(async () => {
-                    const fallback = await caches.match(OFFLINE_FALLBACK_URL);
-                    if (fallback) return fallback;
-                    return new Response("Server offline.", {
-                        status: 503,
-                        headers: { "Content-Type": "text/plain; charset=utf-8" },
-                    });
-                })
-        );
+        event.respondWith(handleNavigate(req));
         return;
     }
 
     if (url.pathname.startsWith("/static/")) {
-        event.respondWith(
-            caches.match(req).then((cached) => {
-                if (cached) return cached;
-                return fetch(req).then((res) => {
-                    const clone = res.clone();
-                    caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
-                    return res;
-                });
-            })
-        );
+        event.respondWith(handleStatic(req));
+        return;
     }
 });

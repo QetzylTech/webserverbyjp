@@ -6,7 +6,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from app.routes import dashboard_routes
-from app.services import dashboard_runtime
+from app.services import dashboard_operations_runtime
 
 
 class ConsistencyChecksTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class ConsistencyChecksTests(unittest.TestCase):
             write_session_start_time=lambda: (events.append("write") or 1.0),
             clear_session_start_time=lambda: events.append("clear"),
         )
-        report = dashboard_runtime.get_consistency_report(ctx, auto_repair=True)
+        report = dashboard_operations_runtime.get_consistency_report(ctx, auto_repair=True)
         self.assertFalse(report["ok"])
         self.assertTrue(any(item.get("code") == "active_missing_session_start" for item in report["issues"]))
         self.assertIn("write", events)
@@ -33,7 +33,7 @@ class ConsistencyChecksTests(unittest.TestCase):
             write_session_start_time=lambda: (events.append("write") or 1.0),
             clear_session_start_time=lambda: events.append("clear"),
         )
-        report = dashboard_runtime.get_consistency_report(ctx, auto_repair=True)
+        report = dashboard_operations_runtime.get_consistency_report(ctx, auto_repair=True)
         self.assertFalse(report["ok"])
         self.assertTrue(any(item.get("code") == "off_with_session_start" for item in report["issues"]))
         self.assertIn("clear", events)
@@ -84,7 +84,8 @@ class ConsistencyChecksTests(unittest.TestCase):
             "get_consistency_report": lambda auto_repair=False: {"ok": True, "auto_repair": bool(auto_repair), "issues": []},
         }
         with patch.object(dashboard_routes, "render_template", return_value="home-page"), \
-             patch.object(dashboard_routes, "register_file_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
+             patch.object(dashboard_routes, "register_file_routes", lambda app, state: None), \
+             patch.object(dashboard_routes, "register_metrics_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
              patch.object(dashboard_routes, "register_maintenance_routes", lambda app, state: None), \
              patch.object(dashboard_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):
             dashboard_routes.register_routes(app, state)

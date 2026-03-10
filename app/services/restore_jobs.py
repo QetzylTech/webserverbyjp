@@ -1,0 +1,110 @@
+"""Restore job orchestration for control plane."""
+
+from pathlib import Path
+import uuid
+
+from app.core import state_store as state_store_service
+from app.services.restore_execution import SNAPSHOT_TOKEN_PREFIX, restore_world_backup
+from app.services.restore_status import _ensure_restore_status_state, append_restore_event
+from app.services.worker_scheduler import start_detached
+
+
+def _record_restore_run(ctx, job_id, backup_filename, result):
+    if not isinstance(result, dict):
+        return
+    payload = {
+        "job_id": str(job_id or ""),
+        "mode": "snapshot" if str(backup_filename or "").startswith(SNAPSHOT_TOKEN_PREFIX) else "backup",
+        "backup_filename": str(backup_filename or ""),
+        "ok": bool(result.get("ok")),
+        "error_code": str(result.get("error", "") or ""),
+        "message": str(result.get("message", "") or ""),
+        "pre_restore_snapshot_name": str(result.get("pre_restore_snapshot_name", "") or ""),
+        "switched_from_world": str(result.get("switched_from_world", "") or ""),
+        "archived_old_world": str(result.get("archived_old_world", "") or ""),
+        "switched_to_world": str(result.get("switched_to_world", "") or ""),
+        "stored_restore_id": str(result.get("stored_restore_id", "") or ""),
+        "active_restore_id": str(result.get("active_restore_id", "") or ""),
+    }
+    try:
+        state_store_service.append_restore_run(Path(ctx.APP_STATE_DB_PATH), payload)
+    except Exception as exc:
+        log_exception = getattr(ctx, "log_mcweb_exception", None)
+        if log_exception is not None:
+            log_exception("append_restore_run", exc)
+        return
+
+    if payload["ok"] and payload["pre_restore_snapshot_name"]:
+        try:
+            state_store_service.restore_backup_records_match(
+                Path(ctx.APP_STATE_DB_PATH),
+                backup_filename=payload["backup_filename"],
+                pre_restore_snapshot_name=payload["pre_restore_snapshot_name"],
+                stored_restore_id=payload["stored_restore_id"],
+                active_restore_id=payload["active_restore_id"],
+            )
+        except Exception as exc:
+            log_exception = getattr(ctx, "log_mcweb_exception", None)
+            if log_exception is not None:
+                log_exception("restore_backup_records_match", exc)
+
+
+def start_restore_job(ctx, backup_filename):
+    state, lock = _ensure_restore_status_state(ctx)
+    with lock:
+        if bool(state.get("running")):
+            return {
+                "ok": False,
+                "error": "restore_in_progress",
+                "message": "A restore operation is already in progress.",
+                "job_id": str(state.get("job_id", "") or ""),
+            }
+        job_id = uuid.uuid4().hex[:12]
+        state["job_id"] = job_id
+        state["running"] = True
+        state["result"] = None
+        state["undo_filename"] = ""
+        state["events"] = []
+    append_restore_event(ctx, f"Restore job queued: {str(backup_filename or '').strip()}")
+
+    def _worker():
+        result = None
+        try:
+            result = restore_world_backup(
+                ctx,
+                backup_filename,
+                progress_callback=lambda message: append_restore_event(ctx, message),
+            )
+        except Exception as exc:
+            log_exception = getattr(ctx, "log_mcweb_exception", None)
+            if log_exception is not None:
+                log_exception("start_restore_job", exc)
+            result = {"ok": False, "error": "restore_failed", "message": "Restore failed due to an internal error."}
+        finally:
+            _record_restore_run(ctx, job_id, backup_filename, result)
+            with lock:
+                state["running"] = False
+                state["result"] = dict(result) if isinstance(result, dict) else result
+                state["undo_filename"] = str((result or {}).get("pre_restore_snapshot_name", "") or "")
+            append_restore_event(ctx, str((result or {}).get("message", "Restore completed.")))
+
+    try:
+        start_detached(target=_worker, daemon=True)
+    except Exception as exc:
+        log_exception = getattr(ctx, "log_mcweb_exception", None)
+        if log_exception is not None:
+            log_exception("start_restore_job/thread", exc)
+        with lock:
+            state["running"] = False
+            state["result"] = {
+                "ok": False,
+                "error": "thread_start_failed",
+                "message": "Failed to start restore worker thread.",
+            }
+        append_restore_event(ctx, "Failed to start restore worker thread.")
+        return {"ok": False, "error": "thread_start_failed", "message": "Failed to start restore worker thread.", "job_id": job_id}
+    return {"ok": True, "job_id": job_id}
+
+
+def start_restore_worker(ctx, backup_filename):
+    return start_restore_job(ctx, backup_filename)

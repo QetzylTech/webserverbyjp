@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
     const contentRoot = document.getElementById("mcweb-app-content");
     if (!contentRoot) return;
 
@@ -1112,6 +1112,12 @@
         }
     }
 
+    function handleNavigationFailure(nextUrl, reason) {
+        const offline = window.MCWebOfflineRecovery;
+        if (offline && typeof offline.setOfflineIfUnreachable === "function") {
+            offline.setOfflineIfUnreachable(reason || "navigation_failed");
+        }
+    }
     async function navigateTo(url, options = {}) {
         const nextUrl = new URL(url, window.location.href);
         navigationToken += 1;
@@ -1137,7 +1143,7 @@
                 return;
             }
             if (!response.ok) {
-                window.location.assign(nextUrl.toString());
+                handleNavigationFailure(nextUrl, "navigate_response_error");
                 return;
             }
             const rawHtml = await response.text();
@@ -1178,7 +1184,7 @@
             if (error && error.name === "AbortError") {
                 return;
             }
-            window.location.assign(nextUrl.toString());
+            handleNavigationFailure(nextUrl, "navigate_fetch_failed");
         }).finally(() => {
             if (navigationController === controller) {
                 navigationController = null;
@@ -1225,3 +1231,4 @@
     startMetricsStream();
     mountCurrentContent(currentPath, document.title, { navigationToken }).catch(() => {});
 })();
+

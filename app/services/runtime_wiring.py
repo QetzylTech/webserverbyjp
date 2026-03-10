@@ -89,7 +89,11 @@ def create_runtime(
     minecraft_runtime_service,
     session_watchers_service,
     control_plane_service,
-    dashboard_runtime_service,
+    dashboard_file_runtime_service,
+    dashboard_log_runtime_service,
+    dashboard_state_runtime_service,
+    dashboard_metrics_runtime_service,
+    dashboard_operations_runtime_service,
     status_cache_service,
     register_routes,
 ):
@@ -115,7 +119,7 @@ def create_runtime(
             system_bindings_service.build_system_bindings(
                 runtime_context,
                 status_cache_service=status_cache_service,
-                dashboard_runtime_service=dashboard_runtime_service,
+                dashboard_log_runtime_service=dashboard_log_runtime_service,
                 device_name_map_lookup=device_name_map_lookup,
             ),
         ),
@@ -123,7 +127,10 @@ def create_runtime(
             "runtime_bindings",
             runtime_bindings_service.build_runtime_bindings(
                 runtime_context,
-                dashboard_runtime_service=dashboard_runtime_service,
+                dashboard_file_runtime_service=dashboard_file_runtime_service,
+                dashboard_state_runtime_service=dashboard_state_runtime_service,
+                dashboard_metrics_runtime_service=dashboard_metrics_runtime_service,
+                dashboard_operations_runtime_service=dashboard_operations_runtime_service,
                 control_plane_service=control_plane_service,
                 session_store_service=session_store_service,
                 minecraft_runtime_service=minecraft_runtime_service,

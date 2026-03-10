@@ -3,20 +3,16 @@
 import copy
 from datetime import datetime
 import json
+from pathlib import Path
 import threading
 import time
 from zoneinfo import ZoneInfo
-from pathlib import Path
-
-from flask import jsonify, request
 from app.core import state_store as state_store_service
 from app.ports import ports
 from app.services.maintenance_context import as_ctx
 
 _CLEANUP_SCHEMA_VERSION = 1
 _CLEANUP_SCOPE_CHOICES = {"backups", "stale_worlds"}
-_CLEANUP_EVENT_CHOICES = {"server_boot", "server_shutdown", "low_free_space"}
-_CLEANUP_TIME_INTERVALS = {"daily", "weekly", "monthly", "every_n_days", "weekdays"}
 _CLEANUP_ERROR_MESSAGES = {
     "validation_failure": "Validation failed. Please review the submitted values.",
     "ineligible_selection": "One or more selected files are no longer eligible for deletion.",
@@ -85,15 +81,6 @@ def _cleanup_atomic_write_json(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    temp.replace(path)
-
-
-def _cleanup_atomic_write_text(path, text):
-    """Atomically write plain-text maintenance state to disk."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(str(text), encoding="utf-8")
     temp.replace(path)
 
 
@@ -398,18 +385,13 @@ def _cleanup_load_non_normal(ctx):
 def _cleanup_get_client_ip(ctx):
     """Resolve the client IP for maintenance actions."""
     ctx = as_ctx(ctx)
-    client_ip = ""
-    try:
-        client_ip = (ctx._get_client_ip() or "").strip()
-    except Exception:
-        xff = (request.headers.get("X-Forwarded-For") or "").strip()
-        if xff:
-            client_ip = xff.split(",")[0].strip()
-        if not client_ip:
-            client_ip = (request.headers.get("X-Real-IP") or "").strip()
-        if not client_ip:
-            client_ip = (request.remote_addr or "").strip()
-    return client_ip
+    getter = getattr(ctx, "_get_client_ip", None)
+    if callable(getter):
+        try:
+            return str(getter() or "").strip()
+        except Exception:
+            return ""
+    return ""
 
 
 def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
@@ -516,7 +498,7 @@ def _cleanup_error(code, extra=None, status=400):
     payload = {"ok": False, "error_code": code, "message": _CLEANUP_ERROR_MESSAGES.get(code, "Cleanup operation failed.")}
     if extra is not None:
         payload["details"] = extra
-    return jsonify(payload), status
+    return payload, status
 
 
 

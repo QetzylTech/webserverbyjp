@@ -10,6 +10,7 @@ from flask import Flask
 from app.routes import dashboard_control_routes as control_routes
 from debug import routes as debug_routes
 from app.routes import dashboard_file_routes as file_routes
+from app.routes import dashboard_metrics_routes as metrics_routes
 from app.routes import dashboard_maintenance_api_routes as maintenance_routes
 from app.routes import dashboard_routes as home_routes
 from app.routes import setup_routes
@@ -206,6 +207,7 @@ class FileRoutesCoverageTests(unittest.TestCase):
             }
             with patch.object(file_routes, "render_template", return_value="files-page"):
                 file_routes.register_file_routes(app, state)
+                metrics_routes.register_metrics_routes(app, state)
                 client = app.test_client()
 
                 _assert_rule_methods(self, app, "/backups", {"GET"})
@@ -454,7 +456,8 @@ class HomeRoutesCoverageTests(unittest.TestCase):
                 },
             }
             with patch.object(home_routes, "render_template", return_value="home-page"), \
-                 patch.object(home_routes, "register_file_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
+                 patch.object(home_routes, "register_file_routes", lambda app, state: None), \
+                 patch.object(home_routes, "register_metrics_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
                  patch.object(home_routes, "register_maintenance_routes", lambda app, state: None), \
                  patch.object(home_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):
                 home_routes.register_routes(app, state)

@@ -7,6 +7,7 @@ from flask import Flask
 
 from app.core import state_store as state_store_service
 from app.routes.dashboard_file_routes import register_file_routes
+from app.routes.dashboard_metrics_routes import register_metrics_routes
 
 
 class SnapshotDownloadRouteTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class SnapshotDownloadRouteTests(unittest.TestCase):
             "record_successful_password_ip": lambda: None,
             "log_mcweb_action": lambda action, **kwargs: events.append((action, kwargs)),
         }
-        register_file_routes(app, state)
+        register_metrics_routes(app, state)
         return app, events
 
     def test_download_snapshot_success_returns_zip_attachment(self):

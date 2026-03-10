@@ -1,5 +1,5 @@
 """Build status/cache/device-map helper callables for main.py."""
-def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_service, device_name_map_lookup):
+def build_system_bindings(namespace, *, status_cache_service, dashboard_log_runtime_service, device_name_map_lookup):
     """Return system helpers bound to runtime namespace."""
     ns = namespace
     def _value(key):
@@ -35,31 +35,31 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_runtime_
         )
 
     def _load_backup_log_cache_from_disk():
-        return dashboard_runtime_service.load_backup_log_cache_from_disk(ns["STATE"])
+        return dashboard_log_runtime_service.load_backup_log_cache_from_disk(ns["STATE"])
 
     def _append_backup_log_cache_line(line):
-        return dashboard_runtime_service.append_backup_log_cache_line(ns["STATE"], line)
+        return dashboard_log_runtime_service.append_backup_log_cache_line(ns["STATE"], line)
 
     def _get_cached_backup_log_text():
-        return dashboard_runtime_service.get_cached_backup_log_text(ns["STATE"])
+        return dashboard_log_runtime_service.get_cached_backup_log_text(ns["STATE"])
 
     def _load_minecraft_log_cache_from_journal():
-        return dashboard_runtime_service.load_minecraft_log_cache_from_journal(ns["STATE"])
+        return dashboard_log_runtime_service.load_minecraft_log_cache_from_journal(ns["STATE"])
 
     def _append_minecraft_log_cache_line(line):
-        return dashboard_runtime_service.append_minecraft_log_cache_line(ns["STATE"], line)
+        return dashboard_log_runtime_service.append_minecraft_log_cache_line(ns["STATE"], line)
 
     def _get_cached_minecraft_log_text():
-        return dashboard_runtime_service.get_cached_minecraft_log_text(ns["STATE"])
+        return dashboard_log_runtime_service.get_cached_minecraft_log_text(ns["STATE"])
 
     def _load_mcweb_log_cache_from_disk():
-        return dashboard_runtime_service.load_mcweb_log_cache_from_disk(ns["STATE"])
+        return dashboard_log_runtime_service.load_mcweb_log_cache_from_disk(ns["STATE"])
 
     def _append_mcweb_log_cache_line(line):
-        return dashboard_runtime_service.append_mcweb_log_cache_line(ns["STATE"], line)
+        return dashboard_log_runtime_service.append_mcweb_log_cache_line(ns["STATE"], line)
 
     def _get_cached_mcweb_log_text():
-        return dashboard_runtime_service.get_cached_mcweb_log_text(ns["STATE"])
+        return dashboard_log_runtime_service.get_cached_mcweb_log_text(ns["STATE"])
 
     def get_device_name_map():
         return device_name_map_lookup(

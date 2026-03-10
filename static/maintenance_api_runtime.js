@@ -22,6 +22,7 @@
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
                         "X-CSRF-Token": csrfToken,
                     },
                     body: JSON.stringify(body || {}),
@@ -41,7 +42,8 @@
             if (shell && typeof shell.fetchMaintenanceState === "function") {
                 return shell.fetchMaintenanceState(requestedScope, { force: force });
             }
-            const statePath = `/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}`;
+            const refreshParam = force ? "&refresh=1" : "";
+            const statePath = `/maintenance/api/state?scope=${encodeURIComponent(requestedScope)}${refreshParam}`;
             let response;
             let payload;
             if (http) {
@@ -49,7 +51,13 @@
                 response = result.response;
                 payload = result.payload;
             } else {
-                response = await fetch(statePath, { headers: { Accept: "application/json" }, cache: "no-store" });
+                response = await fetch(statePath, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    cache: "no-store",
+                });
                 payload = await response.json();
             }
             if (!response.ok || !payload.ok) {

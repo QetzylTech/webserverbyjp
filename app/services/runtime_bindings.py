@@ -59,22 +59,26 @@ _MINECRAFT_CTX_METHODS = (
     "get_service_status_display",
 )
 _MINECRAFT_PLAIN_METHODS = ("get_service_status_class",)
-_DASHBOARD_METRIC_METHODS = (
+_DASHBOARD_STATE_METHODS = (
     "get_backups_status",
+    "get_observed_state",
+    "invalidate_observed_state_cache",
+)
+_DASHBOARD_METRIC_METHODS = (
     "get_cpu_per_core_items",
     "get_ram_usage_class",
     "get_storage_usage_class",
     "get_cpu_frequency_class",
     "collect_dashboard_metrics",
-    "get_observed_state",
-    "invalidate_observed_state_cache",
-    "get_consistency_report",
     "_mark_home_page_client_active",
     "_collect_and_publish_metrics",
     "metrics_collector_loop",
     "ensure_metrics_collector_started",
-    "start_operation_reconciler",
     "get_cached_dashboard_metrics",
+)
+_DASHBOARD_OPERATION_METHODS = (
+    "get_consistency_report",
+    "start_operation_reconciler",
 )
 _SESSION_WATCHER_CTX_METHODS = (
     "get_idle_countdown",
@@ -93,7 +97,10 @@ _SESSION_WATCHER_PLAIN_METHODS = ("format_countdown",)
 def build_runtime_bindings(
     namespace,
     *,
-    dashboard_runtime_service,
+    dashboard_file_runtime_service,
+    dashboard_state_runtime_service,
+    dashboard_metrics_runtime_service,
+    dashboard_operations_runtime_service,
     control_plane_service,
     session_store_service,
     minecraft_runtime_service,
@@ -133,12 +140,14 @@ def build_runtime_bindings(
         return {name: binder(service, name.lstrip("_")) for name in method_names}
 
     bindings = {}
-    bindings.update(_bind_methods(dashboard_runtime_service, _DASHBOARD_FILE_METHODS, _ctx_delegate))
+    bindings.update(_bind_methods(dashboard_file_runtime_service, _DASHBOARD_FILE_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(control_plane_service, _CONTROL_METHODS, _ctx_delegate))
     bindings.update({name: _session_delegate(name) for name in _SESSION_METHODS})
     bindings.update(_bind_methods(minecraft_runtime_service, _MINECRAFT_CTX_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(minecraft_runtime_service, _MINECRAFT_PLAIN_METHODS, _plain_delegate))
-    bindings.update(_bind_methods(dashboard_runtime_service, _DASHBOARD_METRIC_METHODS, _ctx_delegate))
+    bindings.update(_bind_methods(dashboard_state_runtime_service, _DASHBOARD_STATE_METHODS, _ctx_delegate))
+    bindings.update(_bind_methods(dashboard_metrics_runtime_service, _DASHBOARD_METRIC_METHODS, _ctx_delegate))
+    bindings.update(_bind_methods(dashboard_operations_runtime_service, _DASHBOARD_OPERATION_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(session_watchers_service, _SESSION_WATCHER_CTX_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(session_watchers_service, _SESSION_WATCHER_PLAIN_METHODS, _plain_delegate))
 

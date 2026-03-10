@@ -7,7 +7,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 import zipfile
 
-from app.services import restore_workflow
+from app.services import restore_execution
 
 
 class RestoreSnapshotTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class RestoreSnapshotTests(unittest.TestCase):
             AUTO_SNAPSHOT_DIR=Path("/tmp/backups/snapshots"),
         )
 
-        result = restore_workflow.restore_world_backup(ctx, "snapshot::../bad")
+        result = restore_execution.restore_world_backup(ctx, "snapshot::../bad")
 
         self.assertFalse(result["ok"])
         self.assertEqual("Snapshot not found.", result["message"])
@@ -62,12 +62,12 @@ class RestoreSnapshotTests(unittest.TestCase):
                 log_mcweb_exception=lambda *_args, **_kwargs: None,
             )
 
-            with patch.object(restore_workflow, "_archive_old_world_dir", return_value=(archived_world_dir, "")) as archive_mock, \
-                 patch.object(restore_workflow, "_record_restore_history", return_value=True), \
-                 patch.object(restore_workflow, "_new_restore_code", side_effect=["abc12", "def34"]), \
-                 patch.object(restore_workflow, "is_backup_running", return_value=False), \
-                 patch.object(restore_workflow.state_store_service, "append_restore_name_run", return_value=None):
-                result = restore_workflow.restore_world_backup(ctx, "snapshot::snap_auto_01")
+            with patch.object(restore_execution, "_archive_old_world_dir", return_value=(archived_world_dir, "")) as archive_mock, \
+                 patch.object(restore_execution, "_record_restore_history", return_value=True), \
+                 patch.object(restore_execution, "_new_restore_code", side_effect=["abc12", "def34"]), \
+                 patch.object(restore_execution, "is_backup_running", return_value=False), \
+                 patch.object(restore_execution.state_store_service, "append_restore_name_run", return_value=None):
+                result = restore_execution.restore_world_backup(ctx, "snapshot::snap_auto_01")
 
             self.assertTrue(result["ok"])
             self.assertEqual("snapshot::snap_auto_01", result["backup_file"])
@@ -104,8 +104,8 @@ class RestoreSnapshotTests(unittest.TestCase):
                 _safe_filename_in_dir=lambda base_dir, name: name if name == "bad_manual.zip" else None,
             )
 
-            with patch.object(restore_workflow, "is_backup_running", return_value=False):
-                result = restore_workflow.restore_world_backup(ctx, "bad_manual.zip")
+            with patch.object(restore_execution, "is_backup_running", return_value=False):
+                result = restore_execution.restore_world_backup(ctx, "bad_manual.zip")
             self.assertFalse(result["ok"])
             self.assertIn("unsafe paths", result["message"].lower())
 
@@ -151,15 +151,15 @@ class RestoreSnapshotTests(unittest.TestCase):
                 calls.append(["service_start", "minecraft"])
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            with patch.object(restore_workflow, "_copy_world_tree", side_effect=_fail_copy), \
-                 patch.object(restore_workflow, "start_service", side_effect=_start_service), \
-                 patch.object(restore_workflow, "stop_service_systemd", return_value=True), \
-                 patch.object(restore_workflow, "is_backup_running", return_value=False), \
-                 patch.object(restore_workflow, "_new_restore_code", side_effect=["abc12", "def34"]), \
-                 patch.object(restore_workflow, "_archive_old_world_dir", return_value=(root / "archived", "")), \
-                 patch.object(restore_workflow, "_record_restore_history", return_value=True), \
-                 patch.object(restore_workflow, "write_session_start_time", return_value=1.0) as write_session_mock:
-                result = restore_workflow.restore_world_backup(ctx, "snapshot::snap_auto_01")
+            with patch.object(restore_execution, "_copy_world_tree", side_effect=_fail_copy), \
+                 patch.object(restore_execution, "start_service", side_effect=_start_service), \
+                 patch.object(restore_execution, "stop_service_systemd", return_value=True), \
+                 patch.object(restore_execution, "is_backup_running", return_value=False), \
+                 patch.object(restore_execution, "_new_restore_code", side_effect=["abc12", "def34"]), \
+                 patch.object(restore_execution, "_archive_old_world_dir", return_value=(root / "archived", "")), \
+                 patch.object(restore_execution, "_record_restore_history", return_value=True), \
+                 patch.object(restore_execution, "write_session_start_time", return_value=1.0) as write_session_mock:
+                result = restore_execution.restore_world_backup(ctx, "snapshot::snap_auto_01")
 
             self.assertFalse(result["ok"])
             self.assertTrue(any(cmd[:2] == ["service_start", "minecraft"] for cmd in calls))
@@ -168,3 +168,4 @@ class RestoreSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

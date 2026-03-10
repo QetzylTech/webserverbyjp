@@ -6,7 +6,7 @@ from unittest.mock import patch
 import uuid
 
 from app.core import state_store as state_store_service
-from app.services import dashboard_runtime
+from app.services import dashboard_operations_runtime
 
 
 class OperationReconcilerTests(unittest.TestCase):
@@ -44,7 +44,7 @@ class OperationReconcilerTests(unittest.TestCase):
             payload={},
         )
         ctx = self._ctx(db_path, service_status="active")
-        updated = dashboard_runtime.reconcile_operations_once(ctx)
+        updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "start-op-1")
         self.assertEqual(item["status"], "observed")
@@ -60,8 +60,8 @@ class OperationReconcilerTests(unittest.TestCase):
             payload={},
         )
         ctx = self._ctx(db_path, service_status="inactive")
-        with patch("app.services.dashboard_runtime.time.time", side_effect=[9_999_999_999.0, 9_999_999_999.0]):
-            updated = dashboard_runtime.reconcile_operations_once(ctx)
+        with patch("app.services.dashboard_operations_runtime.time.time", side_effect=[9_999_999_999.0, 9_999_999_999.0]):
+            updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "start-op-2")
         self.assertEqual(item["status"], "failed")
@@ -81,7 +81,7 @@ class OperationReconcilerTests(unittest.TestCase):
             service_status="inactive",
             restore_payload={"running": False, "result": {"ok": True, "message": "done"}},
         )
-        updated = dashboard_runtime.reconcile_operations_once(ctx)
+        updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "restore-op-1")
         self.assertEqual(item["status"], "observed")
@@ -97,7 +97,7 @@ class OperationReconcilerTests(unittest.TestCase):
             payload={},
         )
         ctx = self._ctx(db_path, service_status="inactive", intent="shutting")
-        updated = dashboard_runtime.reconcile_operations_once(ctx)
+        updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "stop-op-1")
         self.assertEqual(item["status"], "observed")

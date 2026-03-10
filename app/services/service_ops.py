@@ -3,7 +3,9 @@
 from types import SimpleNamespace
 
 from app.services import backup_usecase as _backup
-from app.services import restore_workflow as _restore_workflow
+from app.services import restore_execution as _restore_execution
+from app.services import restore_jobs as _restore_jobs
+from app.services import restore_status as _restore_status
 from app.services import restore_workflow_helpers as _restore_helpers
 from app.services import start_usecase as _start
 from app.services import stop_usecase as _stop
@@ -13,10 +15,10 @@ _DIRECT_EXPORTS = {
     "run_sudo": _restore_helpers.run_sudo,
     "write_session_start_time": _restore_helpers.write_session_start_time,
     "stop_service_systemd": _restore_helpers.stop_service_systemd,
-    "restore_world_backup": _restore_workflow.restore_world_backup,
-    "append_restore_event": _restore_workflow.append_restore_event,
-    "start_restore_job": _restore_workflow.start_restore_job,
-    "get_restore_status": _restore_workflow.get_restore_status,
+    "restore_world_backup": _restore_execution.restore_world_backup,
+    "append_restore_event": _restore_status.append_restore_event,
+    "start_restore_job": _restore_jobs.start_restore_job,
+    "get_restore_status": _restore_status.get_restore_status,
     "set_service_status_intent": _start.set_service_status_intent,
     "get_service_status_intent": _start.get_service_status_intent,
     "validate_sudo_password": _start.validate_sudo_password,

@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import patch
 
 from app.core import state_store as state_store_service
-from app.services import dashboard_runtime as runtime_service
+from app.services import dashboard_state_runtime as runtime_service
 from app.services import maintenance_engine as maintenance_engine_service
 from app.services import maintenance_state_store as maintenance_store_service
 

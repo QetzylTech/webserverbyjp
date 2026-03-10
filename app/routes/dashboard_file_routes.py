@@ -1,31 +1,11 @@
-"""File, log, and metrics routes for the shell-first MC web dashboard."""
-from collections import deque
-import copy
-import gzip
-import json
-from pathlib import Path
-import threading
-import tracemalloc
+"""File and log routes for the shell-first MC web dashboard."""
 import time
 
 from flask import Response, abort, after_this_request, jsonify, redirect, render_template, request, send_file, send_from_directory, stream_with_context, url_for
-from app.core import profiling
 from app.core import state_store as state_store_service
-from app.ports import ports
+from app.commands import snapshot_commands
+from app.queries import dashboard_file_queries as file_queries
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
-
-_METRICS_ROUTE_CACHE_LOCK = threading.Lock()
-# Short cache for /metrics JSON fallback requests. This improves burst behavior,
-# but it can add roughly 1 second of visible delay to status transitions when the
-# dashboard is reading status through /metrics instead of waiting on the SSE stream.
-_METRICS_ROUTE_CACHE_TTL_SECONDS = 1.0
-_METRICS_ROUTE_CACHE = {
-    "event_id": -1,
-    "expires_at": 0.0,
-    "payload": None,
-}
-
-
 
 def _sse_response(generator):
     return Response(
@@ -38,183 +18,8 @@ def _sse_response(generator):
     )
 
 
-def _read_view_file_content(file_path, safe_name, *, max_bytes=2_000_000):
-    try:
-        if safe_name.lower().endswith(".gz"):
-            tail_chunks = deque()
-            tail_len = 0
-            truncated = False
-            with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
-                while True:
-                    chunk = f.read(64 * 1024)
-                    if not chunk:
-                        break
-                    tail_chunks.append(chunk)
-                    tail_len += len(chunk)
-                    while tail_len > max_bytes and tail_chunks:
-                        truncated = True
-                        overflow = tail_len - max_bytes
-                        head = tail_chunks[0]
-                        if len(head) <= overflow:
-                            tail_len -= len(head)
-                            tail_chunks.popleft()
-                        else:
-                            tail_chunks[0] = head[overflow:]
-                            tail_len -= overflow
-            text = "".join(tail_chunks)
-            if truncated:
-                text = f"[truncated to last {max_bytes} characters]\n{text}"
-            return text, None
-
-        size = file_path.stat().st_size
-        if size > max_bytes:
-            with file_path.open("rb") as f:
-                f.seek(max(0, size - max_bytes))
-                raw = f.read(max_bytes)
-            return "[truncated to last 2000000 bytes]\n" + raw.decode("utf-8", errors="ignore"), None
-        return file_path.read_text(encoding="utf-8", errors="ignore"), None
-    except OSError:
-        return None, "Unable to read file."
-
-def register_file_routes(app, state, get_nav_alert_state_from_request=None):
-    """Register file browsing, log streaming, and metrics routes."""
-    process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
-
-    def _attach_nav_attention(payload):
-        if not isinstance(payload, dict):
-            return payload
-        get_nav_alert_state = get_nav_alert_state_from_request
-        if not callable(get_nav_alert_state):
-            return payload
-        merged = dict(payload)
-        try:
-            nav_attention = get_nav_alert_state()
-        except Exception:
-            nav_attention = {}
-        if isinstance(nav_attention, dict) and nav_attention:
-            merged["nav_attention"] = dict(nav_attention)
-        return merged
-
-    def _state_db_path():
-        path = state.get("APP_STATE_DB_PATH")
-        return path
-
-    def _latest_metrics_from_db():
-        db_path = _state_db_path()
-        if db_path is None:
-            return None, 0
-        try:
-            event = state_store_service.get_latest_event(db_path, topic="metrics_snapshot")
-        except Exception:
-            return None, 0
-        if not isinstance(event, dict):
-            return None, 0
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            return None, 0
-        snapshot = payload.get("snapshot")
-        if not isinstance(snapshot, dict):
-            return None, 0
-        return snapshot, int(event.get("id", 0) or 0)
-
-    def _refresh_metrics_snapshot_best_effort():
-        """Force a fresh metrics snapshot in web-only role."""
-        if process_role != "web":
-            return
-        publish_fn = state.get("_collect_and_publish_metrics") or state.get("collect_and_publish_metrics")
-        if not callable(publish_fn):
-            return
-        try:
-            publish_fn()
-        except Exception:
-            pass
-
-    def _snapshot_root_dir():
-        return Path(getattr(state, "AUTO_SNAPSHOT_DIR", "") or (state["BACKUP_DIR"] / "snapshots"))
-
-    def _resolve_snapshot_dir(snapshot_name):
-        if not snapshot_name:
-            return None, ""
-        safe_name = Path(snapshot_name).name
-        if safe_name != snapshot_name:
-            return None, ""
-        base_dir = _snapshot_root_dir()
-        candidate = base_dir / safe_name
-        try:
-            base_resolved = base_dir.resolve()
-            candidate_resolved = candidate.resolve()
-            candidate_resolved.relative_to(base_resolved)
-        except (OSError, ValueError):
-            return None, ""
-        if not candidate_resolved.exists() or not candidate_resolved.is_dir():
-            return None, ""
-        return candidate_resolved, safe_name
-
-    def _log_file_source_spec(source):
-        normalized = str(source or "").strip().lower()
-        log_dir = state["MCWEB_LOG_FILE"].parent
-        if normalized == "minecraft":
-            return {
-                "key": "minecraft",
-                "base_dir": state["MINECRAFT_LOGS_DIR"],
-                "patterns": ("*.log", "*.gz"),
-                "download_base": "/download/minecraft-logs",
-                "view_base": "/view-file/minecraft_logs",
-            }
-        if normalized == "crash":
-            return {
-                "key": "crash",
-                "base_dir": state["CRASH_REPORTS_DIR"],
-                "patterns": ("*.txt",),
-                "download_base": "/download/log-files/crash",
-                "view_base": "/view-log-file/crash",
-            }
-        if normalized == "backup":
-            return {
-                "key": "backup",
-                "base_dir": log_dir,
-                "patterns": ("backup.log*",),
-                "download_base": "/download/log-files/backup",
-                "view_base": "/view-log-file/backup",
-            }
-        if normalized == "mcweb":
-            return {
-                "key": "mcweb",
-                "base_dir": log_dir,
-                "patterns": ("mcweb_actions.log*",),
-                "download_base": "/download/log-files/mcweb",
-                "view_base": "/view-log-file/mcweb",
-            }
-        if normalized == "mcweb_log":
-            return {
-                "key": "mcweb_log",
-                "base_dir": log_dir,
-                "patterns": ("mcweb.log*",),
-                "download_base": "/download/log-files/mcweb_log",
-                "view_base": "/view-log-file/mcweb_log",
-            }
-        return None
-
-    def _log_file_items_from_spec(spec):
-        if not spec:
-            return []
-        merged_by_name = {}
-        for pattern in spec["patterns"]:
-            for item in state["_list_download_files"](spec["base_dir"], pattern, state["DISPLAY_TZ"]):
-                merged_by_name[item["name"]] = dict(item)
-        items = list(merged_by_name.values())
-        items.sort(key=lambda item: item.get("mtime", 0), reverse=True)
-        return items
-
-    def _resolve_log_file(source, filename):
-        spec = _log_file_source_spec(source)
-        if spec is None:
-            return None, None
-        safe_name = state["_safe_filename_in_dir"](spec["base_dir"], filename)
-        if safe_name is None:
-            return spec, None
-        return spec, safe_name
-
+def register_file_routes(app, state):
+    """Register file browsing and log streaming routes."""
 
     # Route: /backups
     @app.route("/backups")
@@ -249,7 +54,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
         initial_log_source = str(request.args.get("source", "minecraft") or "minecraft").strip().lower()
-        if _log_file_source_spec(initial_log_source) is None:
+        if file_queries.log_file_source_spec(state, initial_log_source) is None:
             initial_log_source = "minecraft"
         return render_shell_page_helper(app, state, render_template, 
             "fragments/files_fragment.html",
@@ -325,33 +130,17 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             return state["_password_rejected_response"]()
         state["record_successful_password_ip"]()
 
-        snapshot_dir, safe_name = _resolve_snapshot_dir(snapshot_name)
+        snapshot_dir, safe_name = file_queries.resolve_snapshot_dir(state, snapshot_name)
         if snapshot_dir is None:
             state["log_mcweb_action"]("download-snapshot", command=snapshot_name, rejection_message="Snapshot not found or invalid path.")
             return abort(404)
 
-        tracemalloc_started = False
         try:
-            tmp_root = ports.filesystem.mkdtemp(prefix="mcweb_snapshot_zip_")
-            if profiling.ENABLED and not tracemalloc.is_tracing():
-                tracemalloc.start()
-                tracemalloc_started = True
-            started = time.perf_counter()
-            zip_path = ports.filesystem.make_zip_archive(tmp_root / safe_name, root_dir=snapshot_dir)
-            elapsed = time.perf_counter() - started
-            profiling.record_duration("snapshot_download.zip_build", elapsed)
-            if profiling.ENABLED and tracemalloc.is_tracing():
-                _current, peak = tracemalloc.get_traced_memory()
-                profiling.set_gauge("snapshot_download.zip_peak_bytes", int(peak))
-                if tracemalloc_started:
-                    tracemalloc.stop()
+            zip_path, tmp_root = snapshot_commands.build_snapshot_archive(snapshot_dir, safe_name)
 
             @after_this_request
             def _cleanup_temp_zip(response):
-                try:
-                    ports.filesystem.rmtree(tmp_root, ignore_errors=True)
-                except OSError:
-                    pass
+                snapshot_commands.cleanup_snapshot_archive(tmp_root)
                 return response
 
             state["log_mcweb_action"]("download-snapshot", command=safe_name)
@@ -364,9 +153,6 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         except OSError:
             state["log_mcweb_action"]("download-snapshot", command=safe_name, rejection_message="Unable to create snapshot zip.")
             return abort(500)
-        finally:
-            if tracemalloc_started and tracemalloc.is_tracing():
-                tracemalloc.stop()
 
     # Route: /download/crash-logs/<path:filename>
     @app.route("/download/crash-logs/<path:filename>")
@@ -390,7 +176,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     @app.route("/download/log-files/<source>/<path:filename>")
     def download_log_file(source, filename):
         """Download one non-minecraft log file by source key."""
-        spec, safe_name = _resolve_log_file(source, filename)
+        spec, safe_name = file_queries.resolve_log_file(state, source, filename)
         if spec is None or safe_name is None:
             return abort(404)
         return send_from_directory(str(spec["base_dir"]), safe_name, as_attachment=True)
@@ -401,7 +187,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         """Return one log-file inventory payload for the shell-hydrated log browser."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
-        spec = _log_file_source_spec(source)
+        spec = file_queries.log_file_source_spec(state, source)
         if spec is None:
             return jsonify({"ok": False, "message": "Invalid log file source."}), 404
         if spec["key"] == "minecraft":
@@ -409,7 +195,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         elif spec["key"] == "crash":
             items = state["get_cached_file_page_items"]("crash_logs")
         else:
-            items = _log_file_items_from_spec(spec)
+            items = file_queries.log_file_items_from_spec(state, spec)
         return jsonify(
             {
                 "ok": True,
@@ -437,7 +223,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             return jsonify({"ok": False, "message": "File not found."}), 404
 
         file_path = base_dir / safe_name
-        text, error_message = _read_view_file_content(file_path, safe_name)
+        text, error_message = file_queries.read_view_file_content(file_path, safe_name)
         if error_message:
             return jsonify({"ok": False, "message": error_message}), 500
 
@@ -447,14 +233,14 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
     @app.route("/view-log-file/<source>/<path:filename>")
     def view_log_file(source, filename):
         """View one non-minecraft log file by source key."""
-        spec, safe_name = _resolve_log_file(source, filename)
+        spec, safe_name = file_queries.resolve_log_file(state, source, filename)
         if spec is None:
             return jsonify({"ok": False, "message": "Invalid log file source."}), 404
         if safe_name is None:
             return jsonify({"ok": False, "message": "File not found."}), 404
 
         file_path = spec["base_dir"] / safe_name
-        text, error_message = _read_view_file_content(file_path, safe_name)
+        text, error_message = file_queries.read_view_file_content(file_path, safe_name)
         if error_message:
             return jsonify({"ok": False, "message": error_message}), 500
 
@@ -475,7 +261,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
             """Runtime helper generate."""
             state["_increment_log_stream_clients"](source_key)
             last_event_id = 0
-            db_path = _state_db_path()
+            db_path = state.get("APP_STATE_DB_PATH")
             if db_path is not None:
                 try:
                     latest_event = state_store_service.get_latest_event(db_path, topic=db_topic)
@@ -485,7 +271,7 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
                     last_event_id = int(latest_event.get("id", 0) or 0)
             try:
                 while True:
-                    db_path = _state_db_path()
+                    db_path = state.get("APP_STATE_DB_PATH")
                     if db_path is not None:
                         try:
                             rows = state_store_service.list_events_since(
@@ -519,85 +305,6 @@ def register_file_routes(app, state, get_nav_alert_state_from_request=None):
         if logs is None:
             return jsonify({"logs": "(no logs)"}), 404
         return jsonify({"logs": logs})
-
-    # Route: /metrics
-    @app.route("/metrics")
-    def metrics():
-        """Runtime helper metrics."""
-        now = time.time()
-        _refresh_metrics_snapshot_best_effort()
-        latest_snapshot = None
-        latest_event_id = 0
-        latest_snapshot, latest_event_id = _latest_metrics_from_db()
-        with _METRICS_ROUTE_CACHE_LOCK:
-            cached_payload = _METRICS_ROUTE_CACHE.get("payload")
-            if (
-                _METRICS_ROUTE_CACHE.get("event_id") == int(latest_event_id)
-                and float(_METRICS_ROUTE_CACHE.get("expires_at", 0.0) or 0.0) >= now
-                and isinstance(cached_payload, dict)
-            ):
-                return jsonify(copy.deepcopy(cached_payload))
-        payload = latest_snapshot if isinstance(latest_snapshot, dict) else state["get_cached_dashboard_metrics"]()
-        with _METRICS_ROUTE_CACHE_LOCK:
-            _METRICS_ROUTE_CACHE["event_id"] = int(latest_event_id)
-            _METRICS_ROUTE_CACHE["expires_at"] = now + _METRICS_ROUTE_CACHE_TTL_SECONDS
-            _METRICS_ROUTE_CACHE["payload"] = copy.deepcopy(payload if isinstance(payload, dict) else {})
-        return jsonify(payload)
-
-    # Route: /metrics-stream
-    @app.route("/metrics-stream")
-    def metrics_stream():
-        """Runtime helper metrics_stream."""
-        def generate():
-            """Runtime helper generate."""
-            with state["metrics_cache_cond"]:
-                state["metrics_stream_client_count"] += 1
-                state["metrics_cache_cond"].notify_all()
-            last_event_id = 0
-            db_path = _state_db_path()
-            if db_path is not None:
-                try:
-                    latest_event = state_store_service.get_latest_event(db_path, topic="metrics_snapshot")
-                except Exception:
-                    latest_event = None
-                if isinstance(latest_event, dict):
-                    latest_payload = latest_event.get("payload", {})
-                    latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
-                    last_event_id = int(latest_event.get("id", 0) or 0)
-                    if isinstance(latest_snapshot, dict):
-                        payload = json.dumps(_attach_nav_attention(latest_snapshot), separators=(",", ":"))
-                        yield f"data: {payload}\n\n"
-            try:
-                while True:
-                    _refresh_metrics_snapshot_best_effort()
-                    db_path = _state_db_path()
-                    if db_path is not None:
-                        try:
-                            rows = state_store_service.list_events_since(
-                                db_path,
-                                topic="metrics_snapshot",
-                                since_id=last_event_id,
-                                limit=10,
-                            )
-                        except Exception:
-                            rows = []
-                        if rows:
-                            for row in rows:
-                                payload_obj = row.get("payload", {}) if isinstance(row, dict) else {}
-                                snapshot = payload_obj.get("snapshot") if isinstance(payload_obj, dict) else None
-                                if isinstance(snapshot, dict):
-                                    payload = json.dumps(_attach_nav_attention(snapshot), separators=(",", ":"))
-                                    yield f"data: {payload}\n\n"
-                                last_event_id = int(row.get("id", last_event_id) or last_event_id)
-                            continue
-                    yield ": keepalive\n\n"
-                    time.sleep(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
-            finally:
-                with state["metrics_cache_cond"]:
-                    state["metrics_stream_client_count"] = max(0, state["metrics_stream_client_count"] - 1)
-                    state["metrics_cache_cond"].notify_all()
-
-        return _sse_response(generate())
 
 
 

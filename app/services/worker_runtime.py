@@ -6,9 +6,10 @@ import time
 from pathlib import Path
 
 from app.core import state_store as state_store_service
-from app.services import dashboard_runtime as dashboard_runtime_service
+from app.services import dashboard_file_runtime as dashboard_file_runtime_service
 from app.services import file_inventory_index as file_inventory_index_service
-from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_state_snapshot
+from app.services.maintenance_engine import _cleanup_evaluate
+from app.services.maintenance_snapshot import _cleanup_state_snapshot
 from app.services.maintenance_state_store import (
     _cleanup_data_dir,
     _cleanup_get_scope_view,
@@ -307,7 +308,7 @@ def _index_refresh_loop(ctx):
                 snapshot_root=snapshot_root,
                 old_worlds_root=old_worlds_root,
             )
-            dashboard_runtime_service.refresh_file_page_items(ctx, "backups")
+            dashboard_file_runtime_service.refresh_file_page_items(ctx, "backups")
         except Exception as exc:
             ctx.log_mcweb_exception("worker_index_refresh_loop", exc)
         time.sleep(interval)

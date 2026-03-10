@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 
 from app.core import state_store as state_store_service
 from app.services.maintenance_candidate_scan import _cleanup_active_world_path
-from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_state_snapshot
+from app.services.maintenance_engine import _cleanup_evaluate
+from app.services.maintenance_snapshot import _cleanup_state_snapshot
 from app.services.maintenance_state_store import (
     _cleanup_data_dir,
     _cleanup_get_scope_view,

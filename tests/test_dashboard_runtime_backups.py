@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 from app.core.filesystem_utils import list_download_files
-from app.services import dashboard_runtime
+from app.services import dashboard_file_runtime
 
 
 class DashboardBackupsListingTests(unittest.TestCase):
@@ -35,12 +35,12 @@ class DashboardBackupsListingTests(unittest.TestCase):
                 log_mcweb_exception=lambda *_args, **_kwargs: None,
             )
 
-            with patch.object(dashboard_runtime.state_store_service, "replace_file_records_snapshot", return_value=None), patch.object(
-                dashboard_runtime.state_store_service,
+            with patch.object(dashboard_file_runtime.state_store_service, "replace_file_records_snapshot", return_value=None), patch.object(
+                dashboard_file_runtime.state_store_service,
                 "load_file_records_snapshot",
                 return_value=[],
             ):
-                items = dashboard_runtime.refresh_file_page_items(ctx, "backups")
+                items = dashboard_file_runtime.refresh_file_page_items(ctx, "backups")
 
             names = {item["name"] for item in items}
             self.assertIn("world_2026-01-01_manual.zip", names)
@@ -74,16 +74,16 @@ class DashboardBackupsListingTests(unittest.TestCase):
                 log_mcweb_exception=lambda *_args, **_kwargs: None,
             )
 
-            with patch.object(dashboard_runtime.state_store_service, "replace_file_records_snapshot", return_value=None), patch.object(
-                dashboard_runtime.state_store_service,
+            with patch.object(dashboard_file_runtime.state_store_service, "replace_file_records_snapshot", return_value=None), patch.object(
+                dashboard_file_runtime.state_store_service,
                 "load_file_records_snapshot",
                 return_value=[],
             ), patch.object(
-                dashboard_runtime._query,
+                dashboard_file_runtime,
                 "_snapshot_dir_size_cached",
                 side_effect=AssertionError("snapshot sizes should be lazy"),
             ):
-                items = dashboard_runtime.refresh_file_page_items(ctx, "backups", compute_snapshot_sizes=False)
+                items = dashboard_file_runtime.refresh_file_page_items(ctx, "backups", compute_snapshot_sizes=False)
 
             snapshot_item = next(item for item in items if item["name"] == "world_2026-01-01_auto")
             self.assertEqual(-1, snapshot_item["size_bytes"])
@@ -98,12 +98,12 @@ class DashboardBackupsListingTests(unittest.TestCase):
         )
         persisted = [{"name": "world.zip", "mtime": 5.0, "size_bytes": 10, "modified": "ts", "size_text": "10 B"}]
 
-        with patch.object(dashboard_runtime.state_store_service, "load_file_records_snapshot", return_value=persisted), patch.object(
-            dashboard_runtime,
+        with patch.object(dashboard_file_runtime.state_store_service, "load_file_records_snapshot", return_value=persisted), patch.object(
+            dashboard_file_runtime,
             "refresh_file_page_items",
             side_effect=AssertionError("filesystem refresh should not run when DB snapshot exists"),
         ):
-            items = dashboard_runtime.get_cached_file_page_items(ctx, "backups")
+            items = dashboard_file_runtime.get_cached_file_page_items(ctx, "backups")
 
         self.assertEqual(persisted, items)
         self.assertEqual("world.zip", ctx.file_page_cache["backups"]["items"][0]["name"])

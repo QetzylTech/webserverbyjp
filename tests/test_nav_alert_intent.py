@@ -30,7 +30,8 @@ class NavAlertIntentTests(unittest.TestCase):
             },
         }
         with patch.object(home_routes, "render_template", return_value="home"), \
-             patch.object(home_routes, "register_file_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
+             patch.object(home_routes, "register_file_routes", lambda app, state: None), \
+             patch.object(home_routes, "register_metrics_routes", lambda app, state, get_nav_alert_state_from_request=None: None), \
              patch.object(home_routes, "register_maintenance_routes", lambda app, state: None), \
              patch.object(home_routes, "register_control_routes", lambda app, state, run_cleanup_event_if_enabled: None):
             home_routes.register_routes(app, state)

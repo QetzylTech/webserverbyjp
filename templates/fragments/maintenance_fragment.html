@@ -1,10 +1,10 @@
-<main
+﻿<main
     id="mcweb-page-root"
     class="content"
     data-page-key="maintenance"
     data-page-title="Cleanup"
     data-page-styles='["{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}","{{ url_for('static', filename='maintenance_page.css', v=static_version('maintenance_page.css')) }}"]'
-    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='maintenance_api_runtime.js', v=static_version('maintenance_api_runtime.js')) }}", "{{ url_for('static', filename='maintenance_page.js', v=static_version('maintenance_page.js')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='maintenance_api_runtime.js', v=static_version('maintenance_api_runtime.js')) }}", "{{ url_for('static', filename='maintenance_page_utils.js', v=static_version('maintenance_page_utils.js')) }}", "{{ url_for('static', filename='maintenance_page_files.js', v=static_version('maintenance_page_files.js')) }}", "{{ url_for('static', filename='maintenance_page_rules.js', v=static_version('maintenance_page_rules.js')) }}", "{{ url_for('static', filename='maintenance_page_history.js', v=static_version('maintenance_page_history.js')) }}", "{{ url_for('static', filename='maintenance_page_modals.js', v=static_version('maintenance_page_modals.js')) }}", "{{ url_for('static', filename='maintenance_page_core.js', v=static_version('maintenance_page_core.js')) }}", "{{ url_for('static', filename='maintenance_page.js', v=static_version('maintenance_page.js')) }}"]'
 >
     <div class="wrap page-panes page-panes--maintenance">
         <section class="panel page-pane page-pane--header pane-primary">
@@ -189,6 +189,7 @@
         </div>
     </div>
 </main>
+
 
 
 

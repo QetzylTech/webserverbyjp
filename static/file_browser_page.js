@@ -1,5 +1,6 @@
-// File pages keep only transient viewer/restore UI state locally. Shared data
+﻿// File pages keep only transient viewer/restore UI state locally. Shared data
 // such as metrics, file lists, and log text comes from the persistent shell.
+// Modal wiring lives in file_page_modals.js to keep this runtime focused.
 let teardownFileBrowserPage = null;
 const pageModules = window.MCWebPageModules || null;
 function mountFileBrowserPage() {
@@ -35,6 +36,7 @@ function mountFileBrowserPage() {
         const logUtils = window.MCWebLogUtils || {};
         const viewerRuntime = window.MCWebFileViewerRuntime || {};
         const dataRuntime = window.MCWebFilePageDataRuntime || {};
+        const modalsRuntime = window.MCWebFilePageModals || {};
         const escapeHtml = typeof logUtils.escapeHtml === "function" ? logUtils.escapeHtml : (text) => String(text || "");
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
         const pageActivityRuntime = window.MCWebPageActivityRuntime;
@@ -93,8 +95,6 @@ function mountFileBrowserPage() {
         const paneAnimations = window.MCWebPaneAnimations || null;
         let selectedRestoreFilename = "";
         let selectedRestoreDisplayName = "";
-        let pendingAction = null;
-        let reloadAfterMessageClose = false;
         let restorePollTimer = null;
         let restorePollJobId = "";
         let restorePollSeq = 0;
@@ -159,6 +159,35 @@ function mountFileBrowserPage() {
             errorBox.textContent = text;
             errorBox.classList.add("open");
         }
+        const modalsController = (modalsRuntime && typeof modalsRuntime.createModalsController === "function")
+            ? modalsRuntime.createModalsController({
+                dom: {
+                    passwordModal,
+                    passwordTitle,
+                    passwordText,
+                    passwordInput,
+                    passwordCancel,
+                    passwordSubmit,
+                    messageModal,
+                    messageModalText,
+                    messageModalOk,
+                    successModal,
+                    successModalText,
+                    successModalOk,
+                    errorModal,
+                    errorModalText,
+                    errorModalOk,
+                },
+                actions: { setDownloadError },
+            })
+            : null;
+        const modals = modalsController || {
+            openPasswordModal: () => {},
+            showMessageModal: () => {},
+            showSuccessModal: () => {},
+            showErrorModal: (message) => setDownloadError(message || "Action failed."),
+            bindEvents: () => {},
+        };
         const watchVerticalScrollbarClass = typeof domUtils.watchVerticalScrollbarClass === "function"
             ? (target) => domUtils.watchVerticalScrollbarClass(target, { observeMutations: true })
             : () => {};
@@ -173,15 +202,6 @@ function mountFileBrowserPage() {
             addScopedListener(fileList, "scroll", () => {
                 persistFileViewState({ listScrollTop: fileList.scrollTop });
             });
-        }
-
-        function closePasswordModal() {
-            if (!passwordModal) return;
-            passwordModal.classList.remove("open");
-            passwordModal.setAttribute("aria-hidden", "true");
-            if (passwordInput) passwordInput.value = "";
-            if (passwordSubmit) passwordSubmit.textContent = "Continue";
-            pendingAction = null;
         }
 
         function setViewerDownloadMode(action, text, enabled, payload = {}) {
@@ -300,7 +320,7 @@ function mountFileBrowserPage() {
                     const url = downloadBtn.getAttribute("data-download-url") || "";
                     const filename = downloadBtn.getAttribute("data-filename") || "backup.zip";
                     if (!url) return;
-                    openPasswordModal({ kind: "download", url, filename });
+                    modals.openPasswordModal({ kind: "download", url, filename });
                     return;
                 }
                 const restoreBtn = target.closest(".file-restore-btn");
@@ -436,7 +456,7 @@ function mountFileBrowserPage() {
             const status = String(operation.status || "").trim().toLowerCase();
             if (status === "failed") {
                 appendRestoreLine("", String(operation.message || "Restore failed."));
-                showErrorModal(String(operation.message || "Restore failed."), {
+                modals.showErrorModal(String(operation.message || "Restore failed."), {
                     errorCode: String(operation.error_code || "restore_failed"),
                 });
                 stopRestoreOperationPolling();
@@ -495,7 +515,7 @@ function mountFileBrowserPage() {
                     announceFileListInvalidation({ backups: true });
                     setDownloadError("");
                 } else if (payload.result && payload.result.message) {
-                    showErrorModal(payload.result.message || "Restore failed.", {
+                    modals.showErrorModal(payload.result.message || "Restore failed.", {
                         errorCode: payload.result.error || "",
                     });
                     setDownloadError(payload.result.message);
@@ -706,7 +726,13 @@ function mountFileBrowserPage() {
         function handleListLoadFailure(message) {
             setListLoadingState(false);
             setDownloadError(message || "Failed to load file list.");
-            toggleEmptyState(listHasRows());
+            if (listEmptyDynamic) {
+                listEmptyDynamic.style.display = "none";
+            }
+            const emptyBlock = document.querySelector(".pane-primary .empty");
+            if (emptyBlock && emptyBlock !== listLoading && emptyBlock !== listEmptyDynamic) {
+                emptyBlock.style.display = "none";
+            }
         }
 
         function restoreFileListScroll() {
@@ -977,94 +1003,6 @@ function mountFileBrowserPage() {
             }
         }
 
-        function openPasswordModal(actionRequest) {
-            if (!passwordModal || !passwordInput) return;
-            pendingAction = actionRequest;
-            if (passwordTitle) {
-                if (actionRequest.kind === "restore") {
-                    passwordTitle.textContent = "Confirm Restore";
-                } else {
-                    passwordTitle.textContent = "Enter Password";
-                }
-            }
-            if (passwordText) {
-                if (actionRequest.kind === "restore") {
-                    const restoreDisplay = actionRequest.displayName || actionRequest.filename;
-                    passwordText.textContent = `Enter sudo password to restore ${restoreDisplay}. This will create a new world folder and switch level-name.`;
-                } else {
-                    passwordText.textContent = "Enter sudo password to download this backup.";
-                }
-            }
-            if (passwordSubmit) {
-                if (actionRequest.kind === "restore") {
-                    passwordSubmit.textContent = "Restore";
-                } else {
-                    passwordSubmit.textContent = "Continue";
-                }
-            }
-            passwordInput.value = actionRequest.prefillPassword || "";
-            passwordModal.classList.add("open");
-            passwordModal.setAttribute("aria-hidden", "false");
-            passwordInput.focus();
-        }
-
-        function showMessageModal(message, options = {}) {
-            closePasswordModal();
-            closeSuccessModal();
-            closeErrorModal();
-            if (!messageModal || !messageModalText) return;
-            reloadAfterMessageClose = !!options.reloadAfterClose;
-            messageModalText.textContent = message || "";
-            messageModal.classList.add("open");
-            messageModal.setAttribute("aria-hidden", "false");
-        }
-
-        function closeMessageModal() {
-            if (!messageModal) return;
-            messageModal.classList.remove("open");
-            messageModal.setAttribute("aria-hidden", "true");
-            if (reloadAfterMessageClose) {
-                reloadAfterMessageClose = false;
-                window.location.reload();
-            }
-        }
-
-        function showSuccessModal(message) {
-            closePasswordModal();
-            closeMessageModal();
-            closeErrorModal();
-            if (!successModal || !successModalText) return;
-            successModalText.textContent = message || "Action completed successfully.";
-            successModal.classList.add("open");
-            successModal.setAttribute("aria-hidden", "false");
-        }
-
-        function closeSuccessModal() {
-            if (!successModal) return;
-            successModal.classList.remove("open");
-            successModal.setAttribute("aria-hidden", "true");
-        }
-
-        function showErrorModal(message, options = {}) {
-            closePasswordModal();
-            closeSuccessModal();
-            const code = String(options.errorCode || "").trim();
-            if (!errorModal || !errorModalText) {
-                setDownloadError(message || "Action failed.");
-                return;
-            }
-            const detail = code ? `${message || "Action failed."} (error: ${code})` : (message || "Action failed.");
-            errorModalText.textContent = detail;
-            errorModal.classList.add("open");
-            errorModal.setAttribute("aria-hidden", "false");
-        }
-
-        function closeErrorModal() {
-            if (!errorModal) return;
-            errorModal.classList.remove("open");
-            errorModal.setAttribute("aria-hidden", "true");
-        }
-
         async function runBackupDownload(downloadRequest, password) {
             let response;
             let payload = null;
@@ -1098,7 +1036,7 @@ function mountFileBrowserPage() {
                     });
                 }
             } catch (err) {
-                showErrorModal("Download failed. Please try again.", { errorCode: "network_error" });
+                modals.showErrorModal("Download failed. Please try again.", { errorCode: "network_error" });
                 setDownloadError("Download failed. Please try again.");
                 return;
             }
@@ -1116,9 +1054,9 @@ function mountFileBrowserPage() {
                 if (payload && payload.message) message = payload.message;
                 if (payload && payload.error) errorCode = payload.error;
                 if (errorCode === "password_incorrect") {
-                    showMessageModal(message);
+                    modals.showMessageModal(message);
                 } else {
-                    showErrorModal(message, { errorCode });
+                    modals.showErrorModal(message, { errorCode });
                     setDownloadError(message);
                 }
                 return;
@@ -1133,7 +1071,7 @@ function mountFileBrowserPage() {
             anchor.click();
             anchor.remove();
             URL.revokeObjectURL(fileUrl);
-            showSuccessModal(`Download started for ${downloadRequest.filename}.`);
+            modals.showSuccessModal(`Download started for ${downloadRequest.filename}.`);
         }
 
         async function runBackupRestore(restoreRequest, password) {
@@ -1171,7 +1109,7 @@ function mountFileBrowserPage() {
                     });
                 }
             } catch (err) {
-                showErrorModal("Restore failed. Please try again.", { errorCode: "network_error" });
+                modals.showErrorModal("Restore failed. Please try again.", { errorCode: "network_error" });
                 setDownloadError("Restore failed. Please try again.");
                 return;
             }
@@ -1188,9 +1126,9 @@ function mountFileBrowserPage() {
                 const message = (payload && payload.message) ? payload.message : "Restore failed.";
                 const errorCode = (payload && payload.error) ? payload.error : "";
                 if (errorCode === "password_incorrect") {
-                    showMessageModal(message);
+                    modals.showMessageModal(message);
                 } else {
-                    showErrorModal(message, { errorCode });
+                    modals.showErrorModal(message, { errorCode });
                     setDownloadError(message);
                 }
                 return;
@@ -1204,7 +1142,7 @@ function mountFileBrowserPage() {
                 restoreOperationOpId = String(opId || "").trim();
                 scheduleRestoreOperationPoll(500);
             }
-            showSuccessModal(`Restore requested for ${restoreDisplay}.`);
+            modals.showSuccessModal(`Restore requested for ${restoreDisplay}.`);
         }
 
         async function runFileView(viewRequest, options = {}) {
@@ -1300,76 +1238,16 @@ function mountFileBrowserPage() {
             }
         }
 
-        if (passwordCancel) {
-            addScopedListener(passwordCancel, "click", () => {
-                closePasswordModal();
-            });
-        }
-        if (passwordModal) {
-            addScopedListener(passwordModal, "click", (event) => {
-                if (event.target === passwordModal) {
-                    closePasswordModal();
-                }
-            });
-        }
-        if (messageModal) {
-            addScopedListener(messageModal, "click", (event) => {
-                if (event.target === messageModal) {
-                    closeMessageModal();
-                }
-            });
-        }
-        if (messageModalOk) {
-            addScopedListener(messageModalOk, "click", () => {
-                closeMessageModal();
-            });
-        }
-        if (successModal) {
-            addScopedListener(successModal, "click", (event) => {
-                if (event.target === successModal) {
-                    closeSuccessModal();
-                }
-            });
-        }
-        if (successModalOk) {
-            addScopedListener(successModalOk, "click", () => {
-                closeSuccessModal();
-            });
-        }
-        if (errorModal) {
-            addScopedListener(errorModal, "click", (event) => {
-                if (event.target === errorModal) {
-                    closeErrorModal();
-                }
-            });
-        }
-        if (errorModalOk) {
-            addScopedListener(errorModalOk, "click", () => {
-                closeErrorModal();
-            });
-        }
-        if (passwordSubmit) {
-            addScopedListener(passwordSubmit, "click", async () => {
-                if (!passwordInput || !pendingAction) return;
-                const password = (passwordInput.value || "").trim();
-                if (!password) return;
-                const action = pendingAction;
-                closePasswordModal();
+        modals.bindEvents(addScopedListener, {
+            onPasswordSubmit: async (action, password) => {
+                if (!action) return;
                 if (action.kind === "restore") {
                     await runBackupRestore(action, password);
                     return;
                 }
                 await runBackupDownload(action, password);
-            });
-        }
-        if (passwordInput) {
-            addScopedListener(passwordInput, "keydown", (event) => {
-                if (event.key === "Enter" && passwordSubmit) {
-                    event.preventDefault();
-                    passwordSubmit.click();
-                }
-            });
-        }
+            },
+        });
         if (fileViewerClose) {
             addScopedListener(fileViewerClose, "click", closeViewer);
         }
@@ -1381,7 +1259,7 @@ function mountFileBrowserPage() {
                     return;
                 }
                 setDownloadError("");
-                openPasswordModal({
+                modals.openPasswordModal({
                     kind: "restore",
                     filename: selectedRestoreFilename,
                     displayName: selectedRestoreDisplayName,

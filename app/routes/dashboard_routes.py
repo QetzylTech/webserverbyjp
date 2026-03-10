@@ -8,6 +8,7 @@ from app.queries import dashboard_queries as dashboard_queries_service
 
 from app.routes.dashboard_control_routes import register_control_routes
 from app.routes.dashboard_file_routes import register_file_routes
+from app.routes.dashboard_metrics_routes import register_metrics_routes
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
 from app.commands.maintenance_commands import run_cleanup_event_if_enabled
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
@@ -201,7 +202,8 @@ def register_routes(app, state):
         """Return nav attention state for the current request identity."""
         return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
-    register_file_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
+    register_file_routes(app, state)
+    register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
     register_maintenance_routes(app, state)
     register_control_routes(
         app,
