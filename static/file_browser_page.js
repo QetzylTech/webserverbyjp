@@ -15,6 +15,23 @@ function mountFileBrowserPage() {
         const http = window.MCWebHttp || null;
         const shell = window.MCWebShell || null;
         const domUtils = window.MCWebDomUtils || {};
+        const cleanup = typeof domUtils.createCleanupStack === "function"
+            ? domUtils.createCleanupStack()
+            : null;
+
+        function addScopedListener(target, type, handler, options) {
+            if (!target || typeof target.addEventListener !== "function") return;
+            target.addEventListener(type, handler, options);
+            if (cleanup && typeof cleanup.add === "function") {
+                cleanup.add(() => {
+                    try {
+                        target.removeEventListener(type, handler, options);
+                    } catch (_) {
+                        // Ignore listener teardown failures.
+                    }
+                });
+            }
+        }
         const logUtils = window.MCWebLogUtils || {};
         const viewerRuntime = window.MCWebFileViewerRuntime || {};
         const dataRuntime = window.MCWebFilePageDataRuntime || {};
@@ -148,12 +165,12 @@ function mountFileBrowserPage() {
         fileViewerScrollbarCleanup = watchVerticalScrollbarClass(fileViewerContent);
         fileListScrollbarCleanup = watchVerticalScrollbarClass(fileList);
         if (fileViewerContent) {
-            fileViewerContent.addEventListener("scroll", () => {
+            addScopedListener(fileViewerContent, "scroll", () => {
                 persistFileViewState({ viewerScrollTop: fileViewerContent.scrollTop });
             });
         }
         if (fileList) {
-            fileList.addEventListener("scroll", () => {
+            addScopedListener(fileList, "scroll", () => {
                 persistFileViewState({ listScrollTop: fileList.scrollTop });
             });
         }
@@ -253,7 +270,7 @@ function mountFileBrowserPage() {
                 fileListScrollbarCleanup();
             }
             fileListScrollbarCleanup = watchVerticalScrollbarClass(fileList);
-            fileList.addEventListener("scroll", () => {
+            addScopedListener(fileList, "scroll", () => {
                 persistFileViewState({ listScrollTop: fileList.scrollTop });
             });
             ensureFileListClickBinding();
@@ -262,7 +279,7 @@ function mountFileBrowserPage() {
 
         function ensureFileListClickBinding() {
             if (!fileList || fileListClickBound) return;
-            fileList.addEventListener("click", async (event) => {
+            addScopedListener(fileList, "click", async (event) => {
                 const target = event.target;
                 if (!(target instanceof Element)) return;
                 const viewBtn = target.closest(".file-view-btn");
@@ -1284,55 +1301,55 @@ function mountFileBrowserPage() {
         }
 
         if (passwordCancel) {
-            passwordCancel.addEventListener("click", () => {
+            addScopedListener(passwordCancel, "click", () => {
                 closePasswordModal();
             });
         }
         if (passwordModal) {
-            passwordModal.addEventListener("click", (event) => {
+            addScopedListener(passwordModal, "click", (event) => {
                 if (event.target === passwordModal) {
                     closePasswordModal();
                 }
             });
         }
         if (messageModal) {
-            messageModal.addEventListener("click", (event) => {
+            addScopedListener(messageModal, "click", (event) => {
                 if (event.target === messageModal) {
                     closeMessageModal();
                 }
             });
         }
         if (messageModalOk) {
-            messageModalOk.addEventListener("click", () => {
+            addScopedListener(messageModalOk, "click", () => {
                 closeMessageModal();
             });
         }
         if (successModal) {
-            successModal.addEventListener("click", (event) => {
+            addScopedListener(successModal, "click", (event) => {
                 if (event.target === successModal) {
                     closeSuccessModal();
                 }
             });
         }
         if (successModalOk) {
-            successModalOk.addEventListener("click", () => {
+            addScopedListener(successModalOk, "click", () => {
                 closeSuccessModal();
             });
         }
         if (errorModal) {
-            errorModal.addEventListener("click", (event) => {
+            addScopedListener(errorModal, "click", (event) => {
                 if (event.target === errorModal) {
                     closeErrorModal();
                 }
             });
         }
         if (errorModalOk) {
-            errorModalOk.addEventListener("click", () => {
+            addScopedListener(errorModalOk, "click", () => {
                 closeErrorModal();
             });
         }
         if (passwordSubmit) {
-            passwordSubmit.addEventListener("click", async () => {
+            addScopedListener(passwordSubmit, "click", async () => {
                 if (!passwordInput || !pendingAction) return;
                 const password = (passwordInput.value || "").trim();
                 if (!password) return;
@@ -1346,7 +1363,7 @@ function mountFileBrowserPage() {
             });
         }
         if (passwordInput) {
-            passwordInput.addEventListener("keydown", (event) => {
+            addScopedListener(passwordInput, "keydown", (event) => {
                 if (event.key === "Enter" && passwordSubmit) {
                     event.preventDefault();
                     passwordSubmit.click();
@@ -1354,10 +1371,10 @@ function mountFileBrowserPage() {
             });
         }
         if (fileViewerClose) {
-            fileViewerClose.addEventListener("click", closeViewer);
+            addScopedListener(fileViewerClose, "click", closeViewer);
         }
         if (backupRestoreStart) {
-            backupRestoreStart.addEventListener("click", () => {
+            addScopedListener(backupRestoreStart, "click", () => {
                 if (pageId !== "backups" || !selectedRestoreFilename) return;
                 if (!restoreServerIsOff) {
                     setDownloadError("Restore is disabled while server is not Off.");
@@ -1372,21 +1389,21 @@ function mountFileBrowserPage() {
             });
         }
         if (backupRestoreCancel) {
-            backupRestoreCancel.addEventListener("click", () => {
+            addScopedListener(backupRestoreCancel, "click", () => {
                 closeViewer();
             });
         }
         if (fileViewerResizer) {
-            fileViewerResizer.addEventListener("pointerdown", (event) => viewerController && viewerController.startResize(event));
-            window.addEventListener("pointermove", (event) => {
+            addScopedListener(fileViewerResizer, "pointerdown", (event) => viewerController && viewerController.startResize(event));
+            addScopedListener(window, "pointermove", (event) => {
                 if (!viewerController || !viewerController.isResizing()) return;
                 viewerController.handlePointerMove(event);
             });
-            window.addEventListener("pointerup", () => viewerController && viewerController.stopResize());
-            window.addEventListener("pointercancel", () => viewerController && viewerController.stopResize());
-            window.addEventListener("blur", () => viewerController && viewerController.stopResize());
+            addScopedListener(window, "pointerup", () => viewerController && viewerController.stopResize());
+            addScopedListener(window, "pointercancel", () => viewerController && viewerController.stopResize());
+            addScopedListener(window, "blur", () => viewerController && viewerController.stopResize());
         }
-        window.addEventListener("resize", () => {
+        addScopedListener(window, "resize", () => {
             if (viewerController) {
                 viewerController.syncLayout();
             }
@@ -1413,7 +1430,7 @@ function mountFileBrowserPage() {
         activeLogSource = String(initialFileViewState.activeLogSource || "").trim().toLowerCase();
         currentLogFileSource = String(initialFileViewState.currentLogFileSource || "").trim().toLowerCase();
         if (sortSelect) {
-            sortSelect.addEventListener("change", () => {
+            addScopedListener(sortSelect, "change", () => {
                 const nextSort = sortSelect.value || "newest";
                 persistFileViewState({ sortMode: nextSort });
                 applyFileSort(nextSort);
@@ -1421,14 +1438,14 @@ function mountFileBrowserPage() {
             applyFileSort(sortSelect.value || "newest");
         }
         if (backupSortSelect) {
-            backupSortSelect.addEventListener("change", applyBackupSortAndFilter);
+            addScopedListener(backupSortSelect, "change", applyBackupSortAndFilter);
             backupFilterInputs.forEach((input) => {
-                input.addEventListener("change", applyBackupSortAndFilter);
+                addScopedListener(input, "change", applyBackupSortAndFilter);
             });
             applyBackupSortAndFilter();
         }
         if (fileViewerDownload) {
-            fileViewerDownload.addEventListener("click", () => {
+            addScopedListener(fileViewerDownload, "click", () => {
                 const url = fileViewerDownload.getAttribute("data-download-url") || "";
                 const filename = fileViewerDownload.getAttribute("data-filename") || "";
                 if (!url) return;
@@ -1448,7 +1465,7 @@ function mountFileBrowserPage() {
             } else if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
                 applyBackupMetricsSnapshot(window.__MCWEB_LAST_METRICS_SNAPSHOT);
             }
-            window.addEventListener("beforeunload", stopRestoreOperationPolling);
+            addScopedListener(window, "beforeunload", stopRestoreOperationPolling);
         }
         function handleFileListInvalidated(event) {
             const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
@@ -1461,7 +1478,7 @@ function mountFileBrowserPage() {
                 loadLogFileSourceList(source, { force: true });
             }
         }
-        window.addEventListener(FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
+        addScopedListener(window, FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
         if (pageId === "backups") {
             loadStandardFileList();
         }
@@ -1474,7 +1491,6 @@ function mountFileBrowserPage() {
             stopRestorePaneAlertHeartbeat();
             stopRestorePolling();
             stopRestoreOperationPolling();
-            document.removeEventListener("visibilitychange", handleVisibilityStateChange);
             if (typeof fileMetricsUnsubscribe === "function") {
                 fileMetricsUnsubscribe();
                 fileMetricsUnsubscribe = null;
@@ -1490,19 +1506,20 @@ function mountFileBrowserPage() {
                 fileListScrollbarCleanup();
                 fileListScrollbarCleanup = null;
             }
-            window.removeEventListener(FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
-            window.removeEventListener("pagehide", teardownFilePageLifecycle);
-            window.removeEventListener("beforeunload", stopRestoreOperationPolling);
+            if (cleanup && typeof cleanup.run === "function") {
+                cleanup.run();
+            }
             if (teardownFileBrowserPage === teardownFilePageLifecycle) {
                 teardownFileBrowserPage = null;
             }
         }
         teardownFileBrowserPage = teardownFilePageLifecycle;
-        document.addEventListener("visibilitychange", handleVisibilityStateChange);
-        window.addEventListener("pagehide", teardownFilePageLifecycle);
+
+        addScopedListener(document, "visibilitychange", handleVisibilityStateChange);
+        addScopedListener(window, "pagehide", teardownFilePageLifecycle);
         ensureFileListClickBinding();
         logSourceToggles.forEach((btn) => {
-            btn.addEventListener("click", async () => {
+            addScopedListener(btn, "click", async () => {
                 setDownloadError("");
                 const source = btn.getAttribute("data-log-source") || "";
                 if (!source) return;
@@ -1535,3 +1552,7 @@ if (pageModules && typeof pageModules.register === "function") {
 if (!document.getElementById("mcweb-app-content")) {
     mountFileBrowserPage();
 }
+
+
+
+

@@ -1,8 +1,14 @@
 (function () {
 "use strict";
-
     const shell = window.MCWebShell || null;
     const pageModules = window.MCWebPageModules || null;
+    const domUtils = window.MCWebDomUtils || {};
+    const createCleanupStack = typeof domUtils.createCleanupStack === "function"
+      ? () => domUtils.createCleanupStack()
+      : () => null;
+    let pageCleanup = null;
+    let renderCleanup = null;
+    let teardownDocumentationPage = null;
 
 // Configure marked for GitHub-flavored markdown
     marked.setOptions({
@@ -407,15 +413,6 @@
       }
     };
 
-    applySystemTheme();
-    if (window.matchMedia) {
-      const media = window.matchMedia('(prefers-color-scheme: dark)');
-      if (typeof media.addEventListener === 'function') {
-        media.addEventListener('change', applySystemTheme);
-      } else if (typeof media.addListener === 'function') {
-        media.addListener(applySystemTheme);
-      }
-    }
 
     // Fetch and render README
     const defaultReadmeURL = '/doc/server_setup_doc.md';
@@ -491,8 +488,7 @@
       }
       return Math.max(0, targetRect.top + getScrollTop() - safeOffset);
     };
-
-    const addScrollListener = (handler) => {
+    const addScrollListener = (handler, registerCleanup) => {
       if (typeof removeScrollListener === 'function') {
         removeScrollListener();
         removeScrollListener = null;
@@ -501,40 +497,74 @@
       if (activeScrollContainer instanceof Element) {
         activeScrollContainer.addEventListener('scroll', handler, { passive: true });
         removeScrollListener = () => activeScrollContainer.removeEventListener('scroll', handler);
-        return;
+      } else {
+        window.addEventListener('scroll', handler, { passive: true });
+        removeScrollListener = () => window.removeEventListener('scroll', handler);
       }
-      window.addEventListener('scroll', handler, { passive: true });
-      removeScrollListener = () => window.removeEventListener('scroll', handler);
-    };
-
-    const addMediaListener = (mql, handler) => {
-      if (!mql || !handler) return;
-      if (typeof mql.addEventListener === 'function') {
-        mql.addEventListener('change', handler);
-      } else if (typeof mql.addListener === 'function') {
-        mql.addListener(handler);
+      if (typeof registerCleanup === 'function') {
+        registerCleanup(() => {
+          if (typeof removeScrollListener === 'function') {
+            removeScrollListener();
+            removeScrollListener = null;
+          }
+        });
       }
     };
-
-    const bindAnchorNavigation = (root, onNavigate) => {
+    const bindAnchorNavigation = (root, onNavigate, listen) => {
       if (!root || !onNavigate) return;
       root.querySelectorAll('a[href^="#"]').forEach(link => {
-        link.addEventListener('click', (event) => {
+        const handler = (event) => {
           const targetId = (link.getAttribute('href') || '').slice(1);
           if (!targetId) return;
           const target = document.getElementById(targetId);
           if (!target) return;
           event.preventDefault();
           onNavigate(target, targetId);
-        });
+        };
+        if (typeof listen === 'function') {
+          listen(link, 'click', handler);
+        } else {
+          link.addEventListener('click', handler);
+        }
       });
     };
-
-      const processMarkdown = (mdText) => {
+    const processMarkdown = (mdText) => {
       let updateSticky = () => {};
       let updateActiveTocLink = () => {};
       let headings = [];
       let ticking = false;
+
+      if (renderCleanup && typeof renderCleanup.run === 'function') {
+        renderCleanup.run();
+      }
+      renderCleanup = createCleanupStack();
+      const listen = renderCleanup && typeof renderCleanup.listen === 'function'
+        ? renderCleanup.listen
+        : (target, type, handler, options) => {
+          if (!target || typeof target.addEventListener !== 'function') return;
+          target.addEventListener(type, handler, options);
+        };
+      const listenMedia = renderCleanup && typeof renderCleanup.listenMedia === 'function'
+        ? renderCleanup.listenMedia
+        : (mql, handler) => {
+          if (!mql || !handler) return;
+          if (typeof mql.addEventListener === 'function') {
+            mql.addEventListener('change', handler);
+          } else if (typeof mql.addListener === 'function') {
+            mql.addListener(handler);
+          }
+        };
+      const registerRenderCleanup = renderCleanup && typeof renderCleanup.add === 'function'
+        ? renderCleanup.add
+        : () => {};
+
+      registerRenderCleanup(() => {
+        if (typeof removeScrollListener === 'function') {
+          removeScrollListener();
+          removeScrollListener = null;
+        }
+      });
+
       slugCounts.clear();
       const resolved = resolveReferenceImages(mdText);
       const normalized = normalizeMarkdown(resolved);
@@ -606,7 +636,7 @@
       const wireCopyButtons = () => {
         const buttons = contentElement.querySelectorAll('.code-copy');
         buttons.forEach(button => {
-          button.addEventListener('click', async () => {
+          listen(button, 'click', async () => {
             const codeEl = button.closest('.code-block')?.querySelector('pre code');
             if (!codeEl) return;
             const text = codeEl.textContent || '';
@@ -643,7 +673,7 @@
       // Always point the floating button to top.
       backToTopButton.setAttribute('href', '#top');
       backToTopButton.textContent = 'Back to top';
-      backToTopButton.addEventListener('click', (event) => {
+      listen(backToTopButton, 'click', (event) => {
         event.preventDefault();
         scrollToPosition(0, 'smooth', contentElement);
       });
@@ -734,7 +764,7 @@
 
         tocSidebarBody.innerHTML = '';
         tocSidebarBody.appendChild(listEl);
-        bindAnchorNavigation(tocSidebarBody, navigateToHeading);
+        bindAnchorNavigation(tocSidebarBody, navigateToHeading, listen);
 
         updateTocVisibility = () => {
           const visible = tocPinned;
@@ -751,7 +781,7 @@
         updateTocVisibility();
       };
 
-      stickyMenuButton.addEventListener('click', () => {
+      listen(stickyMenuButton, 'click', () => {
         if (narrowMql.matches) {
           tocPinned = !tocPinned;
         } else {
@@ -775,8 +805,8 @@
         inlineTocVisible();
       };
       syncTocForWidth();
-      addMediaListener(narrowMql, syncTocForWidth);
-      addMediaListener(wideMql, inlineTocVisible);
+      listenMedia(narrowMql, syncTocForWidth);
+      listenMedia(wideMql, inlineTocVisible);
 
       buildTocSidebar();
       requestAnimationFrame(() => {
@@ -784,7 +814,7 @@
       });
 
       // Enable in-page anchor navigation after content is injected.
-      bindAnchorNavigation(contentElement, navigateToHeading);
+      bindAnchorNavigation(contentElement, navigateToHeading, listen);
 
       // If the page loads with a hash, scroll to it.
       if (location.hash) {
@@ -867,13 +897,13 @@
       syncStickyOffset();
       updateTocVisibility();
       updateSticky();
-      window.addEventListener('resize', syncStickyOffset);
+      listen(window, 'resize', syncStickyOffset);
       addScrollListener(() => {
         if (!ticking) {
           window.requestAnimationFrame(updateSticky);
           ticking = true;
         }
-      });
+      }, registerRenderCleanup);
     };
 
     const loadReadmeFromUrl = (url) => {
@@ -921,11 +951,45 @@
     };
 
     function mountDocumentationPage() {
+      if (typeof teardownDocumentationPage === 'function') {
+        teardownDocumentationPage();
+      }
+      pageCleanup = createCleanupStack();
+      renderCleanup = null;
+
+      const listenMediaPage = pageCleanup && typeof pageCleanup.listenMedia === 'function'
+        ? pageCleanup.listenMedia
+        : (mql, handler) => {
+          if (!mql || !handler) return;
+          if (typeof mql.addEventListener === 'function') {
+            mql.addEventListener('change', handler);
+          } else if (typeof mql.addListener === 'function') {
+            mql.addListener(handler);
+          }
+        };
+
+      applySystemTheme();
+      if (window.matchMedia) {
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        listenMediaPage(media, applySystemTheme);
+      }
+
       bindPageElements();
       if (!contentElement) return null;
       contentElement.innerHTML = '';
       loadConfiguredReadme();
-      return null;
+
+      teardownDocumentationPage = () => {
+        if (renderCleanup && typeof renderCleanup.run === 'function') {
+          renderCleanup.run();
+          renderCleanup = null;
+        }
+        if (pageCleanup && typeof pageCleanup.run === 'function') {
+          pageCleanup.run();
+          pageCleanup = null;
+        }
+      };
+      return teardownDocumentationPage;
     }
 
     if (pageModules && typeof pageModules.register === 'function') {
@@ -939,4 +1003,18 @@
     }
 
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

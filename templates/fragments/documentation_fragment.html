@@ -4,7 +4,7 @@
     data-page-key="readme"
     data-page-title="Instructions"
     data-page-styles='["{{ url_for('static', filename='file_browser.css', v=static_version('file_browser.css')) }}","{{ url_for('static', filename='documentation.css', v=static_version('documentation.css')) }}"]'
-    data-page-scripts='["{{ url_for('static', filename='documentation_core.js', v=static_version('documentation_core.js')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='documentation_core.js', v=static_version('documentation_core.js')) }}"]'
 >
   <header id="stickyHeader" class="sticky-header">
     <div class="sticky-inner">
@@ -36,3 +36,5 @@
   </div>
   <a id="backToTop" class="back-to-top" href="#top" aria-label="Back to top">Back to top</a>
 </main>
+
+

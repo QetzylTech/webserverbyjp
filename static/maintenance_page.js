@@ -10,24 +10,32 @@
                 // Ignore stale teardown failures before remounting.
             }
         }
+        const bootstrap = document.getElementById("maintenance-bootstrap-data");
+        if (!bootstrap) return;
 
-        const bootstrapEl = document.getElementById("maintenance-bootstrap-data");
-        if (!bootstrapEl) return;
+        const domUtils = global.MCWebDomUtils || {};
+        const cleanup = typeof domUtils.createCleanupStack === "function"
+            ? domUtils.createCleanupStack()
+            : null;
 
-        const cleanupFns = [];
         function registerCleanup(fn) {
-            if (typeof fn === "function") cleanupFns.push(fn);
+            if (cleanup && typeof cleanup.add === "function" && typeof fn === "function") {
+                cleanup.add(fn);
+            }
         }
+
         function addScopedListener(target, type, handler, options) {
             if (!target || typeof target.addEventListener !== "function") return;
             target.addEventListener(type, handler, options);
-            registerCleanup(() => {
-                try {
-                    target.removeEventListener(type, handler, options);
-                } catch (_) {
-                    // Ignore listener teardown failures.
-                }
-            });
+            if (cleanup && typeof cleanup.add === "function") {
+                cleanup.add(() => {
+                    try {
+                        target.removeEventListener(type, handler, options);
+                    } catch (_) {
+                        // Ignore listener teardown failures.
+                    }
+                });
+            }
         }
 
         const shell = global.MCWebShell || null;
@@ -39,8 +47,7 @@
         const http = window.MCWebHttp || null;
         const maintenanceApi = maintenanceApiRuntime && typeof maintenanceApiRuntime.createMaintenanceApi === "function"
             ? maintenanceApiRuntime.createMaintenanceApi({ shell, http, csrfToken })
-            : null;
-        const bootstrap = document.getElementById("maintenance-bootstrap-data");
+            : null;
         const fileList = document.getElementById("cleanup-file-list");
         const manualSelectionCount = document.getElementById("maintenance-manual-selection-count");
         const manualDryRunInput = document.getElementById("manual-dry-run");
@@ -1527,7 +1534,8 @@
     const missedRuns = getMissedRuns();
     const hasMissedRuns = missedRuns.length > 0;
     historyViewMode = hasMissedRuns ? "missed" : "successful";
-    setActionView(hasMissedRuns ? "history" : "rules");    syncPaneHeadActions();
+    setActionView(hasMissedRuns ? "history" : "rules");
+    syncPaneHeadActions();
     syncMaintenanceOverflowState();
     startMaintenanceStateAutoRefresh();
     registerCleanup(stopMaintenanceStateAutoRefresh);
@@ -1552,15 +1560,9 @@
     // Shell remounts and direct full-page loads both funnel through the same
     // teardown so timers/listeners cannot stack across visits.
     teardownMaintenancePage = function () {
-        const fns = cleanupFns.slice().reverse();
-        cleanupFns.length = 0;
-        fns.forEach((fn) => {
-            try {
-                fn();
-            } catch (_) {
-                // Ignore teardown failures during page transitions.
-            }
-        });
+        if (cleanup && typeof cleanup.run === "function") {
+            cleanup.run();
+        }
     };
 }
 
@@ -1583,3 +1585,6 @@ if (!document.getElementById("mcweb-app-content")) {
     }
 }
 })(window);
+
+
+

@@ -7,6 +7,10 @@
     const http = window.MCWebHttp || null;
     const shell = window.MCWebShell || null;
     const domUtils = window.MCWebDomUtils || {};
+    const createCleanupStack = typeof domUtils.createCleanupStack === "function"
+        ? () => domUtils.createCleanupStack()
+        : () => null;
+    let homeCleanup = null;
     const logUtils = window.MCWebLogUtils || {};
     const homeLogRuntime = window.MCWebHomeLogRuntime || {};
     const homeTimeUtils = window.MCWebHomeTimeUtils || {};
@@ -20,7 +24,6 @@
         csrfToken,
         intervalMs: HOME_PAGE_HEARTBEAT_INTERVAL_MS,
     });
-    homeHeartbeatController.start();
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
@@ -907,18 +910,25 @@
         }
         activateLogStream(selectedLogSource);
         scheduleServerClockTick();
-        homeHeartbeatController.start();
     }
+
     async function startHomePage() {
+        homeCleanup = createCleanupStack();
+        const addScopedListener = homeCleanup && typeof homeCleanup.listen === "function"
+            ? homeCleanup.listen
+            : (target, type, handler, options) => {
+                if (!target || typeof target.addEventListener !== "function") return;
+                target.addEventListener(type, handler, options);
+            };
         document.querySelectorAll("form.ajax-form:not(.sudo-form)").forEach((form) => {
-            form.addEventListener("submit", async (event) => {
+            addScopedListener(form, "submit", async (event) => {
                 event.preventDefault();
                 await submitFormAjax(form);
             });
         });
 
         document.querySelectorAll("form.sudo-form").forEach((form) => {
-            form.addEventListener("submit", async (event) => {
+            addScopedListener(form, "submit", async (event) => {
                 event.preventDefault();
                 openSudoModal(form);
             });
@@ -928,10 +938,10 @@
         const modalSubmit = document.getElementById("sudo-modal-submit");
         const modalInput = document.getElementById("sudo-modal-input");
         if (modalCancel) {
-            modalCancel.addEventListener("click", () => closeSudoModal());
+            addScopedListener(modalCancel, "click", () => closeSudoModal());
         }
         if (modalSubmit) {
-            modalSubmit.addEventListener("click", async () => {
+            addScopedListener(modalSubmit, "click", async () => {
                 if (!pendingSudoForm || !modalInput) return;
                 const password = (modalInput.value || "").trim();
                 if (!password) return;
@@ -941,7 +951,7 @@
             });
         }
         if (modalInput) {
-            modalInput.addEventListener("keydown", (event) => {
+            addScopedListener(modalInput, "keydown", (event) => {
                 if (event.key === "Enter" && modalSubmit) {
                     event.preventDefault();
                     modalSubmit.click();
@@ -951,7 +961,7 @@
 
         const messageOk = document.getElementById("message-modal-ok");
         if (messageOk) {
-            messageOk.addEventListener("click", () => {
+            addScopedListener(messageOk, "click", () => {
                 const modal = document.getElementById("message-modal");
                 if (modal) modal.classList.remove("open");
             });
@@ -959,14 +969,14 @@
         const successOk = document.getElementById("success-modal-ok");
         const successModal = document.getElementById("success-modal");
         if (successModal) {
-            successModal.addEventListener("click", (event) => {
+            addScopedListener(successModal, "click", (event) => {
                 if (event.target !== successModal) return;
                 successModal.classList.remove("open");
                 successModal.setAttribute("aria-hidden", "true");
             });
         }
         if (successOk) {
-            successOk.addEventListener("click", () => {
+            addScopedListener(successOk, "click", () => {
                 const modal = document.getElementById("success-modal");
                 if (modal) {
                     modal.classList.remove("open");
@@ -977,13 +987,13 @@
         const errorOk = document.getElementById("error-modal-ok");
         const errorMore = document.getElementById("error-modal-more");
         if (errorOk) {
-            errorOk.addEventListener("click", () => {
+            addScopedListener(errorOk, "click", () => {
                 const modal = document.getElementById("error-modal");
                 if (modal) modal.classList.remove("open");
             });
         }
         if (errorMore) {
-            errorMore.addEventListener("click", () => {
+            addScopedListener(errorMore, "click", () => {
                 const details = document.getElementById("error-modal-details");
                 if (!details) return;
                 const nextHidden = !details.hidden;
@@ -1034,7 +1044,7 @@
             logSource.value = selectedLogSource;
         }
         if (logSource) {
-            logSource.addEventListener("change", async () => {
+            addScopedListener(logSource, "change", async () => {
                 selectedLogSource = getLogSource();
                 if (homeLogController) {
                     selectedLogSource = homeLogController.setSelectedSource(selectedLogSource);
@@ -1080,14 +1090,16 @@
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
-        document.addEventListener("visibilitychange", handleVisibilityRefreshMode);
-        window.addEventListener("pagehide", teardownRealtimeConnections);
-        window.addEventListener("beforeunload", teardownRealtimeConnections);
+        homeHeartbeatController.start();
+        addScopedListener(document, "visibilitychange", handleVisibilityRefreshMode);
+        addScopedListener(window, "pagehide", teardownRealtimeConnections);
+        addScopedListener(window, "beforeunload", teardownRealtimeConnections);
         teardownHomePage = () => {
             teardownRealtimeConnections();
-            document.removeEventListener("visibilitychange", handleVisibilityRefreshMode);
-            window.removeEventListener("pagehide", teardownRealtimeConnections);
-            window.removeEventListener("beforeunload", teardownRealtimeConnections);
+            if (homeCleanup && typeof homeCleanup.run === "function") {
+                homeCleanup.run();
+                homeCleanup = null;
+            }
         };
     }
 
@@ -1117,6 +1129,17 @@
         mountHomePage();
     }
 })();
+
+
+
+
+
+
+
+
+
+
+
 
 
 

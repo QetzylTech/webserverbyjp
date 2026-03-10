@@ -42,8 +42,88 @@
         };
     }
 
+    function createCleanupStack() {
+        const cleanupFns = [];
+
+        function add(fn) {
+            if (typeof fn === "function") {
+                cleanupFns.push(fn);
+            }
+        }
+
+        function listen(target, type, handler, options) {
+            if (!target || typeof target.addEventListener !== "function") return;
+            target.addEventListener(type, handler, options);
+            add(() => {
+                try {
+                    target.removeEventListener(type, handler, options);
+                } catch (_) {
+                    // Ignore listener teardown failures.
+                }
+            });
+        }
+
+        function listenMedia(mql, handler) {
+            if (!mql || !handler) return;
+            if (typeof mql.addEventListener === "function") {
+                mql.addEventListener("change", handler);
+                add(() => {
+                    try {
+                        mql.removeEventListener("change", handler);
+                    } catch (_) {
+                        // Ignore listener teardown failures.
+                    }
+                });
+            } else if (typeof mql.addListener === "function") {
+                mql.addListener(handler);
+                add(() => {
+                    try {
+                        mql.removeListener(handler);
+                    } catch (_) {
+                        // Ignore listener teardown failures.
+                    }
+                });
+            }
+        }
+
+        function timeout(fn, delayMs) {
+            const id = global.setTimeout(fn, delayMs);
+            add(() => global.clearTimeout(id));
+            return id;
+        }
+
+        function interval(fn, delayMs) {
+            const id = global.setInterval(fn, delayMs);
+            add(() => global.clearInterval(id));
+            return id;
+        }
+
+        function run() {
+            cleanupFns.splice(0).reverse().forEach((fn) => {
+                try {
+                    fn();
+                } catch (_) {
+                    // Ignore cleanup failures.
+                }
+            });
+        }
+
+        return {
+            add,
+            listen,
+            listenMedia,
+            timeout,
+            interval,
+            run,
+        };
+    }
     global.MCWebDomUtils = Object.assign({}, global.MCWebDomUtils || {}, {
         syncVerticalScrollbarClass,
         watchVerticalScrollbarClass,
+        createCleanupStack,
     });
 })(window);
+
+
+
+
