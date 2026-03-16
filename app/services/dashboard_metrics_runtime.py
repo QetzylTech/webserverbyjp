@@ -289,6 +289,24 @@ def _metrics_interval_seconds(ctx, snapshot):
     return getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS)
 
 
+def _service_is_on(ctx):
+    service_status = str(ctx.get_status() or "inactive").strip().lower()
+    off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    return service_status not in off_states
+
+
+def refresh_background_storage_metrics(ctx):
+    """Refresh only storage usage cache while the service is on and no UI clients are active."""
+    storage_usage = ctx.get_storage_usage()
+    now = time.time()
+    with ctx.slow_metrics_lock:
+        base = dict(ctx.slow_metrics_cache) if isinstance(ctx.slow_metrics_cache, dict) else {}
+        base["storage_usage"] = storage_usage
+        ctx.slow_metrics_cache = base
+        ctx.slow_metrics_cache_status = "active"
+        ctx.slow_metrics_cache_at = now
+
+
 def collect_and_publish_metrics(ctx):
     """Collect dashboard metrics and publish them to cache/streams."""
     try:
@@ -305,15 +323,18 @@ def metrics_collector_loop(ctx):
     process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
     always_collect = process_role == "worker"
     while True:
-        if not always_collect:
+        active_clients = has_active_flask_app_clients(ctx)
+        if not always_collect and not active_clients:
+            if _service_is_on(ctx):
+                try:
+                    refresh_background_storage_metrics(ctx)
+                except Exception as exc:
+                    ctx.log_mcweb_exception("metrics_background_storage_refresh", exc)
+                timeout = float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", ctx.METRICS_COLLECT_INTERVAL_SECONDS))
+            else:
+                timeout = float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS))
             with ctx.metrics_cache_cond:
-                # Wait until either SSE consumers exist or the page heartbeat is active.
-                ctx.metrics_cache_cond.wait_for(
-                    lambda: has_active_flask_app_clients(ctx),
-                    timeout=1,
-                )
-                should_collect = has_active_flask_app_clients(ctx)
-            if not should_collect:
+                ctx.metrics_cache_cond.wait_for(lambda: has_active_flask_app_clients(ctx), timeout=timeout)
                 continue
         snapshot = collect_and_publish_metrics(ctx)
         interval = _metrics_interval_seconds(ctx, snapshot)
