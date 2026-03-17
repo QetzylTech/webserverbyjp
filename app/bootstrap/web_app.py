@@ -55,8 +55,13 @@ web_app_config.configure_flask_app(app, app_config=APP_CONFIG, setup_required_st
 
 STATE = None
 
-_state_vars = web_app_state.build_state(APP_CONFIG, app_dir=APP_DIR, display_tz=DISPLAY_TZ)
-globals().update(_state_vars)
+STATE_VARS = web_app_state.build_state(APP_CONFIG, app_dir=APP_DIR, display_tz=DISPLAY_TZ)
+APP_STATE_DB_PATH = STATE_VARS["APP_STATE_DB_PATH"]
+DATA_DIR = STATE_VARS["DATA_DIR"]
+MCWEB_LOG_DIR = STATE_VARS["MCWEB_LOG_DIR"]
+MCWEB_ACTION_LOG_FILE = STATE_VARS["MCWEB_ACTION_LOG_FILE"]
+MCWEB_LOG_FILE = STATE_VARS["MCWEB_LOG_FILE"]
+PROCESS_ROLE = STATE_VARS["PROCESS_ROLE"]
 
 log_mcweb_action, log_mcweb_log, log_mcweb_exception = build_loggers(
     DISPLAY_TZ,
@@ -64,6 +69,13 @@ log_mcweb_action, log_mcweb_log, log_mcweb_exception = build_loggers(
     MCWEB_ACTION_LOG_FILE,
     MCWEB_LOG_FILE,
 )
+
+_runtime_namespace = {
+    **STATE_VARS,
+    "log_mcweb_action": log_mcweb_action,
+    "log_mcweb_log": log_mcweb_log,
+    "log_mcweb_exception": log_mcweb_exception,
+}
 
 data_bootstrap_service.ensure_data_bootstrap(
     data_dir=DATA_DIR,
@@ -85,26 +97,30 @@ _setup_required, _setup_mode = web_app_setup.configure_setup(
 
 _runtime_bundle = runtime_wiring_service.create_runtime(
     app=app,
-    namespace=locals(),
-    required_state_key_set=REQUIRED_STATE_KEY_SET,
-    runtime_context_extra_keys=web_app_runtime.RUNTIME_CONTEXT_EXTRA_KEYS,
-    runtime_imported_symbols=web_app_runtime.RUNTIME_IMPORTED_SYMBOLS,
-    world_bindings_service=world_bindings_service,
-    system_bindings_service=system_bindings_service,
-    runtime_bindings_service=runtime_bindings_service,
-    request_bindings_service=request_bindings_service,
-    state_builder_service=state_builder_service,
-    app_lifecycle_service=app_lifecycle_service,
-    session_store_service=session_store_service,
-    minecraft_runtime_service=minecraft_runtime_service,
-    session_watchers_service=session_watchers_service,
-    control_plane_service=service_ops,
-    dashboard_file_runtime_service=dashboard_file_runtime_service,
-    dashboard_log_runtime_service=dashboard_log_runtime_service,
-    dashboard_state_runtime_service=dashboard_state_runtime_service,
-    dashboard_metrics_runtime_service=dashboard_metrics_runtime_service,
-    dashboard_operations_runtime_service=dashboard_operations_runtime_service,
-    status_cache_service=status_cache_service,
+    namespace=_runtime_namespace,
+    wiring_config=runtime_wiring_service.RuntimeWiringConfig(
+        required_state_key_set=REQUIRED_STATE_KEY_SET,
+        runtime_context_extra_keys=web_app_runtime.RUNTIME_CONTEXT_EXTRA_KEYS,
+        runtime_imported_symbols=web_app_runtime.RUNTIME_IMPORTED_SYMBOLS,
+    ),
+    services=runtime_wiring_service.RuntimeServices(
+        world_bindings_service=world_bindings_service,
+        system_bindings_service=system_bindings_service,
+        runtime_bindings_service=runtime_bindings_service,
+        request_bindings_service=request_bindings_service,
+        state_builder_service=state_builder_service,
+        app_lifecycle_service=app_lifecycle_service,
+        session_store_service=session_store_service,
+        minecraft_runtime_service=minecraft_runtime_service,
+        session_watchers_service=session_watchers_service,
+        control_plane_service=service_ops,
+        dashboard_file_runtime_service=dashboard_file_runtime_service,
+        dashboard_log_runtime_service=dashboard_log_runtime_service,
+        dashboard_state_runtime_service=dashboard_state_runtime_service,
+        dashboard_metrics_runtime_service=dashboard_metrics_runtime_service,
+        dashboard_operations_runtime_service=dashboard_operations_runtime_service,
+        status_cache_service=status_cache_service,
+    ),
     register_routes=register_routes,
 )
 RUNTIME_CONTEXT = _runtime_bundle["runtime_context"]

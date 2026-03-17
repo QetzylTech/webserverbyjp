@@ -141,12 +141,18 @@
     body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-head-row {
         flex-wrap: wrap;
     }
+    body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-title {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
     body[data-page="minecraft_logs"] .log-view-controls {
         flex: 0 1 auto;
         min-width: 0;
         margin-left: auto;
         gap: 6px;
         justify-content: flex-end;
+        flex-wrap: wrap;
+        max-width: 100%;
     }
     body[data-page="minecraft_logs"] .log-view-controls .sort-row {
         margin: 0;
@@ -651,6 +657,11 @@
         }
     }
     @media (max-width: 900px) {
+        body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-title {
+            flex: 1 1 100%;
+            text-align: center;
+        }
+
         html, body {
             height: auto;
             min-height: 100%;

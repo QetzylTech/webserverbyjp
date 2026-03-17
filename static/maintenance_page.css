@@ -49,6 +49,19 @@ body {
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.page-panes--maintenance .page-pane--header > .pane-head .pane-head-row {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.page-panes--maintenance .page-pane--header > .pane-head .pane-title {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .pane-head-actions-group--header .maintenance-header-btn {
@@ -596,25 +609,15 @@ body {
     overflow: visible;
   }
 
-
-  .pane-head-actions-group--header {
-    width: 100%;
-    max-width: 100%;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
-
-  .pane-head-actions-group--header .maintenance-header-btn {
-    width: auto;
-    flex: 0 0 auto;
-  }
-
-  .maintenance-header-divider {
-    height: 24px;
-  }
 }
 
+
 @media (max-width: 900px) {
+  .page-panes--maintenance .page-pane--header > .pane-head .pane-title {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+
   .page-panes--maintenance .page-pane--list,
   .page-panes--maintenance .page-pane--action {
     height: 500px;

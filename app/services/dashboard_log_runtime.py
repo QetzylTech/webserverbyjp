@@ -12,8 +12,8 @@ def _is_rcon_noise_line(line):
     return False
 
 
-def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
-    """Load recent minecraft file logs, preferring non-RCON-noise lines."""
+def _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=500):
+    """Return recent minecraft file log lines, preferring non-RCON-noise lines."""
     lines = []
     latest_path = None
     try:
@@ -27,11 +27,20 @@ def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
         # Read a larger tail window so filtering still leaves enough visible lines.
         source_lines = ctx._read_recent_file_lines(latest_path, max(max_visible_lines * 8, 2000))
         filtered = [line for line in source_lines if not _is_rcon_noise_line(line)]
-        lines = filtered[-max_visible_lines:]
+        if len(filtered) >= max_visible_lines:
+            return filtered[-max_visible_lines:]
+        return source_lines[-max_visible_lines:]
+    return lines
+
+
+def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
+    """Load recent minecraft file logs into cache."""
+    lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=max_visible_lines)
     with ctx.minecraft_log_cache_lock:
         ctx.minecraft_log_cache_lines.clear()
         ctx.minecraft_log_cache_lines.extend(lines)
         ctx.minecraft_log_cache_loaded = True
+    return lines
 
 
 def load_backup_log_cache_from_disk(ctx):
@@ -98,6 +107,14 @@ def load_minecraft_log_cache_from_journal(ctx):
         return
     lines = output.splitlines()
     lines = [line for line in lines if not _is_rcon_noise_line(line)]
+    if len(lines) < ctx.MINECRAFT_LOG_VISIBLE_LINES:
+        file_lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
+        if len(file_lines) >= len(lines):
+            with ctx.minecraft_log_cache_lock:
+                ctx.minecraft_log_cache_lines.clear()
+                ctx.minecraft_log_cache_lines.extend(file_lines)
+                ctx.minecraft_log_cache_loaded = True
+            return
     if len(lines) > ctx.MINECRAFT_LOG_TEXT_LIMIT:
         lines = lines[-ctx.MINECRAFT_LOG_TEXT_LIMIT:]
     with ctx.minecraft_log_cache_lock:
@@ -119,7 +136,7 @@ def append_minecraft_log_cache_line(ctx, line):
 def get_cached_minecraft_log_text(ctx):
     """Return minecraft log cache, loading initial snapshot on demand."""
     with ctx.minecraft_log_cache_lock:
-        if ctx.minecraft_log_cache_loaded:
+        if ctx.minecraft_log_cache_loaded and len(ctx.minecraft_log_cache_lines) >= ctx.MINECRAFT_LOG_VISIBLE_LINES:
             return "\n".join(ctx.minecraft_log_cache_lines).strip() or "(no logs)"
     load_minecraft_log_cache_from_journal(ctx)
     with ctx.minecraft_log_cache_lock:

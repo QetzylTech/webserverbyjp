@@ -38,6 +38,31 @@ def has_active_flask_app_clients(ctx):
     )
 
 
+def _maybe_refresh_idle_storage_usage(ctx):
+    """Refresh cached storage usage when server is on but no clients are active."""
+    try:
+        service_status = ctx.get_status()
+    except Exception:
+        return False
+    off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    if str(service_status or "").strip().lower() in off_states:
+        return False
+    now = time.time()
+    last_at = float(getattr(ctx, "idle_storage_last_at", 0.0) or 0.0)
+    interval = float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", 5.0) or 5.0)
+    if (now - last_at) < interval:
+        return False
+    try:
+        usage = ctx.get_storage_usage()
+    except Exception as exc:
+        ctx.log_mcweb_exception("idle_storage_refresh", exc)
+        ctx.idle_storage_last_at = now
+        return False
+    ctx.idle_storage_last_at = now
+    ctx.idle_storage_usage_text = usage
+    return True
+
+
 def class_from_percent(value):
     """Map a numeric percent to dashboard severity class."""
     if value < 60:
@@ -155,17 +180,27 @@ def _resolve_service_status_display(ctx, service_status, players_online, tick_ra
     return "Starting"
 
 
-def slow_metrics_ttl_seconds(ctx, service_status):
+def slow_metrics_ttl_seconds(ctx, service_status, *, active_clients=False):
     """Return slow-metric cache TTL for current service state."""
+    if active_clients:
+        try:
+            collect_interval = float(getattr(ctx, "METRICS_COLLECT_INTERVAL_SECONDS", 1.0) or 1.0)
+        except Exception:
+            collect_interval = 1.0
+        try:
+            configured = float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", collect_interval) or collect_interval)
+        except Exception:
+            configured = collect_interval
+        return min(collect_interval, configured)
     if service_status == "active":
         return ctx.SLOW_METRICS_INTERVAL_ACTIVE_SECONDS
     return ctx.SLOW_METRICS_INTERVAL_OFF_SECONDS
 
 
-def get_slow_metrics(ctx, service_status):
+def get_slow_metrics(ctx, service_status, *, active_clients=False):
     """Return cached slow metrics or refresh when TTL expires."""
     now = time.time()
-    ttl = slow_metrics_ttl_seconds(ctx, service_status)
+    ttl = slow_metrics_ttl_seconds(ctx, service_status, active_clients=active_clients)
     with ctx.slow_metrics_lock:
         if (
             ctx.slow_metrics_cache
@@ -190,17 +225,30 @@ def get_slow_metrics(ctx, service_status):
 
 def collect_dashboard_metrics(ctx):
     """Collect one full dashboard metrics snapshot."""
+    active_clients = has_active_flask_app_clients(ctx)
     observed = get_observed_state(ctx)
     service_status = str(observed.get("service_status_raw", "") or ctx.get_status())
-    slow = get_slow_metrics(ctx, service_status)
+    slow = get_slow_metrics(ctx, service_status, active_clients=active_clients)
     cpu_per_core = slow["cpu_per_core"]
     ram_usage = slow["ram_usage"]
     cpu_frequency = slow["cpu_frequency"]
     storage_usage = slow["storage_usage"]
     low_storage_blocked = ctx.is_storage_low(storage_usage)
-    players_online_raw = observed.get("players_online", ctx.get_players_online())
+    players_online_raw = None
+    tick_rate_raw = None
+    probe_fn = getattr(ctx, "_probe_minecraft_runtime_metrics", None)
+    if callable(probe_fn):
+        try:
+            players_online_raw, tick_rate_raw = probe_fn(force=active_clients)
+        except Exception:
+            players_online_raw = None
+            tick_rate_raw = None
+    if players_online_raw is None:
+        players_online_raw = observed.get("players_online", ctx.get_players_online())
     players_online = _players_display(players_online_raw)
-    tick_rate = _tick_display(ctx.get_tick_rate())
+    if tick_rate_raw is None:
+        tick_rate_raw = ctx.get_tick_rate()
+    tick_rate = _tick_display(tick_rate_raw)
     session_duration = ctx.get_session_duration_text()
     # Keep home card status aligned with nav-attention source of truth.
     service_status_display = str(observed.get("service_status_display", "") or "").strip()
@@ -314,6 +362,7 @@ def metrics_collector_loop(ctx):
                 )
                 should_collect = has_active_flask_app_clients(ctx)
             if not should_collect:
+                _maybe_refresh_idle_storage_usage(ctx)
                 continue
         snapshot = collect_and_publish_metrics(ctx)
         interval = _metrics_interval_seconds(ctx, snapshot)

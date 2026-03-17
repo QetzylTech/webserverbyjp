@@ -39,6 +39,7 @@ function mountFileBrowserPage() {
         const modalsRuntime = window.MCWebFilePageModals || {};
         const escapeHtml = typeof logUtils.escapeHtml === "function" ? logUtils.escapeHtml : (text) => String(text || "");
         const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
+        const FILE_PAGE_LIST_REFRESH_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.listRefreshIntervalMs || 0);
         const pageActivityRuntime = window.MCWebPageActivityRuntime;
         const fileHeartbeatController = pageActivityRuntime.createHeartbeatController({
             path: "/file-page-heartbeat",
@@ -101,6 +102,7 @@ function mountFileBrowserPage() {
         let restoreOperationPollTimer = null;
         let restoreOperationOpId = "";
         let restorePaneAlertTimer = null;
+        let fileListRefreshTimer = null;
         let restoreServerIsOff = false;
         let activeViewedFilename = "";
         let activeRestoreFilename = "";
@@ -603,16 +605,46 @@ function mountFileBrowserPage() {
             fileHeartbeatController.start();
         }
 
+        function refreshActiveFileList(options = {}) {
+            if (pageId === "minecraft_logs") {
+                const source = currentLogFileSource || activeLogSource || initialLogFileSource || "minecraft";
+                loadLogFileSourceList(source, options);
+                return;
+            }
+            loadStandardFileList(options);
+        }
+
+        function stopFileListRefreshPolling() {
+            if (!fileListRefreshTimer) return;
+            window.clearInterval(fileListRefreshTimer);
+            fileListRefreshTimer = null;
+        }
+
+        function startFileListRefreshPolling() {
+            if (!Number.isFinite(FILE_PAGE_LIST_REFRESH_INTERVAL_MS) || FILE_PAGE_LIST_REFRESH_INTERVAL_MS <= 0) {
+                return;
+            }
+            if (document.hidden) return;
+            refreshActiveFileList({ force: true, silent: true });
+            if (fileListRefreshTimer) return;
+            fileListRefreshTimer = window.setInterval(() => {
+                if (document.hidden) return;
+                refreshActiveFileList({ force: true, silent: true });
+            }, FILE_PAGE_LIST_REFRESH_INTERVAL_MS);
+        }
+
         function handleVisibilityStateChange() {
             if (document.hidden) {
                 stopFileHeartbeatPolling();
                 stopRestorePaneAlertHeartbeat();
+                stopFileListRefreshPolling();
                 return;
             }
             startFileHeartbeatPolling();
             if (pageId === "backups" && selectedRestoreFilename) {
                 startRestorePaneAlertHeartbeat();
             }
+            startFileListRefreshPolling();
         }
 
         function sortKeyForItem(item, mode) {
@@ -864,7 +896,9 @@ function mountFileBrowserPage() {
         async function loadStandardFileList(options = {}) {
             if (!listApiPath || pageId === "minecraft_logs") return;
             const loadToken = nextFileListLoadToken();
-            setListLoadingState(true);
+            if (!options.silent) {
+                setListLoadingState(true);
+            }
             try {
                 const payload = dataClient && typeof dataClient.loadStandardFileList === "function"
                     ? await dataClient.loadStandardFileList({ force: !!options.force })
@@ -879,7 +913,9 @@ function mountFileBrowserPage() {
                 renderStandardFileList(payload);
             } catch (_) {
                 if (!isCurrentFileListLoadToken(loadToken)) return;
-                handleListLoadFailure("Failed to load file list.");
+                if (!options.silent) {
+                    handleListLoadFailure("Failed to load file list.");
+                }
             }
         }
 
@@ -904,7 +940,9 @@ function mountFileBrowserPage() {
             const sourceKey = String(source || "").trim().toLowerCase();
             if (!sourceKey) return;
             const loadToken = nextFileListLoadToken();
-            setListLoadingState(true);
+            if (!options.silent) {
+                setListLoadingState(true);
+            }
             try {
                 const payload = dataClient && typeof dataClient.loadLogFileList === "function"
                     ? await dataClient.loadLogFileList(sourceKey, { force: !!options.force })
@@ -922,7 +960,9 @@ function mountFileBrowserPage() {
                 renderLogFileList(payload);
             } catch (_) {
                 if (!isCurrentFileListLoadToken(loadToken)) return;
-                handleListLoadFailure("Failed to load log file list.");
+                if (!options.silent) {
+                    handleListLoadFailure("Failed to load log file list.");
+                }
             }
         }
 
@@ -1366,6 +1406,7 @@ function mountFileBrowserPage() {
             pageRuntimeActive = false;
             fileListLoadToken += 1;
             stopFileHeartbeatPolling();
+            stopFileListRefreshPolling();
             stopRestorePaneAlertHeartbeat();
             stopRestorePolling();
             stopRestoreOperationPolling();
@@ -1412,6 +1453,7 @@ function mountFileBrowserPage() {
                 loadLogFileSourceList(currentLogFileSource);
             }
         }
+        startFileListRefreshPolling();
     return teardownFileBrowserPage;
 }
 

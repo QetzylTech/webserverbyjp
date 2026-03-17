@@ -39,6 +39,7 @@ def register_file_routes(app, state):
             list_api_path="/file-page-items/backups",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
+            file_page_refresh_interval_ms=int(float(state["FILE_PAGE_CACHE_REFRESH_SECONDS"]) * 1000),
         )
 
     # Route: /crash-logs
@@ -68,6 +69,7 @@ def register_file_routes(app, state):
             list_api_path="/log-files/minecraft",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
+            file_page_refresh_interval_ms=int(float(state["FILE_PAGE_CACHE_REFRESH_SECONDS"]) * 1000),
             initial_log_source=initial_log_source,
         )
 

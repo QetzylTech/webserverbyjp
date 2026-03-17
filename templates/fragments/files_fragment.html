@@ -145,6 +145,7 @@
 {{ {
     "csrfToken": csrf_token,
     "heartbeatIntervalMs": file_page_heartbeat_interval_ms,
+    "listRefreshIntervalMs": file_page_refresh_interval_ms | default(0),
     "listApiPath": list_api_path,
     "emptyText": empty_text,
     "initialLogSource": initial_log_source | default(""),

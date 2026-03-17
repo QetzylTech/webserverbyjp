@@ -446,6 +446,13 @@ html.theme-dark .nav-separator {
     }
 }
 
+@media (max-width: 900px) {
+    .pane-head-row .pane-title {
+        flex: 1 1 100%;
+        text-align: center;
+    }
+}
+
 html.theme-dark .nav-toggle {
     background: #161b22;
     color: #e6edf3;

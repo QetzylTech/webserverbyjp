@@ -1,7 +1,41 @@
 """Build the runtime context, bind services, and register routes."""
 
+from dataclasses import dataclass
+from typing import Any, FrozenSet, Mapping
+
 from app.core.device_map import get_device_name_map as _default_device_name_map_lookup
 from app.services import bootstrap as _default_bootstrap_service
+
+
+@dataclass(frozen=True)
+class RuntimeWiringConfig:
+    """Configuration bundle for runtime wiring."""
+
+    required_state_key_set: FrozenSet[str]
+    runtime_context_extra_keys: FrozenSet[str]
+    runtime_imported_symbols: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class RuntimeServices:
+    """Service dependency bundle for runtime wiring."""
+
+    world_bindings_service: Any
+    system_bindings_service: Any
+    runtime_bindings_service: Any
+    request_bindings_service: Any
+    state_builder_service: Any
+    app_lifecycle_service: Any
+    session_store_service: Any
+    minecraft_runtime_service: Any
+    session_watchers_service: Any
+    control_plane_service: Any
+    dashboard_file_runtime_service: Any
+    dashboard_log_runtime_service: Any
+    dashboard_state_runtime_service: Any
+    dashboard_metrics_runtime_service: Any
+    dashboard_operations_runtime_service: Any
+    status_cache_service: Any
 
 
 def _build_runtime_context(namespace, required_state_key_set, runtime_context_extra_keys, runtime_imported_symbols):
@@ -59,6 +93,7 @@ def _build_run_server(app_lifecycle_service, app, namespace, binding):
         load_backup_log_cache_from_disk=binding("_load_backup_log_cache_from_disk"),
         load_minecraft_log_cache_from_journal=binding("_load_minecraft_log_cache_from_journal"),
         load_mcweb_log_cache_from_disk=binding("_load_mcweb_log_cache_from_disk"),
+        ensure_log_stream_fetcher_started=binding("ensure_log_stream_fetcher_started"),
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
         warm_file_page_caches=binding("warm_file_page_caches"),
         ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
@@ -76,36 +111,20 @@ def create_runtime(
     *,
     app,
     namespace,
-    required_state_key_set,
-    runtime_context_extra_keys,
-    runtime_imported_symbols,
-    world_bindings_service,
-    system_bindings_service,
-    runtime_bindings_service,
-    request_bindings_service,
-    state_builder_service,
-    app_lifecycle_service,
-    session_store_service,
-    minecraft_runtime_service,
-    session_watchers_service,
-    control_plane_service,
-    dashboard_file_runtime_service,
-    dashboard_log_runtime_service,
-    dashboard_state_runtime_service,
-    dashboard_metrics_runtime_service,
-    dashboard_operations_runtime_service,
-    status_cache_service,
+    wiring_config: RuntimeWiringConfig,
+    services: RuntimeServices,
     register_routes,
 ):
     """Build the runtime context, register routes, and return the run-server entrypoint."""
+    required_state_key_set = wiring_config.required_state_key_set
     runtime_context = _build_runtime_context(
         namespace,
         required_state_key_set,
-        runtime_context_extra_keys,
-        runtime_imported_symbols,
+        wiring_config.runtime_context_extra_keys,
+        wiring_config.runtime_imported_symbols,
     )
 
-    world_bindings = world_bindings_service.build_world_bindings(runtime_context)
+    world_bindings = services.world_bindings_service.build_world_bindings(runtime_context)
     world_bindings["_refresh_world_dir_from_server_properties"]()
 
     device_name_map_lookup = namespace.get("_device_name_map_lookup") or _default_device_name_map_lookup
@@ -116,25 +135,25 @@ def create_runtime(
         ),
         (
             "system_bindings",
-            system_bindings_service.build_system_bindings(
+            services.system_bindings_service.build_system_bindings(
                 runtime_context,
-                status_cache_service=status_cache_service,
-                dashboard_log_runtime_service=dashboard_log_runtime_service,
+                status_cache_service=services.status_cache_service,
+                dashboard_log_runtime_service=services.dashboard_log_runtime_service,
                 device_name_map_lookup=device_name_map_lookup,
             ),
         ),
         (
             "runtime_bindings",
-            runtime_bindings_service.build_runtime_bindings(
+            services.runtime_bindings_service.build_runtime_bindings(
                 runtime_context,
-                dashboard_file_runtime_service=dashboard_file_runtime_service,
-                dashboard_state_runtime_service=dashboard_state_runtime_service,
-                dashboard_metrics_runtime_service=dashboard_metrics_runtime_service,
-                dashboard_operations_runtime_service=dashboard_operations_runtime_service,
-                control_plane_service=control_plane_service,
-                session_store_service=session_store_service,
-                minecraft_runtime_service=minecraft_runtime_service,
-                session_watchers_service=session_watchers_service,
+                dashboard_file_runtime_service=services.dashboard_file_runtime_service,
+                dashboard_state_runtime_service=services.dashboard_state_runtime_service,
+                dashboard_metrics_runtime_service=services.dashboard_metrics_runtime_service,
+                dashboard_operations_runtime_service=services.dashboard_operations_runtime_service,
+                control_plane_service=services.control_plane_service,
+                session_store_service=services.session_store_service,
+                minecraft_runtime_service=services.minecraft_runtime_service,
+                session_watchers_service=services.session_watchers_service,
             ),
         ),
     )
@@ -144,8 +163,8 @@ def create_runtime(
     for stage_name, mapping in stages:
         _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_stage_values)
 
-    request_bindings = request_bindings_service.build_request_bindings(
-        session_store_service=session_store_service,
+    request_bindings = services.request_bindings_service.build_request_bindings(
+        session_store_service=services.session_store_service,
         session_state=namespace["session_state"],
         initialize_session_tracking=binding_stage_values["initialize_session_tracking"],
         status_state_note=binding_stage_values["_status_state_note"],
@@ -162,10 +181,10 @@ def create_runtime(
         return binding_stage_values[key]
 
     runtime_context.update(binding_stage_values)
-    _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace)
+    _install_lifecycle_hooks(services.app_lifecycle_service, app, binding, namespace)
 
-    state_builder_service.assert_required_keys_present(runtime_context)
-    state = state_builder_service.build_app_state(runtime_context)
+    services.state_builder_service.assert_required_keys_present(runtime_context)
+    state = services.state_builder_service.build_app_state(runtime_context)
     runtime_context["STATE"] = state
     register_routes(app, state)
 
@@ -173,5 +192,5 @@ def create_runtime(
         "runtime_context": runtime_context,
         "state": state,
         "static_asset_version_fn": world_bindings["_static_asset_version"],
-        "run_server": _build_run_server(app_lifecycle_service, app, namespace, binding),
+        "run_server": _build_run_server(services.app_lifecycle_service, app, namespace, binding),
     }

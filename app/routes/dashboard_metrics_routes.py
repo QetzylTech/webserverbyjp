@@ -137,7 +137,9 @@ def register_metrics_routes(app, state, get_nav_alert_state_from_request=None):
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
                             continue
                     yield ": keepalive\n\n"
-                    time.sleep(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
+                    heartbeat = float(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
+                    collect_interval = float(state.get("METRICS_COLLECT_INTERVAL_SECONDS", 1) or 1)
+                    time.sleep(min(heartbeat, collect_interval))
             finally:
                 with state["metrics_cache_cond"]:
                     state["metrics_stream_client_count"] = max(0, state["metrics_stream_client_count"] - 1)

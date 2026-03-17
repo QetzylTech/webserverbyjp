@@ -73,6 +73,8 @@ def build_run_server(
     load_backup_log_cache_from_disk,
     load_minecraft_log_cache_from_journal,
     load_mcweb_log_cache_from_disk,
+    ensure_log_stream_fetcher_started=None,
+    log_stream_autostart_sources=None,
     ensure_session_tracking_initialized,
     warm_file_page_caches,
     ensure_metrics_collector_started,
@@ -91,6 +93,18 @@ def build_run_server(
             if not is_backup_running():
                 load_backup_log_cache_from_disk()
 
+        def _start_log_stream_fetchers():
+            if not callable(ensure_log_stream_fetcher_started):
+                return
+            sources = log_stream_autostart_sources
+            if sources is None:
+                sources = ("minecraft", "backup")
+            for source in sources:
+                try:
+                    ensure_log_stream_fetcher_started(source)
+                except Exception as exc:
+                    log_mcweb_exception(f"log_stream_autostart/{source}", exc)
+
         def _build_boot_steps():
             steps = [
                 ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
@@ -102,6 +116,7 @@ def build_run_server(
                 ("collect_and_publish_metrics", collect_and_publish_metrics),
             ]
             if enable_background_workers:
+                steps.append(("start_log_stream_fetchers", _start_log_stream_fetchers))
                 steps.extend(
                     [
                         ("start_operation_reconciler", start_operation_reconciler),

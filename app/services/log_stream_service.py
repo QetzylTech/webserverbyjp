@@ -94,22 +94,27 @@ def publish_log_stream_line(ctx, source, line):
     state = ctx.log_stream_states.get(normalized)
     if state is None:
         return
-    with state["cond"]:
-        db_event_id = 0
-        try:
-            db_event_id = int(
-                ports.store.append_event(
-                    ctx.APP_STATE_DB_PATH,
-                    topic=f"log:{normalized}",
-                    payload={"line": str(line or "")},
-                )
-                or 0
-            )
-        except Exception:
+    process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
+    with state["lifecycle_lock"]:
+        has_clients = int(state.get("clients", 0) or 0) > 0
+    emit_to_db = has_clients or process_role == "worker"
+    if emit_to_db:
+        with state["cond"]:
             db_event_id = 0
-        state["seq"] = int(db_event_id or (state["seq"] + 1))
-        state["events"].append((state["seq"], line))
-        state["cond"].notify_all()
+            try:
+                db_event_id = int(
+                    ports.store.append_event(
+                        ctx.APP_STATE_DB_PATH,
+                        topic=f"log:{normalized}",
+                        payload={"line": str(line or "")},
+                    )
+                    or 0
+                )
+            except Exception:
+                db_event_id = 0
+            state["seq"] = int(db_event_id or (state["seq"] + 1))
+            state["events"].append((state["seq"], line))
+            state["cond"].notify_all()
     appenders = {
         "minecraft": ctx._append_minecraft_log_cache_line,
         "backup": ctx._append_backup_log_cache_line,
@@ -175,11 +180,42 @@ def log_source_fetcher_loop(ctx, source):
     normalized = settings["source"]
     file_poll_offset = 0
     follow_from_end_initialized = False
+    off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    backup_status_cache_at = 0.0
+    backup_status_cache_value = False
+
     def _allow_background_minecraft_follow():
         if normalized != "minecraft":
             return False
         intent = str(ctx.get_service_status_intent() or "").strip().lower()
-        return intent == "starting"
+        if intent == "starting":
+            return True
+        service_status = str(ctx.get_status() or "").strip().lower()
+        return service_status not in off_states
+
+    def _allow_background_backup_follow():
+        nonlocal backup_status_cache_at, backup_status_cache_value
+        if normalized != "backup":
+            return False
+        now = time.time()
+        if (now - backup_status_cache_at) < 1.0:
+            return backup_status_cache_value
+        active = False
+        try:
+            status_text, _ = ctx.get_backup_status()
+            active = str(status_text or "").strip().lower() in {"running", "queued"}
+        except Exception:
+            active = False
+        backup_status_cache_at = now
+        backup_status_cache_value = active
+        return active
+
+    def _allow_background_follow():
+        if _allow_background_minecraft_follow():
+            return True
+        if _allow_background_backup_follow():
+            return True
+        return False
 
     while True:
         state = ctx.log_stream_states.get(normalized)
@@ -187,7 +223,7 @@ def log_source_fetcher_loop(ctx, source):
             return
         with state["lifecycle_lock"]:
             client_count = state["clients"]
-        if client_count <= 0 and not _allow_background_minecraft_follow():
+        if client_count <= 0 and not _allow_background_follow():
             time.sleep(ctx.LOG_FETCHER_IDLE_SLEEP_SECONDS)
             continue
 
@@ -215,7 +251,7 @@ def log_source_fetcher_loop(ctx, source):
                     fh.seek(file_poll_offset)
                     for line in fh:
                         with state["lifecycle_lock"]:
-                            if state["clients"] <= 0 and not _allow_background_minecraft_follow():
+                            if state["clients"] <= 0 and not _allow_background_follow():
                                 break
                         clean = line.rstrip("\r\n")
                         if not clean:
@@ -251,7 +287,7 @@ def log_source_fetcher_loop(ctx, source):
                     fh.seek(file_poll_offset)
                     for line in fh:
                         with state["lifecycle_lock"]:
-                            if state["clients"] <= 0 and not _allow_background_minecraft_follow():
+                            if state["clients"] <= 0 and not _allow_background_follow():
                                 break
                         clean = line.rstrip("\r\n")
                         if not clean:
@@ -265,7 +301,7 @@ def log_source_fetcher_loop(ctx, source):
                 state["proc"] = proc
             for line in ports.log.iter_process_lines(proc):
                 with state["lifecycle_lock"]:
-                    if state["clients"] <= 0 and not _allow_background_minecraft_follow():
+                    if state["clients"] <= 0 and not _allow_background_follow():
                         break
                 clean = line.rstrip("\r\n")
                 if not clean:
