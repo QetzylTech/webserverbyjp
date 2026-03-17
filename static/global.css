@@ -135,42 +135,21 @@ html.theme-dark body {
     color: inherit;
 }
 
-.nav-link.nav-attention {
-    animation: navAttentionPulse 0.45s ease-in-out infinite;
-    color: #ffffff !important;
-}
-
-.nav-link.active.nav-attention {
-    animation: navAttentionPulse 0.45s ease-in-out infinite;
-    color: #ffffff !important;
-}
-
-.nav-link.nav-attention-red {
-    animation: navAttentionPulse 0.45s ease-in-out infinite;
-    color: #ffffff !important;
-}
-
+.nav-link.nav-attention,
+.nav-link.active.nav-attention,
+.nav-link.nav-attention-red,
 .nav-link.active.nav-attention-red {
     animation: navAttentionPulse 0.45s ease-in-out infinite;
     color: #ffffff !important;
 }
 
-.nav-link.nav-attention-yellow {
-    animation: navAttentionPulseYellow 0.45s ease-in-out infinite;
-    color: #0f172a !important;
-}
-
+.nav-link.nav-attention-yellow,
 .nav-link.active.nav-attention-yellow {
     animation: navAttentionPulseYellow 0.45s ease-in-out infinite;
     color: #0f172a !important;
 }
 
-.nav-link.nav-attention-green {
-    animation: none;
-    background: #166534;
-    color: #ffffff !important;
-}
-
+.nav-link.nav-attention-green,
 .nav-link.active.nav-attention-green {
     animation: none;
     background: #166534;
@@ -280,10 +259,7 @@ html.theme-dark .nav-separator {
     transition: transform 0.2s ease;
 }
 
-.nav-toggle.nav-attention {
-    animation: navToggleAttentionPulse 0.45s ease-in-out infinite;
-}
-
+.nav-toggle.nav-attention,
 .nav-toggle.nav-attention-red {
     animation: navToggleAttentionPulse 0.45s ease-in-out infinite;
 }
@@ -315,10 +291,7 @@ html.theme-dark .nav-separator {
     100% { background: #166534; }
 }
 
-.nav-toggle.nav-attention .nav-toggle-bar {
-    background: #ffffff;
-}
-
+.nav-toggle.nav-attention .nav-toggle-bar,
 .nav-toggle.nav-attention-red .nav-toggle-bar {
     background: #ffffff;
 }

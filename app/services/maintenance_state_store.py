@@ -84,6 +84,18 @@ def _cleanup_atomic_write_json(path, payload):
     temp.replace(path)
 
 
+def _cleanup_load_json_file(path, default):
+    """Load JSON from disk, returning default when missing or malformed."""
+    path = Path(path)
+    if not path.exists():
+        return default
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+    return loaded if isinstance(loaded, dict) else default
+
+
 def _cleanup_default_config():
     """Return the default maintenance configuration payload."""
     return {
@@ -298,6 +310,7 @@ def _cleanup_cached_config(cache_key, now):
         payload = cached.get("config")
         if not isinstance(payload, dict):
             return None
+        # Return a defensive copy to prevent callers from mutating the cache.
         return copy.deepcopy(payload)
 
 
@@ -365,15 +378,8 @@ def _cleanup_load_non_normal(ctx):
     ctx = as_ctx(ctx)
     path = _cleanup_non_normal_path(ctx)
     default = _cleanup_default_non_normal()
-    if not path.exists():
-        return default
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-    if not isinstance(loaded, dict):
-        return default
-    data = default
+    loaded = _cleanup_load_json_file(path, default)
+    data = copy.deepcopy(default)
     if isinstance(loaded.get("missed_runs"), list):
         data["missed_runs"] = loaded["missed_runs"]
     for key in ("last_ack_at", "last_ack_by"):

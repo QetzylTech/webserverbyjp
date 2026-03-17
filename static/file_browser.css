@@ -105,7 +105,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        margin: 0;
+        margin: 0 0 0 auto;
     }
     .backup-controls {
         display: flex;
@@ -117,9 +117,6 @@
         justify-content: flex-end;
     }
 
-    .sort-row {
-        margin: 0 0 0 auto;
-    }
     .log-view-controls {
         display: flex;
         align-items: center;
@@ -135,12 +132,7 @@
         flex-wrap: wrap;
         justify-content: flex-end;
     }
-.page-panes--files .pane-head-row {
-        align-items: center;
-    }
-    body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-head-row {
-        flex-wrap: wrap;
-    }
+    
     body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-title {
         flex: 1 1 auto;
         min-width: 0;
@@ -354,10 +346,6 @@
         gap: 0;
         overflow: hidden;
     }
-    body[data-page="crash_logs"] .file-viewer.pane-editor,
-    body[data-page="minecraft_logs"] .file-viewer.pane-editor {
-        padding-right: 0;
-    }
     .wrap.viewer-open .file-viewer {
         display: flex;
     }
@@ -481,14 +469,6 @@
     }
     .file-viewer-content.has-vscroll {
         padding-right: 0;
-    }
-    body[data-page="crash_logs"] .file-viewer-content:not(.has-vscroll),
-    body[data-page="minecraft_logs"] .file-viewer-content:not(.has-vscroll) {
-        margin-right: 12px;
-    }
-    body[data-page="crash_logs"] .file-viewer-content.has-vscroll,
-    body[data-page="minecraft_logs"] .file-viewer-content.has-vscroll {
-        margin-right: 0;
     }
     .file-viewer-content .log-line {
         display: block;
@@ -657,11 +637,6 @@
         }
     }
     @media (max-width: 900px) {
-        body[data-page="minecraft_logs"] .page-panes--files .page-pane--list > .pane-head .pane-title {
-            flex: 1 1 100%;
-            text-align: center;
-        }
-
         html, body {
             height: auto;
             min-height: 100%;
@@ -683,20 +658,6 @@
             min-height: 0;
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /* File-page panes should keep the pane's native 12px right inset even when scrollbars appear. */
 body[data-page="backups"] .list.has-vscroll,

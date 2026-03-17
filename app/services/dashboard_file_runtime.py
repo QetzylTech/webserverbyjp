@@ -28,6 +28,7 @@ def _snapshot_dir_size_cached(path):
         cached = _SNAPSHOT_DIR_SIZE_CACHE.get(key)
         if isinstance(cached, dict) and int(cached.get("mtime_ns", -1)) == mtime_ns:
             return int(cached.get("size", 0))
+    # Directory traversal can be expensive; only recompute when mtime changes.
     total_size = 0
     try:
         for child in path.rglob("*"):
@@ -50,10 +51,20 @@ def _previous_file_page_items(ctx, cache_key):
         items = entry.get("items") if isinstance(entry, dict) else []
         if isinstance(items, list) and items:
             return [dict(item) for item in items if isinstance(item, dict)]
+    # Fall back to persisted snapshot so the first request has data.
     try:
         return state_store_service.load_file_records_snapshot(Path(ctx.APP_STATE_DB_PATH), source_key=cache_key)
     except Exception:
         return []
+
+
+def _list_download_files_sorted(ctx, base_dir, patterns):
+    """Return merged, newest-first file metadata for the given glob patterns."""
+    items = []
+    for pattern in patterns:
+        items.extend(ctx._list_download_files(base_dir, pattern, ctx.DISPLAY_TZ))
+    items.sort(key=lambda item: item["mtime"], reverse=True)
+    return items
 
 
 def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items=None):
@@ -167,11 +178,9 @@ def refresh_file_page_items(ctx, cache_key, *, compute_snapshot_sizes=True):
             previous_items=_previous_file_page_items(ctx, cache_key),
         )
     elif cache_key == "crash_logs":
-        items = ctx._list_download_files(ctx.CRASH_REPORTS_DIR, "*.txt", ctx.DISPLAY_TZ)
+        items = _list_download_files_sorted(ctx, ctx.CRASH_REPORTS_DIR, ("*.txt",))
     elif cache_key == "minecraft_logs":
-        items = ctx._list_download_files(ctx.MINECRAFT_LOGS_DIR, "*.log", ctx.DISPLAY_TZ)
-        items.extend(ctx._list_download_files(ctx.MINECRAFT_LOGS_DIR, "*.gz", ctx.DISPLAY_TZ))
-        items.sort(key=lambda item: item["mtime"], reverse=True)
+        items = _list_download_files_sorted(ctx, ctx.MINECRAFT_LOGS_DIR, ("*.log", "*.gz"))
     else:
         return []
     try:
@@ -194,6 +203,7 @@ def get_cached_file_page_items(ctx, cache_key):
             age = time.time() - entry["updated_at"]
             if entry["items"] and age <= ctx.FILE_PAGE_CACHE_REFRESH_SECONDS:
                 return [dict(item) for item in entry["items"]]
+    # Cache miss: try the DB snapshot before scanning the filesystem.
     try:
         persisted = state_store_service.load_file_records_snapshot(Path(ctx.APP_STATE_DB_PATH), source_key=cache_key)
     except Exception:
@@ -227,6 +237,7 @@ def file_page_cache_refresher_loop(ctx):
             )
             time.sleep(interval)
         else:
+            # When no file-page clients are active, slow down refresh cadence.
             idle_sleep = max(
                 float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", 15.0)),
                 float(ctx.FILE_PAGE_CACHE_REFRESH_SECONDS),

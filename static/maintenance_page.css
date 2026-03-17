@@ -118,10 +118,7 @@ body {
   font-weight: 600;
 }
 
-#manual-destructive-confirm-wrap {
-  color: #b91c1c;
-}
-
+#manual-destructive-confirm-wrap,
 #rule-run-destructive-confirm-wrap {
   color: #b91c1c;
 }
@@ -613,10 +610,6 @@ body {
 
 
 @media (max-width: 900px) {
-  .page-panes--maintenance .page-pane--header > .pane-head .pane-title {
-    flex: 1 1 100%;
-    text-align: center;
-  }
 
   .page-panes--maintenance .page-pane--list,
   .page-panes--maintenance .page-pane--action {

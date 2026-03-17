@@ -2,6 +2,76 @@
 from app.ports import ports
 
 
+def _load_file_log_cache_from_disk(
+    ctx,
+    *,
+    path,
+    limit,
+    lock,
+    lines_attr,
+    loaded_attr,
+    mtime_attr,
+):
+    """Load a file-backed log cache into memory with its mtime marker."""
+    lines = ctx._read_recent_file_lines(path, limit)
+    mtime_ns = ctx._safe_file_mtime_ns(path)
+    with lock:
+        getattr(ctx, lines_attr).clear()
+        getattr(ctx, lines_attr).extend(lines)
+        setattr(ctx, loaded_attr, True)
+        setattr(ctx, mtime_attr, mtime_ns)
+
+
+def _append_file_log_cache_line(
+    ctx,
+    *,
+    line,
+    path,
+    lock,
+    lines_attr,
+    loaded_attr,
+    mtime_attr,
+):
+    """Append one log line to a file-backed cache and refresh its mtime marker."""
+    clean = (line or "").rstrip("\r\n")
+    if not clean:
+        return
+    with lock:
+        getattr(ctx, lines_attr).append(clean)
+        setattr(ctx, loaded_attr, True)
+        setattr(ctx, mtime_attr, ctx._safe_file_mtime_ns(path))
+
+
+def _get_cached_file_log_text(
+    ctx,
+    *,
+    path,
+    limit,
+    lock,
+    lines_attr,
+    loaded_attr,
+    mtime_attr,
+):
+    """Return cached log text, reloading only when on-disk mtime changes."""
+    current_mtime_ns = ctx._safe_file_mtime_ns(path)
+    with lock:
+        loaded = bool(getattr(ctx, loaded_attr))
+        cached_mtime_ns = getattr(ctx, mtime_attr)
+        if loaded and cached_mtime_ns == current_mtime_ns:
+            return "\n".join(getattr(ctx, lines_attr)).strip() or "(no logs)"
+    _load_file_log_cache_from_disk(
+        ctx,
+        path=path,
+        limit=limit,
+        lock=lock,
+        lines_attr=lines_attr,
+        loaded_attr=loaded_attr,
+        mtime_attr=mtime_attr,
+    )
+    with lock:
+        return "\n".join(getattr(ctx, lines_attr)).strip() or "(no logs)"
+
+
 def _is_rcon_noise_line(line):
     """Return whether a minecraft log line is known RCON shutdown/startup noise."""
     lower = (line or "").lower()
@@ -45,37 +115,41 @@ def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
 
 def load_backup_log_cache_from_disk(ctx):
     """Reload backup log cache from disk into bounded in-memory storage."""
-    lines = ctx._read_recent_file_lines(ctx.BACKUP_LOG_FILE, ctx.BACKUP_LOG_TEXT_LIMIT)
-    mtime_ns = ctx._safe_file_mtime_ns(ctx.BACKUP_LOG_FILE)
-    with ctx.backup_log_cache_lock:
-        ctx.backup_log_cache_lines.clear()
-        ctx.backup_log_cache_lines.extend(lines)
-        ctx.backup_log_cache_loaded = True
-        ctx.backup_log_cache_mtime_ns = mtime_ns
+    _load_file_log_cache_from_disk(
+        ctx,
+        path=ctx.BACKUP_LOG_FILE,
+        limit=ctx.BACKUP_LOG_TEXT_LIMIT,
+        lock=ctx.backup_log_cache_lock,
+        lines_attr="backup_log_cache_lines",
+        loaded_attr="backup_log_cache_loaded",
+        mtime_attr="backup_log_cache_mtime_ns",
+    )
 
 
 def append_backup_log_cache_line(ctx, line):
     """Append one backup log line into cache, updating file mtime hint."""
-    clean = (line or "").rstrip("\r\n")
-    if not clean:
-        return
-    with ctx.backup_log_cache_lock:
-        ctx.backup_log_cache_lines.append(clean)
-        ctx.backup_log_cache_loaded = True
-        ctx.backup_log_cache_mtime_ns = ctx._safe_file_mtime_ns(ctx.BACKUP_LOG_FILE)
+    _append_file_log_cache_line(
+        ctx,
+        line=line,
+        path=ctx.BACKUP_LOG_FILE,
+        lock=ctx.backup_log_cache_lock,
+        lines_attr="backup_log_cache_lines",
+        loaded_attr="backup_log_cache_loaded",
+        mtime_attr="backup_log_cache_mtime_ns",
+    )
 
 
 def get_cached_backup_log_text(ctx):
     """Return backup log text, reloading only when on-disk mtime changes."""
-    current_mtime_ns = ctx._safe_file_mtime_ns(ctx.BACKUP_LOG_FILE)
-    with ctx.backup_log_cache_lock:
-        loaded = ctx.backup_log_cache_loaded
-        cached_mtime_ns = ctx.backup_log_cache_mtime_ns
-        if loaded and cached_mtime_ns == current_mtime_ns:
-            return "\n".join(ctx.backup_log_cache_lines).strip() or "(no logs)"
-    load_backup_log_cache_from_disk(ctx)
-    with ctx.backup_log_cache_lock:
-        return "\n".join(ctx.backup_log_cache_lines).strip() or "(no logs)"
+    return _get_cached_file_log_text(
+        ctx,
+        path=ctx.BACKUP_LOG_FILE,
+        limit=ctx.BACKUP_LOG_TEXT_LIMIT,
+        lock=ctx.backup_log_cache_lock,
+        lines_attr="backup_log_cache_lines",
+        loaded_attr="backup_log_cache_loaded",
+        mtime_attr="backup_log_cache_mtime_ns",
+    )
 
 
 def load_minecraft_log_cache_from_journal(ctx):
@@ -108,6 +182,7 @@ def load_minecraft_log_cache_from_journal(ctx):
     lines = output.splitlines()
     lines = [line for line in lines if not _is_rcon_noise_line(line)]
     if len(lines) < ctx.MINECRAFT_LOG_VISIBLE_LINES:
+        # Journal output may be sparse; fall back to latest.log for an initial full tail.
         file_lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
         if len(file_lines) >= len(lines):
             with ctx.minecraft_log_cache_lock:
@@ -128,6 +203,7 @@ def append_minecraft_log_cache_line(ctx, line):
     clean = (line or "").rstrip("\r\n")
     if not clean:
         return
+    # Keep the cache bounded by the deque maxlen; just append the newest line.
     with ctx.minecraft_log_cache_lock:
         ctx.minecraft_log_cache_lines.append(clean)
         ctx.minecraft_log_cache_loaded = True
@@ -145,34 +221,38 @@ def get_cached_minecraft_log_text(ctx):
 
 def load_mcweb_log_cache_from_disk(ctx):
     """Reload mcweb action log cache from disk."""
-    lines = ctx._read_recent_file_lines(ctx.MCWEB_ACTION_LOG_FILE, ctx.MCWEB_ACTION_LOG_TEXT_LIMIT)
-    mtime_ns = ctx._safe_file_mtime_ns(ctx.MCWEB_ACTION_LOG_FILE)
-    with ctx.mcweb_log_cache_lock:
-        ctx.mcweb_log_cache_lines.clear()
-        ctx.mcweb_log_cache_lines.extend(lines)
-        ctx.mcweb_log_cache_loaded = True
-        ctx.mcweb_log_cache_mtime_ns = mtime_ns
+    _load_file_log_cache_from_disk(
+        ctx,
+        path=ctx.MCWEB_ACTION_LOG_FILE,
+        limit=ctx.MCWEB_ACTION_LOG_TEXT_LIMIT,
+        lock=ctx.mcweb_log_cache_lock,
+        lines_attr="mcweb_log_cache_lines",
+        loaded_attr="mcweb_log_cache_loaded",
+        mtime_attr="mcweb_log_cache_mtime_ns",
+    )
 
 
 def append_mcweb_log_cache_line(ctx, line):
     """Append one mcweb action log line into cache."""
-    clean = (line or "").rstrip("\r\n")
-    if not clean:
-        return
-    with ctx.mcweb_log_cache_lock:
-        ctx.mcweb_log_cache_lines.append(clean)
-        ctx.mcweb_log_cache_loaded = True
-        ctx.mcweb_log_cache_mtime_ns = ctx._safe_file_mtime_ns(ctx.MCWEB_ACTION_LOG_FILE)
+    _append_file_log_cache_line(
+        ctx,
+        line=line,
+        path=ctx.MCWEB_ACTION_LOG_FILE,
+        lock=ctx.mcweb_log_cache_lock,
+        lines_attr="mcweb_log_cache_lines",
+        loaded_attr="mcweb_log_cache_loaded",
+        mtime_attr="mcweb_log_cache_mtime_ns",
+    )
 
 
 def get_cached_mcweb_log_text(ctx):
     """Return mcweb action log text, refreshing if file changed."""
-    current_mtime_ns = ctx._safe_file_mtime_ns(ctx.MCWEB_ACTION_LOG_FILE)
-    with ctx.mcweb_log_cache_lock:
-        loaded = ctx.mcweb_log_cache_loaded
-        cached_mtime_ns = ctx.mcweb_log_cache_mtime_ns
-        if loaded and cached_mtime_ns == current_mtime_ns:
-            return "\n".join(ctx.mcweb_log_cache_lines).strip() or "(no logs)"
-    load_mcweb_log_cache_from_disk(ctx)
-    with ctx.mcweb_log_cache_lock:
-        return "\n".join(ctx.mcweb_log_cache_lines).strip() or "(no logs)"
+    return _get_cached_file_log_text(
+        ctx,
+        path=ctx.MCWEB_ACTION_LOG_FILE,
+        limit=ctx.MCWEB_ACTION_LOG_TEXT_LIMIT,
+        lock=ctx.mcweb_log_cache_lock,
+        lines_attr="mcweb_log_cache_lines",
+        loaded_attr="mcweb_log_cache_loaded",
+        mtime_attr="mcweb_log_cache_mtime_ns",
+    )
