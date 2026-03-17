@@ -1,7 +1,3 @@
-    :root {
-        --accent: #1e40af;
-        --accent-hover: #1b3a9a;
-    }
     * { box-sizing: border-box; }
     html, body {
         height: 100%;

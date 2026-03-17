@@ -8,6 +8,22 @@ Documentation index:
 - CI gate order and commands: `doc/CI_QUALITY_GATES.md`
 - PR acceptance checklist (priority-ordered): `doc/PR_ACCEPTANCE_CHECKLIST.md`
 
+Roadmap / TODO
+- [ ] Remove Linux systemd dependency (and equivalents on other OSes) by invoking `run.sh` or `server.jar` directly.
+- [ ] Add a Settings page:
+  - password settings
+  - upload device lists
+  - per-device rulesets
+- [ ] Add a World Management page:
+  - full root directory browsing (files/folders)
+  - upload/rename/delete/create files and folders
+  - config and `server.properties` editor
+- [ ] Change Minecraft directory structure:
+  - root folder named `minecraft`
+  - subfolders per Minecraft version
+  - each version has a full server instance
+  - manage/start each version independently (hardware-limited)
+
 
 1. Project layout
 
