@@ -171,16 +171,32 @@ def storage_safety_watcher(ctx):
     while True:
         try:
             service_status = ctx.get_status()
-            low_storage = ctx.is_storage_low()
+            guard = getattr(ctx, "storage_guard", None)
+            if guard is not None:
+                try:
+                    low_storage = bool(guard.is_below_minimum(ctx))
+                    emergency = bool(guard.needs_emergency_shutdown(ctx))
+                except Exception:
+                    low_storage = ctx.is_storage_low()
+                    emergency = low_storage
+            else:
+                low_storage = ctx.is_storage_low()
+                emergency = low_storage
 
-            if service_status == "active" and low_storage:
+            if service_status == "active" and emergency:
                 should_start = False
                 with ctx.storage_emergency_lock:
                     if not ctx.storage_emergency_active:
                         ctx.storage_emergency_active = True
                         should_start = True
                 if should_start:
-                    ctx.log_mcweb_action("emergency-shutdown", rejection_message=ctx.low_storage_error_message())
+                    message = ctx.low_storage_error_message()
+                    if guard is not None:
+                        try:
+                            message = guard.emergency_message(ctx)
+                        except Exception:
+                            message = ctx.low_storage_error_message()
+                    ctx.log_mcweb_action("emergency-shutdown", rejection_message=message)
                     start_worker(
                         ctx,
                         WorkerSpec(

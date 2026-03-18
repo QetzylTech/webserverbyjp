@@ -48,7 +48,7 @@ def _cleanup_validate_rules(raw_rules):
     rules["space"]["target_free_percent"] = max(0, min(50, 100 - used_trigger))
     rules["space"]["cooldown_seconds"] = _safe_int(rules["space"].get("cooldown_seconds", 600), 600, minimum=0, maximum=86400)
 
-    rules["age"]["days"] = _safe_int(rules["age"].get("days", 7), 7, minimum=7, maximum=3650)
+    rules["age"]["days"] = _safe_int(rules["age"].get("days", 3), 3, minimum=3, maximum=3650)
     rules["count"]["session_backups_to_keep"] = _safe_int(
         rules["count"].get("session_backups_to_keep", rules["count"].get("max_per_category", 30)),
         30,
@@ -67,10 +67,17 @@ def _cleanup_validate_rules(raw_rules):
         minimum=3,
         maximum=100000,
     )
+    rules["count"]["emergency_backups_to_keep"] = _safe_int(
+        rules["count"].get("emergency_backups_to_keep", rules["count"].get("max_per_category", 30)),
+        30,
+        minimum=3,
+        maximum=100000,
+    )
     rules["count"]["max_per_category"] = max(
         rules["count"]["session_backups_to_keep"],
         rules["count"]["manual_backups_to_keep"],
         rules["count"]["prerestore_backups_to_keep"],
+        rules["count"]["emergency_backups_to_keep"],
         _safe_int(rules["count"].get("max_per_category", 30), 30, minimum=3, maximum=100000),
     )
 
@@ -100,8 +107,8 @@ def _cleanup_validate_rules(raw_rules):
         minimum=0,
         maximum=1000,
     )
-    rules["caps"]["max_delete_files_absolute"] = _safe_int(rules["caps"].get("max_delete_files_absolute", 5), 5, minimum=1, maximum=500)
-    rules["caps"]["max_delete_percent_eligible"] = _safe_int(rules["caps"].get("max_delete_percent_eligible", 10), 10, minimum=1, maximum=100)
+    rules["caps"]["max_delete_files_absolute"] = _safe_int(rules["caps"].get("max_delete_files_absolute", 10), 10, minimum=10, maximum=500)
+    rules["caps"]["max_delete_percent_eligible"] = _safe_int(rules["caps"].get("max_delete_percent_eligible", 50), 50, minimum=50, maximum=100)
     rules["caps"]["max_delete_min_if_non_empty"] = _safe_int(rules["caps"].get("max_delete_min_if_non_empty", 1), 1, minimum=1, maximum=20)
     return True, rules
 

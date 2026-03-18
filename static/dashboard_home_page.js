@@ -666,7 +666,6 @@
         }
         if (backupStatus && backupStatusText) backupStatus.textContent = backupStatusText;
         if (backupStatus && backupStatusClass) backupStatus.className = backupStatusClass;
-        if (backupBtn && backupStatusText) backupBtn.disabled = (backupStatusText === "Running" || backupStatusText === "Queued");
         if (lastBackup && data.last_backup_time) lastBackup.textContent = data.last_backup_time;
         if (nextBackup && data.next_backup_time) nextBackup.textContent = data.next_backup_time;
         if (backupsStatus && data.backups_status) backupsStatus.textContent = data.backups_status;
@@ -714,9 +713,16 @@
         const backupWarningSeq = Number(data.backup_warning_seq || 0);
         const backupWarningMessage = (data.backup_warning_message || "").trim();
         const serviceStateLabel = String(serviceStatusText || data.service_status || "").trim().toLowerCase();
+        const serviceIsOff = serviceStateLabel === "off";
+        const serviceIsStarting = serviceStateLabel === "starting";
+        const serviceIsShutting = serviceStateLabel === "shutting down";
+        const allowStart = serviceIsOff && !lowStorageBlocked && !isStartCooldownActive();
+        const allowStop = !serviceIsOff;
+
+        if (startBtn) startBtn.disabled = !allowStart;
+        if (stopBtn) stopBtn.disabled = !allowStop;
+
         if (data.service_running_status === "active") {
-            if (startBtn) startBtn.disabled = true;
-            if (stopBtn) stopBtn.disabled = false;
             if (rconInput) rconInput.disabled = !rconEnabled;
             if (rconSubmit) rconSubmit.disabled = !rconEnabled;
             if (rconInput) {
@@ -725,11 +731,9 @@
                     : "RCON unavailable (missing rcon.password)";
             }
         } else {
-            if (startBtn) startBtn.disabled = lowStorageBlocked || isStartCooldownActive();
-            if (stopBtn) stopBtn.disabled = true;
             if (rconInput) {
                 rconInput.disabled = true;
-                rconInput.placeholder = serviceStateLabel === "off"
+                rconInput.placeholder = serviceIsOff
                     ? "Server is off"
                     : "Loading server state...";
             }
@@ -754,6 +758,11 @@
             lastBackupWarningSeq = backupWarningSeq;
         } else if (!fromCache && backupWarningSeq > lastBackupWarningSeq) {
             lastBackupWarningSeq = backupWarningSeq;
+        }
+        if (backupBtn) {
+            const backupBusy = backupStatusText === "Running" || backupStatusText === "Queued";
+            const backupBlocked = serviceIsStarting || serviceIsShutting || lowStorageBlocked || backupBusy;
+            backupBtn.disabled = backupBlocked;
         }
         cachedMetricsSnapshot = data;
         applyRefreshMode(data.service_status);

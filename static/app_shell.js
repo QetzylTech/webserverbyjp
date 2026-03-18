@@ -245,13 +245,16 @@
             const rconEnabled = snapshot.rcon_enabled === true;
             const lowStorageBlocked = snapshot.low_storage_blocked === true;
             const backupBusy = snapshot.backup_status === "Running" || snapshot.backup_status === "Queued";
+            const serviceIsOff = serviceStateLabel === "off";
+            const serviceIsStarting = serviceStateLabel === "starting";
+            const serviceIsShutting = serviceStateLabel === "shutting down";
 
             const startBtn = doc.getElementById("start-btn");
-            if (startBtn) startBtn.disabled = serviceRunning || lowStorageBlocked;
+            if (startBtn) startBtn.disabled = !(serviceIsOff && !lowStorageBlocked);
             const stopBtn = doc.getElementById("stop-btn");
-            if (stopBtn) stopBtn.disabled = !serviceRunning;
+            if (stopBtn) stopBtn.disabled = serviceIsOff;
             const backupBtn = doc.getElementById("backup-btn");
-            if (backupBtn) backupBtn.disabled = backupBusy;
+            if (backupBtn) backupBtn.disabled = backupBusy || serviceIsStarting || serviceIsShutting || lowStorageBlocked;
             const rconInput = doc.getElementById("rcon-command");
             if (rconInput) {
                 rconInput.disabled = !(serviceRunning && rconEnabled);
@@ -570,7 +573,7 @@
     }
 
     function metricsStreamPath() {
-        const clientId = getPersistentClientId();
+        const clientId = getPersistentClientId("mcweb.clientId");
         return clientId ? `/metrics-stream?client_id=${encodeURIComponent(clientId)}` : "/metrics-stream";
     }
 
@@ -938,7 +941,10 @@
     function ensureHomeLogStreamStarted(source) {
         const sourceKey = String(source || "").trim().toLowerCase();
         if (!HOME_LOG_PATHS[sourceKey] || shellState.homeLogs.streams[sourceKey]) return;
-        const stream = new EventSource(HOME_LOG_PATHS[sourceKey]);
+        const clientId = getPersistentClientId("mcweb.clientId");
+        const basePath = HOME_LOG_PATHS[sourceKey];
+        const streamPath = clientId ? `${basePath}?client_id=${encodeURIComponent(clientId)}` : basePath;
+        const stream = new EventSource(streamPath);
         stream.onmessage = (event) => appendHomeLogLine(sourceKey, event.data || "");
         stream.onerror = () => {
             // EventSource reconnects automatically.

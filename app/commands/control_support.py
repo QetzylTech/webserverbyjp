@@ -52,8 +52,18 @@ def _accepted_operation_result(op_id, *, status="intent", existing=False, resume
 
 
 def enforce_rate_limit(ctx, route_key, *, client_key, limit, window_seconds):
+    scope = ""
+    state = getattr(ctx, "state", None)
+    if state is not None:
+        try:
+            scope = str(state.get("APP_STATE_DB_PATH") or "")
+        except Exception:
+            scope = ""
+    if not scope:
+        scope = str(id(state) if state is not None else "")
+    key = f"{scope}:{route_key}:{client_key}" if scope else f"{route_key}:{client_key}"
     allowed, retry_after = _CONTROL_RATE_LIMITER.allow(
-        f"{route_key}:{client_key}",
+        key,
         limit=limit,
         window_seconds=window_seconds,
     )

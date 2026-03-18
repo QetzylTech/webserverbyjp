@@ -109,6 +109,19 @@ class RestoreSnapshotTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertIn("unsafe paths", result["message"].lower())
 
+    def test_restore_world_backup_rejects_when_backup_running(self):
+        ctx = SimpleNamespace(
+            restore_lock=threading.Lock(),
+            BACKUP_DIR=Path("/tmp/backups"),
+            _safe_filename_in_dir=lambda base_dir, name: name,
+        )
+
+        with patch.object(restore_execution, "is_backup_running", return_value=True):
+            result = restore_execution.restore_world_backup(ctx, "world_test_manual.zip")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("backup is running", result["message"].lower())
+
     def test_restore_failure_after_stop_attempts_restart_when_was_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

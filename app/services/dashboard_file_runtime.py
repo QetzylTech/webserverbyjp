@@ -8,6 +8,7 @@ from app.core.filesystem_utils import format_file_size
 from app.core import state_store as state_store_service
 from app.services import file_inventory_index as file_inventory_index_service
 from app.services.worker_scheduler import WorkerSpec, start_worker
+from app.services import client_registry as client_registry_service
 
 _SNAPSHOT_DIR_SIZE_CACHE_LOCK = threading.Lock()
 _SNAPSHOT_DIR_SIZE_CACHE = {}
@@ -145,8 +146,10 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
     return items
 
 
-def mark_file_page_client_active(ctx):
+def mark_file_page_client_active(ctx, client_id=None):
     """Record recent file-page activity and wake cadence workers."""
+    if client_id:
+        client_registry_service.touch_client(ctx, client_id, channel="file_heartbeat")
     with ctx.metrics_cache_cond:
         ctx.file_page_last_seen = time.time()
         ctx.metrics_cache_cond.notify_all()

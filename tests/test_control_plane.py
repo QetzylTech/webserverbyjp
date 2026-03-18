@@ -12,7 +12,7 @@ from app.state import BackupState
 
 
 class ControlPlaneTests(unittest.TestCase):
-    def test_start_restore_job_records_status_and_undo_snapshot(self):
+    def test_start_restore_job_records_status_without_undo(self):
         ctx = SimpleNamespace(
             DISPLAY_TZ=datetime.now().astimezone().tzinfo,
             restore_lock=threading.Lock(),
@@ -25,7 +25,6 @@ class ControlPlaneTests(unittest.TestCase):
                 "seq": 0,
                 "events": [],
                 "result": None,
-                "undo_filename": "",
             },
         )
 
@@ -54,6 +53,7 @@ class ControlPlaneTests(unittest.TestCase):
             status["result"]["pre_restore_snapshot_name"],
         )
         self.assertGreaterEqual(len(status["events"]), 2)
+        self.assertNotIn("undo_filename", status)
 
     def test_run_backup_script_passes_ctx_to_snapshot_change_and_trigger(self):
         ctx = SimpleNamespace(

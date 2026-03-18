@@ -17,6 +17,7 @@ _CLEANUP_ERROR_MESSAGES = {
     "validation_failure": "Validation failed. Please review the submitted values.",
     "ineligible_selection": "One or more selected files are no longer eligible for deletion.",
     "lock_held": "A cleanup run is already in progress. Try again shortly.",
+    "conflict": "Cleanup is blocked while backup or restore is running.",
     "guard_violation": "Cleanup guards blocked this operation to prevent destructive loss.",
     "schedule_conflict": "Schedule conflicts with an existing schedule at the same time.",
     "rules_disabled": "Rule-based cleanup is disabled.",
@@ -25,6 +26,10 @@ _CLEANUP_ERROR_MESSAGES = {
 _CLEANUP_CONFIG_CACHE_TTL_SECONDS = 1.5
 _CLEANUP_CONFIG_CACHE_LOCK = threading.Lock()
 _CLEANUP_CONFIG_CACHE = {}
+
+
+_SCHEDULER_STATE_LOCK = threading.Lock()
+_SCHEDULER_STATE = {"backups": {"last_tick": 0}, "stale_worlds": {"last_tick": 0}}
 
 
 
@@ -107,13 +112,14 @@ def _cleanup_default_config():
                 "stale_world_dir": True,
                 "old_world_zip": True,
             },
-            "age": {"enabled": True, "days": 7},
+            "age": {"enabled": True, "days": 3},
             "count": {
                 "enabled": True,
                 "max_per_category": 30,
                 "session_backups_to_keep": 30,
                 "manual_backups_to_keep": 30,
                 "prerestore_backups_to_keep": 30,
+                "emergency_backups_to_keep": 30,
             },
             "space": {
                 "enabled": True,
@@ -137,8 +143,8 @@ def _cleanup_default_config():
                 "protect_active_world": True,
             },
             "caps": {
-                "max_delete_files_absolute": 5,
-                "max_delete_percent_eligible": 10,
+                "max_delete_files_absolute": 10,
+                "max_delete_percent_eligible": 50,
                 "max_delete_min_if_non_empty": 1,
             },
         },
@@ -235,11 +241,13 @@ def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
     count["session_backups_to_keep"] = _safe_int(count.get("session_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
     count["manual_backups_to_keep"] = _safe_int(count.get("manual_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
     count["prerestore_backups_to_keep"] = _safe_int(count.get("prerestore_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
+    count["emergency_backups_to_keep"] = _safe_int(count.get("emergency_backups_to_keep", max_per), max_per, minimum=3, maximum=100000)
     count["max_per_category"] = max(
         _safe_int(count.get("max_per_category", max_per), max_per, minimum=3, maximum=100000),
         count["session_backups_to_keep"],
         count["manual_backups_to_keep"],
         count["prerestore_backups_to_keep"],
+        count["emergency_backups_to_keep"],
     )
 
     space = rules.setdefault("space", {})
@@ -247,8 +255,13 @@ def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
     space["target_free_percent"] = max(0, min(50, 100 - space["used_trigger_percent"]))
     space["free_space_below_gb"] = _safe_int(space.get("free_space_below_gb", 0), 0, minimum=0, maximum=1_000_000)
 
+    caps = rules.setdefault("caps", {})
+    caps["max_delete_files_absolute"] = _safe_int(caps.get("max_delete_files_absolute", 10), 10, minimum=10, maximum=500)
+    caps["max_delete_percent_eligible"] = _safe_int(caps.get("max_delete_percent_eligible", 50), 50, minimum=50, maximum=100)
+    caps["max_delete_min_if_non_empty"] = _safe_int(caps.get("max_delete_min_if_non_empty", 1), 1, minimum=1, maximum=20)
+
     age = rules.setdefault("age", {})
-    age["days"] = _safe_int(age.get("days", 7), 7, minimum=7, maximum=3650)
+    age["days"] = _safe_int(age.get("days", 3), 3, minimum=3, maximum=3650)
 
     time_based = rules.setdefault("time_based", {})
     time_based["enabled"] = bool(time_based.get("enabled", True))
@@ -270,7 +283,7 @@ def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
         scoped["rules"] = _cleanup_apply_scope_categories(scoped_rules, scope_name)
         scoped.setdefault("schedules", [])
         scoped.setdefault("meta", {})
-    return cfg
+    return _cleanup_normalize_config_bounds(cfg)
 
 
 def _cleanup_default_non_normal():
@@ -298,6 +311,38 @@ def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
     guards["never_delete_last_backup_overall"] = bool(ctx.MAINTENANCE_GUARD_NEVER_DELETE_LAST_BACKUP)
     guards["protect_active_world"] = bool(ctx.MAINTENANCE_GUARD_PROTECT_ACTIVE_WORLD)
     return rules
+
+
+def _cleanup_normalize_rule_bounds(rules):
+    """Clamp rule values to their hard guard minimums."""
+    age = rules.setdefault("age", {})
+    age["days"] = _safe_int(age.get("days", 3), 3, minimum=3, maximum=3650)
+
+    count = rules.setdefault("count", {})
+    if "max_per_category" in count:
+        count["max_per_category"] = _safe_int(count.get("max_per_category", 3), 3, minimum=3, maximum=100000)
+    if "session_backups_to_keep" in count:
+        count["session_backups_to_keep"] = _safe_int(count.get("session_backups_to_keep", 3), 3, minimum=3, maximum=100000)
+    if "manual_backups_to_keep" in count:
+        count["manual_backups_to_keep"] = _safe_int(count.get("manual_backups_to_keep", 3), 3, minimum=3, maximum=100000)
+    if "prerestore_backups_to_keep" in count:
+        count["prerestore_backups_to_keep"] = _safe_int(count.get("prerestore_backups_to_keep", 3), 3, minimum=3, maximum=100000)
+    if "emergency_backups_to_keep" in count:
+        count["emergency_backups_to_keep"] = _safe_int(count.get("emergency_backups_to_keep", 3), 3, minimum=3, maximum=100000)
+
+    caps = rules.setdefault("caps", {})
+    caps["max_delete_files_absolute"] = _safe_int(caps.get("max_delete_files_absolute", 10), 10, minimum=10, maximum=500)
+    caps["max_delete_percent_eligible"] = _safe_int(caps.get("max_delete_percent_eligible", 50), 50, minimum=50, maximum=100)
+    caps["max_delete_min_if_non_empty"] = _safe_int(caps.get("max_delete_min_if_non_empty", 1), 1, minimum=1, maximum=20)
+    return rules
+
+
+def _cleanup_normalize_config_bounds(cfg):
+    cfg["rules"] = _cleanup_normalize_rule_bounds(cfg.get("rules", {}))
+    for scope_name in _CLEANUP_SCOPE_CHOICES:
+        scoped = _cleanup_get_scope_view(cfg, scope_name)
+        scoped["rules"] = _cleanup_normalize_rule_bounds(scoped.get("rules", {}))
+    return cfg
 
 
 def _cleanup_cached_config(cache_key, now):
@@ -359,6 +404,7 @@ def _cleanup_load_config(ctx):
     except Exception:
         pass
     cfg = _cleanup_apply_runtime_scope_overrides(ctx, cfg)
+    cfg = _cleanup_normalize_config_bounds(cfg)
     _cleanup_store_cached_config(cache_key, cfg, now)
     return copy.deepcopy(cfg)
 
@@ -386,6 +432,30 @@ def _cleanup_load_non_normal(ctx):
         if isinstance(loaded.get(key), str):
             data[key] = loaded[key]
     return data
+
+
+def get_cleanup_meta(ctx, scope="backups"):
+    """Return cleanup meta fields for the requested scope."""
+    cfg = _cleanup_load_config(ctx)
+    scope_view = _cleanup_get_scope_view(cfg, scope)
+    meta = scope_view.get("meta", {}) if isinstance(scope_view, dict) else {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return {
+        "last_run_at": str(meta.get("last_run_at", "") or ""),
+        "rule_version": meta.get("rule_version"),
+        "schedule_version": meta.get("schedule_version"),
+        "last_changed_by": str(meta.get("last_changed_by", "") or ""),
+    }
+
+
+def get_cleanup_missed_run_count(ctx):
+    """Return count of missed cleanup runs from non-normal tracking."""
+    data = _cleanup_load_non_normal(ctx)
+    missed = data.get("missed_runs") if isinstance(data, dict) else None
+    if isinstance(missed, list):
+        return len(missed)
+    return 0
 
 
 def _cleanup_get_client_ip(ctx):
@@ -429,6 +499,19 @@ def _cleanup_safe_used_percent(path):
     if total <= 0:
         return None, total, free
     return (100.0 * used / total), total, free
+
+
+def _cleanup_record_scheduler_tick(ctx, scope, now_ts, *, max_gap_seconds=75):
+    """Update scheduler tick state and mark missed runs on gaps."""
+    scope_key = _cleanup_normalize_scope(scope) if scope else "backups"
+    with _SCHEDULER_STATE_LOCK:
+        last_tick = int(_SCHEDULER_STATE.get(scope_key, {}).get("last_tick", 0) or 0)
+        if scope_key not in _SCHEDULER_STATE:
+            _SCHEDULER_STATE[scope_key] = {"last_tick": last_tick}
+        _SCHEDULER_STATE[scope_key]["last_tick"] = int(now_ts or 0)
+    if last_tick > 0 and int(now_ts or 0) - last_tick > int(max_gap_seconds or 0):
+        _cleanup_mark_missed_run(ctx, "scheduler_gap", schedule_id=f"{scope_key}:scheduler", scope=scope_key)
+    return last_tick
 
 
 def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):

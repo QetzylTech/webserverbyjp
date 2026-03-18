@@ -1,14 +1,21 @@
 """Dashboard metrics collection and publication helpers."""
 from datetime import datetime
+from pathlib import Path
 import time
 
 from app.core import state_store as state_store_service
+from app.services import client_registry as client_registry_service
+from app.services import file_inventory_index as file_inventory_index_service
+from app.services import maintenance_state_store as maintenance_state_store_service
+from app.services import maintenance_scheduler as maintenance_scheduler_service
 from app.services.dashboard_state_runtime import get_backups_status, get_observed_state
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
-def mark_home_page_client_active(ctx):
+def mark_home_page_client_active(ctx, client_id=None):
     """Record recent home-page activity and wake cadence workers."""
+    if client_id:
+        client_registry_service.touch_client(ctx, client_id, channel="home_heartbeat")
     with ctx.metrics_cache_cond:
         ctx.home_page_last_seen = time.time()
         ctx.metrics_cache_cond.notify_all()
@@ -26,20 +33,20 @@ def has_active_flask_app_clients(ctx):
     """Return whether any shell page or SSE stream is actively consuming data."""
     now = time.time()
     with ctx.metrics_cache_cond:
-        stream_clients = int(getattr(ctx, "metrics_stream_client_count", 0) or 0)
         home_last_seen = float(getattr(ctx, "home_page_last_seen", 0.0) or 0.0)
         file_last_seen = float(getattr(ctx, "file_page_last_seen", 0.0) or 0.0)
         home_ttl_seconds = float(getattr(ctx, "HOME_PAGE_ACTIVE_TTL_SECONDS", 0.0) or 0.0)
         file_ttl_seconds = float(getattr(ctx, "FILE_PAGE_ACTIVE_TTL_SECONDS", 0.0) or 0.0)
+    active_clients = client_registry_service.active_client_count(ctx)
     return (
-        stream_clients > 0
+        active_clients > 0
         or (now - home_last_seen) <= home_ttl_seconds
         or (now - file_last_seen) <= file_ttl_seconds
     )
 
 
-def _maybe_refresh_idle_storage_usage(ctx):
-    """Refresh cached storage usage when server is on but no clients are active."""
+def _maybe_refresh_idle_storage_cache(ctx):
+    """Refresh storage-related cache when server is on but no clients are active."""
     try:
         service_status = ctx.get_status()
     except Exception:
@@ -49,17 +56,61 @@ def _maybe_refresh_idle_storage_usage(ctx):
         return False
     now = time.time()
     last_at = float(getattr(ctx, "idle_storage_last_at", 0.0) or 0.0)
-    interval = float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", 5.0) or 5.0)
+    interval = float(getattr(ctx, "METRICS_IDLE_STORAGE_REFRESH_SECONDS", 15.0) or 15.0)
     if (now - last_at) < interval:
         return False
     try:
         usage = ctx.get_storage_usage()
+        backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
+        cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
+        cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
+        cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
     except Exception as exc:
         ctx.log_mcweb_exception("idle_storage_refresh", exc)
         ctx.idle_storage_last_at = now
         return False
     ctx.idle_storage_last_at = now
     ctx.idle_storage_usage_text = usage
+    ctx.idle_storage_cache = {
+        "storage_usage": usage,
+        "backup_count": backup_count,
+        "stale_worlds_count": stale_worlds_count,
+        "backup_folder": backup_folder,
+        "cleanup_meta": cleanup_meta,
+        "cleanup_missed_runs": cleanup_missed_runs,
+        "cleanup_next_run": cleanup_next_run,
+    }
+    # Update cached payload so reconnecting clients see fresh storage/cleanup data.
+    with ctx.metrics_cache_cond:
+        payload = dict(ctx.metrics_cache_payload) if isinstance(ctx.metrics_cache_payload, dict) else {}
+        payload["storage_usage"] = usage
+        payload["storage_usage_class"] = get_storage_usage_class(ctx, usage)
+        payload["backup_files_count"] = backup_count
+        payload["backup_folder"] = backup_folder
+        payload["stale_worlds_count"] = stale_worlds_count
+        payload["cleanup_last_run"] = cleanup_meta.get("last_run_at", "")
+        payload["cleanup_rule_version"] = cleanup_meta.get("rule_version")
+        payload["cleanup_schedule_version"] = cleanup_meta.get("schedule_version")
+        payload["cleanup_last_changed_by"] = cleanup_meta.get("last_changed_by", "")
+        payload["cleanup_missed_runs"] = cleanup_missed_runs
+        payload["cleanup_next_run"] = cleanup_next_run
+        system_group = dict(payload.get("system", {})) if isinstance(payload.get("system"), dict) else {}
+        system_group["storage"] = usage
+        payload["system"] = system_group
+        backup_group = dict(payload.get("backup", {})) if isinstance(payload.get("backup"), dict) else {}
+        backup_group["count"] = backup_count
+        backup_group["folder"] = backup_folder
+        payload["backup"] = backup_group
+        cleanup_group = dict(payload.get("cleanup", {})) if isinstance(payload.get("cleanup"), dict) else {}
+        cleanup_group["last_run"] = cleanup_meta.get("last_run_at", "")
+        cleanup_group["rule_version"] = cleanup_meta.get("rule_version")
+        cleanup_group["schedule_version"] = cleanup_meta.get("schedule_version")
+        cleanup_group["last_changed_by"] = cleanup_meta.get("last_changed_by", "")
+        cleanup_group["missed_runs"] = cleanup_missed_runs
+        cleanup_group["next_run"] = cleanup_next_run
+        cleanup_group["stale_worlds_count"] = stale_worlds_count
+        payload["cleanup"] = cleanup_group
+        ctx.metrics_cache_payload = payload
     return True
 
 
@@ -149,6 +200,31 @@ def _tick_display(tick_rate):
         return value
     except Exception:
         return "-"
+
+
+def _get_backup_and_stale_counts(ctx):
+    backup_count = 0
+    stale_worlds_count = 0
+    try:
+        backup_dir = Path(ctx.BACKUP_DIR)
+    except Exception:
+        return 0, 0, ""
+    snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
+    session_state = getattr(ctx, "session_state", None)
+    session_file_text = str(getattr(session_state, "session_file", "") or "").strip() if session_state is not None else ""
+    session_file = Path(session_file_text) if session_file_text else None
+    old_worlds_root = (session_file.parent / "old_worlds").resolve() if session_file is not None else Path("__unused_old_worlds_index_root__")
+    try:
+        inventory = file_inventory_index_service.get_inventory(
+            backup_root=backup_dir,
+            snapshot_root=snapshot_root,
+            old_worlds_root=old_worlds_root,
+        )
+    except Exception:
+        return 0, 0, str(backup_dir)
+    backup_count = len(inventory.get("backup_zip_paths", [])) + len(inventory.get("snapshot_dir_paths", []))
+    stale_worlds_count = sum(1 for entry in inventory.get("old_world_top_entries", []) if entry.is_dir())
+    return backup_count, stale_worlds_count, str(backup_dir)
 
 
 def _resolve_service_status_display(ctx, service_status, players_online, tick_rate, observed_display):
@@ -267,20 +343,53 @@ def collect_dashboard_metrics(ctx):
     server_time_text = now_display.strftime("%b %d, %Y %I:%M:%S %p %Z")
     server_time_epoch_ms = int(now_display.timestamp() * 1000)
     server_time_zone = str(now_display.tzname() or "").strip()
+    backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
+    cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
+    cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
+    cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
 
     is_running_display = str(service_status_display or "").strip().lower() == "running"
     idle_countdown = "--:--"
     if is_running_display and str(players_online_raw or "").strip() == "0":
         idle_countdown = ctx.get_idle_countdown("active", "0")
 
+    cpu_per_core_items = get_cpu_per_core_items(ctx, cpu_per_core)
     return {
+        "system": {
+            "ram": ram_usage,
+            "cpu": cpu_per_core_items,
+            "freq": cpu_frequency,
+            "storage": storage_usage,
+        },
+        "minecraft": {
+            "status": service_status_display,
+            "players": players_online,
+            "tick_time": tick_rate,
+            "auto_stop": idle_countdown,
+        },
+        "backup": {
+            "status": backup_status,
+            "last": backup_schedule["last_backup_time"],
+            "next": backup_schedule["next_backup_time"],
+            "count": backup_count,
+            "folder": backup_folder,
+        },
+        "cleanup": {
+            "last_run": cleanup_meta.get("last_run_at", ""),
+            "rule_version": cleanup_meta.get("rule_version"),
+            "schedule_version": cleanup_meta.get("schedule_version"),
+            "last_changed_by": cleanup_meta.get("last_changed_by", ""),
+            "missed_runs": cleanup_missed_runs,
+            "next_run": cleanup_next_run,
+            "stale_worlds_count": stale_worlds_count,
+        },
         "service_status": service_status_display,
         "service_status_class": ctx.get_service_status_class(service_status_display),
         "service_running_status": service_status,
         "backups_status": slow["backups_status"],
         "ram_usage": ram_usage,
         "ram_usage_class": get_ram_usage_class(ctx, ram_usage),
-        "cpu_per_core_items": get_cpu_per_core_items(ctx, cpu_per_core),
+        "cpu_per_core_items": cpu_per_core_items,
         "cpu_frequency": cpu_frequency,
         "cpu_frequency_class": get_cpu_frequency_class(ctx, cpu_frequency),
         "storage_usage": storage_usage,
@@ -297,6 +406,15 @@ def collect_dashboard_metrics(ctx):
         "backup_warning_message": str(backup_warning.get("message", "") or ""),
         "last_backup_time": backup_schedule["last_backup_time"],
         "next_backup_time": backup_schedule["next_backup_time"],
+        "backup_files_count": backup_count,
+        "backup_folder": backup_folder,
+        "stale_worlds_count": stale_worlds_count,
+        "cleanup_last_run": cleanup_meta.get("last_run_at", ""),
+        "cleanup_rule_version": cleanup_meta.get("rule_version"),
+        "cleanup_schedule_version": cleanup_meta.get("schedule_version"),
+        "cleanup_last_changed_by": cleanup_meta.get("last_changed_by", ""),
+        "cleanup_missed_runs": cleanup_missed_runs,
+        "cleanup_next_run": cleanup_next_run,
         "server_time": server_time_text,
         "server_time_epoch_ms": server_time_epoch_ms,
         "server_time_zone": server_time_zone,
@@ -362,7 +480,7 @@ def metrics_collector_loop(ctx):
                 )
                 should_collect = has_active_flask_app_clients(ctx)
             if not should_collect:
-                _maybe_refresh_idle_storage_usage(ctx)
+                _maybe_refresh_idle_storage_cache(ctx)
                 continue
         snapshot = collect_and_publish_metrics(ctx)
         interval = _metrics_interval_seconds(ctx, snapshot)
@@ -402,6 +520,34 @@ def get_cached_dashboard_metrics(ctx):
     server_time_epoch_ms = int(now_display.timestamp() * 1000)
     server_time_zone = str(now_display.tzname() or "").strip()
     return {
+        "system": {
+            "ram": "unknown",
+            "cpu": [{"index": 0, "value": "unknown", "class": "stat-red"}],
+            "freq": "unknown",
+            "storage": "unknown",
+        },
+        "minecraft": {
+            "status": "Off",
+            "players": "unknown",
+            "tick_time": "unknown",
+            "auto_stop": "--:--",
+        },
+        "backup": {
+            "status": "Idle",
+            "last": "--",
+            "next": "--",
+            "count": 0,
+            "folder": str(getattr(ctx, "BACKUP_DIR", "") or ""),
+        },
+        "cleanup": {
+            "last_run": "",
+            "rule_version": None,
+            "schedule_version": None,
+            "last_changed_by": "",
+            "missed_runs": 0,
+            "next_run": "",
+            "stale_worlds_count": 0,
+        },
         "service_status": "Off",
         "service_status_class": "stat-red",
         "service_running_status": "inactive",

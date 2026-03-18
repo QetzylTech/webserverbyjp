@@ -6,7 +6,7 @@
         const state = ctx.state || {};
 
         const RULE_FIELD_UPDATERS = {
-            "age.days": (draft, value) => { draft.age.days = Math.max(7, Number(value || 7)); },
+            "age.days": (draft, value) => { draft.age.days = Math.max(3, Number(value || 3)); },
             "space.used_trigger_percent": (draft, value) => { draft.space.used_trigger_percent = Math.max(50, Math.min(100, Number(value || 80))); },
             "count.session_backups_to_keep": (draft, value) => { draft.count.session_backups_to_keep = Math.max(3, Number(value || 3)); },
             "count.manual_backups_to_keep": (draft, value) => { draft.count.manual_backups_to_keep = Math.max(3, Number(value || 3)); },
@@ -31,7 +31,7 @@
             const countMax = Number(rules?.count?.max_per_category ?? 30);
             const effective = {
                 age: {
-                    days: Number(rules?.age?.days ?? 7),
+                    days: Number(rules?.age?.days ?? 3),
                 },
                 count: {
                     max_per_category: Number(rules?.count?.max_per_category ?? countMax),
@@ -97,7 +97,7 @@
                 sudo_password: String(sudoPassword || ""),
                 rules: {
                     age: {
-                        days: Math.max(7, Number(nextRules.age.days ?? 7)),
+                        days: Math.max(3, Number(nextRules.age.days ?? 3)),
                     },
                     count: {
                         max_per_category: Math.max(3, Number(maxCount || 3)),
@@ -119,8 +119,8 @@
                         every_n_days: Number(nextRules.time_based.every_n_days ?? 1),
                     },
                     caps: {
-                        max_delete_files_absolute: 5,
-                        max_delete_percent_eligible: 10,
+                        max_delete_files_absolute: 10,
+                        max_delete_percent_eligible: 50,
                         max_delete_min_if_non_empty: 1,
                     },
                 },
@@ -138,7 +138,7 @@
             dom.rulesCardList.innerHTML = "";
             const effective = getEffectiveRules();
             const inputDisabled = state.rulesEditMode ? "" : "disabled";
-            const ageDays = Number(effective?.age?.days ?? 7);
+            const ageDays = Number(effective?.age?.days ?? 3);
             const usedTrigger = Number(effective?.space?.used_trigger_percent ?? 80);
             const sessionKeep = Number(effective?.count?.session_backups_to_keep ?? 30);
             const manualKeep = Number(effective?.count?.manual_backups_to_keep ?? 30);
@@ -169,7 +169,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Minimum age to start deleting (Days)</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-text-input" type="number" min="7" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
+                            ? `<input class="ui-text-input" type="number" min="3" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
                             : `<span class="rule-inline-value">${ageDays}</span>`
                         }
                     </p>
@@ -301,7 +301,7 @@
             if (target.validity.valueMissing) return "Value is required.";
             if (target.validity.badInput) return "Enter a valid number.";
             if (target.validity.rangeUnderflow) {
-                if (field === "age.days") return "Minimum is 7 days.";
+                if (field === "age.days") return "Minimum is 3 days.";
                 if (field.startsWith("count.")) return "Minimum is 3.";
                 if (field === "space.used_trigger_percent") return "Minimum is 50%.";
                 return "Value is below the minimum.";

@@ -35,6 +35,7 @@ class AppConfig:
     mc_query_interval_seconds: int
     metrics_collect_interval_seconds: int
     metrics_collect_interval_off_seconds: int
+    metrics_idle_storage_refresh_seconds: float
     metrics_stream_heartbeat_seconds: int
     log_stream_heartbeat_seconds: int
     log_stream_event_buffer_size: int
@@ -69,6 +70,7 @@ class AppConfig:
     slow_metrics_interval_active_seconds: float
     slow_metrics_interval_off_seconds: float
     log_fetcher_idle_sleep_seconds: float
+    log_fetcher_idle_poll_seconds: float
     process_role: str
     port: int
     secret_key_value: str
@@ -130,6 +132,11 @@ def load_web_config(app_dir: Path, *, default_backup_dir: Path, default_minecraf
             max(metrics_collect_interval_seconds, 5),
             minimum=1,
         ),
+        metrics_idle_storage_refresh_seconds=web_cfg.get_float(
+            "METRICS_IDLE_STORAGE_REFRESH_SECONDS",
+            15.0,
+            minimum=1.0,
+        ),
         metrics_stream_heartbeat_seconds=web_cfg.get_int("METRICS_STREAM_HEARTBEAT_SECONDS", 5, minimum=1),
         log_stream_heartbeat_seconds=web_cfg.get_int("LOG_STREAM_HEARTBEAT_SECONDS", 5, minimum=1),
         log_stream_event_buffer_size=web_cfg.get_int("LOG_STREAM_EVENT_BUFFER_SIZE", 800, minimum=50),
@@ -180,6 +187,7 @@ def load_web_config(app_dir: Path, *, default_backup_dir: Path, default_minecraf
         slow_metrics_interval_active_seconds=web_cfg.get_float("SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", 5.0, minimum=1.0),
         slow_metrics_interval_off_seconds=web_cfg.get_float("SLOW_METRICS_INTERVAL_OFF_SECONDS", 15.0, minimum=1.0),
         log_fetcher_idle_sleep_seconds=web_cfg.get_float("LOG_FETCHER_IDLE_SLEEP_SECONDS", 2.0, minimum=0.5),
+        log_fetcher_idle_poll_seconds=web_cfg.get_float("LOG_FETCHER_IDLE_POLL_SECONDS", 15.0, minimum=1.0),
         process_role=process_role,
         port=web_cfg.get_int("PORT", 8080),
         secret_key_value=web_cfg.get_str("MCWEB_SECRET_KEY", ""),

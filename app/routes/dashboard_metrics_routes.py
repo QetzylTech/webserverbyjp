@@ -5,9 +5,10 @@ import json
 import threading
 import time
 
-from flask import Response, jsonify, stream_with_context
+from flask import Response, jsonify, request, stream_with_context
 
 from app.core import state_store as state_store_service
+from app.services import client_registry as client_registry_service
 
 _METRICS_ROUTE_CACHE_LOCK = threading.Lock()
 # Short cache for /metrics JSON fallback requests. This improves burst behavior,
@@ -94,8 +95,11 @@ def register_metrics_routes(app, state, get_nav_alert_state_from_request=None):
     @app.route("/metrics-stream")
     def metrics_stream():
         """Runtime helper metrics_stream."""
+        client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
         def generate():
             """Runtime helper generate."""
+            if client_id:
+                client_registry_service.register_client(state, client_id, channel="metrics_stream")
             with state["metrics_cache_cond"]:
                 state["metrics_stream_client_count"] += 1
                 state["metrics_cache_cond"].notify_all()
@@ -137,10 +141,14 @@ def register_metrics_routes(app, state, get_nav_alert_state_from_request=None):
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
                             continue
                     yield ": keepalive\n\n"
+                    if client_id:
+                        client_registry_service.touch_client(state, client_id, channel="metrics_stream")
                     heartbeat = float(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
                     collect_interval = float(state.get("METRICS_COLLECT_INTERVAL_SECONDS", 1) or 1)
                     time.sleep(min(heartbeat, collect_interval))
             finally:
+                if client_id:
+                    client_registry_service.unregister_client(state, client_id, channel="metrics_stream")
                 with state["metrics_cache_cond"]:
                     state["metrics_stream_client_count"] = max(0, state["metrics_stream_client_count"] - 1)
                     state["metrics_cache_cond"].notify_all()

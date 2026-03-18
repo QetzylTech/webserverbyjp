@@ -3,6 +3,7 @@
         const path = String(config.path || "").trim();
         const csrfToken = String(config.csrfToken || "");
         const intervalMs = Number(config.intervalMs || 0);
+        const clientId = String(config.clientId || "").trim();
         let timerId = null;
 
         function send() {
@@ -12,6 +13,7 @@
                 headers: {
                     "X-Requested-With": "XMLHttpRequest",
                     "X-CSRF-Token": csrfToken,
+                    ...(clientId ? { "X-MCWEB-Client-Id": clientId } : {}),
                 },
                 cache: "no-store",
                 keepalive: true,

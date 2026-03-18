@@ -91,6 +91,16 @@ def register_control_routes(app, state, *, run_cleanup_event_if_enabled):
         )
         return _finalize(result)
 
+    @app.route("/stream/restore_logs")
+    def restore_logs_stream():
+        since = request.args.get("since", "") or request.headers.get("Last-Event-ID", "") or "0"
+        result = control_commands.restore_log_stream(
+            ctx,
+            since=since,
+            job_id=(request.args.get("job_id", "") or "").strip() or None,
+        )
+        return _finalize(result)
+
     @app.route("/operation-status/<op_id>")
     def operation_status(op_id):
         result = control_commands.operation_status(

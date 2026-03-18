@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 
 from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_run_with_lock
+from app.core import state_store as state_store_service
 from app.services.maintenance_policy import _cleanup_validate_rules
 from app.services.maintenance_scheduler import run_cleanup_event_if_enabled, start_cleanup_scheduler_once
 from app.services.maintenance_state_store import (
@@ -26,6 +27,50 @@ from app.services.maintenance_state_store import (
 
 def normalize_scope(raw_scope):
     return _cleanup_normalize_scope(raw_scope)
+
+
+def _has_pending_operation(ctx, op_type):
+    db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
+    if db_path is None:
+        return False
+    try:
+        rows = state_store_service.list_operations_by_status(
+            db_path,
+            statuses=("intent", "in_progress"),
+            limit=80,
+        )
+    except Exception:
+        return False
+    kind = str(op_type or "").strip().lower()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("op_type", "") or "").strip().lower() == kind:
+            return True
+    return False
+
+
+def _restore_running(state):
+    getter = state.get("get_restore_status") if isinstance(state, dict) else None
+    if not callable(getter):
+        return False
+    try:
+        payload = getter(since_seq=0, job_id=None)
+    except Exception:
+        return False
+    return bool(payload.get("running")) if isinstance(payload, dict) else False
+
+
+def _priority_conflict(ctx, state):
+    if state.get("is_backup_running", lambda: False)():
+        return "backup_running"
+    if _has_pending_operation(ctx, "backup"):
+        return "backup_queued"
+    if _restore_running(state):
+        return "restore_running"
+    if _has_pending_operation(ctx, "restore"):
+        return "restore_queued"
+    return ""
 
 
 def _require_password(state, payload, *, what, why, trigger, scope, details='', log_success=False):
@@ -152,6 +197,10 @@ def _parse_dry_run(value):
 
 def run_rules(ctx, state, payload):
     scope = normalize_scope(payload.get('scope', 'backups'))
+    conflict_reason = _priority_conflict(ctx, state)
+    if conflict_reason:
+        _cleanup_log(ctx, what='run_rules', why='manual_apply', trigger='manual_rule', result='conflict', details=f"scope={scope};reason={conflict_reason}")
+        return _cleanup_error('conflict', status=409)
     selected_rule = str(payload.get('rule_key', '')).strip().lower()
     if selected_rule not in {'', 'age', 'count', 'space'}:
         return _cleanup_error('validation_failure', 'rule_key must be one of: age, count, space.', status=400)
@@ -231,6 +280,10 @@ def run_rules(ctx, state, payload):
 
 def manual_delete(ctx, state, payload):
     scope = normalize_scope(payload.get('scope', 'backups'))
+    conflict_reason = _priority_conflict(ctx, state)
+    if conflict_reason:
+        _cleanup_log(ctx, what='manual_delete', why='manual_selection', trigger='manual', result='conflict', details=f"scope={scope};reason={conflict_reason}")
+        return _cleanup_error('conflict', status=409)
     dry_run = _parse_dry_run(payload.get('dry_run', False))
     selected = payload.get('selected_paths', [])
     if not isinstance(selected, list):

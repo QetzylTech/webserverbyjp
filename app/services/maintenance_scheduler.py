@@ -2,10 +2,11 @@
 
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.worker_scheduler import WorkerSpec, start_worker
+from app.core import state_store as state_store_service
 
 from app.services.maintenance_context import as_ctx
 from app.services.maintenance_engine import _cleanup_run_with_lock
@@ -24,12 +25,55 @@ from app.services.maintenance_state_store import (
     _cleanup_save_config,
     _cleanup_save_history,
     _cleanup_safe_used_percent,
+    _cleanup_record_scheduler_tick,
     _safe_int,
 )
 
 _cleanup_scheduler_start_lock = threading.Lock()
 _cleanup_scheduler_started = False
-_cleanup_runtime_last_tick = {"backups": 0, "stale_worlds": 0}
+
+def _has_pending_operation(ctx, op_type):
+    db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
+    if db_path is None:
+        return False
+    try:
+        rows = state_store_service.list_operations_by_status(
+            db_path,
+            statuses=("intent", "in_progress"),
+            limit=80,
+        )
+    except Exception:
+        return False
+    kind = str(op_type or "").strip().lower()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("op_type", "") or "").strip().lower() == kind:
+            return True
+    return False
+
+
+def _restore_running(ctx):
+    getter = getattr(ctx, "get_restore_status", None)
+    if not callable(getter):
+        return False
+    try:
+        payload = getter(since_seq=0, job_id=None)
+    except Exception:
+        return False
+    return bool(payload.get("running")) if isinstance(payload, dict) else False
+
+
+def _priority_conflict(ctx):
+    if getattr(ctx, "is_backup_running", None) and ctx.is_backup_running():
+        return "backup_running"
+    if _has_pending_operation(ctx, "backup"):
+        return "backup_queued"
+    if _restore_running(ctx):
+        return "restore_running"
+    if _has_pending_operation(ctx, "restore"):
+        return "restore_queued"
+    return ""
 
 
 def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
@@ -66,6 +110,10 @@ def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
 
 def _run_cleanup_trigger(ctx, full_cfg, cfg, *, scope, trigger, schedule_id, why, what, extra_meta=None):
     """Run one cleanup trigger and record the outcome when work actually executes."""
+    conflict_reason = _priority_conflict(ctx)
+    if conflict_reason:
+        _cleanup_mark_missed_run(ctx, "priority_conflict", schedule_id=schedule_id, scope=scope)
+        return False
     result = _cleanup_run_with_lock(ctx, cfg, mode="rule", trigger=trigger)
     if result is None:
         _cleanup_mark_missed_run(ctx, "lock_held", schedule_id=schedule_id, scope=scope)
@@ -103,10 +151,7 @@ def _cleanup_scheduler_loop(ctx):
                 cfg = _cleanup_get_scope_view(full_cfg, scope)
                 schedules = cfg.get("schedules", [])
                 meta = cfg.setdefault("meta", {})
-                last_tick = _safe_int(_cleanup_runtime_last_tick.get(scope, 0), 0, minimum=0, maximum=2_147_483_647)
-                if last_tick > 0 and (now_ts - last_tick) > 75:
-                    _cleanup_mark_missed_run(ctx, "scheduler_gap", schedule_id=f"{scope}:scheduler", scope=scope)
-                _cleanup_runtime_last_tick[scope] = now_ts
+                last_tick = _cleanup_record_scheduler_tick(ctx, scope, now_ts, max_gap_seconds=75)
                 meta["last_scheduler_tick"] = now_ts
 
                 for schedule in schedules:
@@ -236,3 +281,82 @@ def start_cleanup_scheduler_once(ctx):
 def run_cleanup_event_if_enabled(ctx, event_name):
     """Public wrapper used by control routes to fire maintenance events."""
     return _cleanup_run_event_if_enabled(as_ctx(ctx), event_name)
+
+
+def _schedule_next_time(now_local, schedule):
+    """Return next datetime for a time-based schedule, or None."""
+    if not schedule.get("enabled", True):
+        return None
+    if schedule.get("mode") != "time":
+        return None
+    try:
+        hour, minute = [int(part) for part in str(schedule.get("time", "03:00")).split(":", 1)]
+    except Exception:
+        return None
+    base_today = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    interval = str(schedule.get("interval", "daily")).strip().lower()
+    if interval == "daily":
+        return base_today if base_today > now_local else (base_today + timedelta(days=1))
+    if interval == "weekly":
+        target = int(schedule.get("day_of_week", 0) or 0) % 7
+        delta = (target - now_local.weekday()) % 7
+        candidate = base_today + timedelta(days=delta)
+        if candidate <= now_local:
+            candidate += timedelta(days=7)
+        return candidate
+    if interval == "monthly":
+        day = int(schedule.get("day_of_month", 1) or 1)
+        if day < 1:
+            day = 1
+        try:
+            candidate = base_today.replace(day=day)
+        except ValueError:
+            candidate = base_today.replace(day=1) + timedelta(days=31)
+            candidate = candidate.replace(day=1) - timedelta(days=1)
+            candidate = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now_local:
+            next_month = (now_local.replace(day=1) + timedelta(days=32)).replace(day=1)
+            try:
+                candidate = next_month.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
+            except ValueError:
+                candidate = (next_month + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+                candidate = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return candidate
+    if interval == "every_n_days":
+        every_n = max(1, int(schedule.get("every_n_days", 1) or 1))
+        anchor_raw = str(schedule.get("anchor_date", now_local.date().isoformat()))
+        try:
+            anchor = datetime.fromisoformat(anchor_raw).date()
+        except Exception:
+            anchor = now_local.date()
+        days_since = (now_local.date() - anchor).days
+        if days_since < 0:
+            days_since = 0
+        remainder = days_since % every_n
+        add_days = 0 if remainder == 0 else (every_n - remainder)
+        candidate = base_today + timedelta(days=add_days)
+        if candidate <= now_local:
+            candidate += timedelta(days=every_n)
+        return candidate
+    return None
+
+
+def get_next_cleanup_run_at(ctx, scope="backups"):
+    """Return the next scheduled cleanup run time (ISO string) for a scope."""
+    ctx = as_ctx(ctx)
+    cfg = _cleanup_load_config(ctx)
+    scope_view = _cleanup_get_scope_view(cfg, scope)
+    schedules = scope_view.get("schedules", []) if isinstance(scope_view, dict) else []
+    now_local = datetime.now(ctx.DISPLAY_TZ)
+    next_times = []
+    if isinstance(schedules, list):
+        for schedule in schedules:
+            if not isinstance(schedule, dict):
+                continue
+            candidate = _schedule_next_time(now_local, schedule)
+            if candidate is not None:
+                next_times.append(candidate)
+    if not next_times:
+        return ""
+    soonest = min(next_times)
+    return soonest.isoformat(timespec="seconds")

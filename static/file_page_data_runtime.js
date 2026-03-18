@@ -48,10 +48,20 @@
             return response.json();
         }
 
+        function openRestoreLogStream(options = {}) {
+            const jobId = String(options.jobId || "").trim();
+            const since = options.since !== undefined && options.since !== null ? Number(options.since) : null;
+            const url = new URL("/stream/restore_logs", window.location.origin);
+            if (jobId) url.searchParams.set("job_id", jobId);
+            if (Number.isFinite(since) && since > 0) url.searchParams.set("since", String(since));
+            return new EventSource(url.toString());
+        }
+
         return {
             loadStandardFileList: loadStandardFileList,
             loadLogFileList: loadLogFileList,
             loadViewedFile: loadViewedFile,
+            openRestoreLogStream: openRestoreLogStream,
         };
     }
 

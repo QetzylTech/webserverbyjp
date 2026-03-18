@@ -11,7 +11,6 @@ def _restore_status_defaults():
         "seq": 0,
         "events": [],
         "result": None,
-        "undo_filename": "",
     }
 
 
@@ -73,7 +72,6 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
                 "seq": int(state.get("seq", 0) or 0),
                 "events": [],
                 "result": None,
-                "undo_filename": "",
             }
         events = [dict(item) for item in state.get("events", []) if int(item.get("seq", 0) or 0) > since]
         result = state.get("result")
@@ -84,5 +82,4 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
             "seq": int(state.get("seq", 0) or 0),
             "events": events,
             "result": dict(result) if isinstance(result, dict) else result,
-            "undo_filename": str(state.get("undo_filename", "") or ""),
         }

@@ -63,7 +63,6 @@ def start_restore_job(ctx, backup_filename):
         state["job_id"] = job_id
         state["running"] = True
         state["result"] = None
-        state["undo_filename"] = ""
         state["events"] = []
     append_restore_event(ctx, f"Restore job queued: {str(backup_filename or '').strip()}")
 
@@ -85,7 +84,6 @@ def start_restore_job(ctx, backup_filename):
             with lock:
                 state["running"] = False
                 state["result"] = dict(result) if isinstance(result, dict) else result
-                state["undo_filename"] = str((result or {}).get("pre_restore_snapshot_name", "") or "")
             append_restore_event(ctx, str((result or {}).get("message", "Restore completed.")))
 
     try:

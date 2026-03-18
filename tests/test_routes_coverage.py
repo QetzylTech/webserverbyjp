@@ -33,12 +33,15 @@ class ControlRoutesCoverageTests(unittest.TestCase):
     def test_control_routes_registered_and_smoke(self):
         app = Flask(__name__)
         backup_state = SimpleNamespace(lock=threading.Lock(), last_error="")
+        intent_state = {"value": ""}
+        status_state = {"value": "inactive"}
         state = {
                 "is_storage_low": lambda: False,
                 "low_storage_error_message": lambda: "low",
                 "log_mcweb_action": lambda *_args, **_kwargs: None,
                 "_low_storage_blocked_response": lambda message: (message, 409),
-                "set_service_status_intent": lambda *_args, **_kwargs: None,
+                "set_service_status_intent": lambda value: intent_state.__setitem__("value", value),
+                "get_service_status_intent": lambda: intent_state["value"],
                 "invalidate_status_cache": lambda: None,
                 "write_session_start_time": lambda: 1.0,
                 "_session_write_failed_response": lambda: ("session failed", 500),
@@ -59,7 +62,7 @@ class ControlRoutesCoverageTests(unittest.TestCase):
                 "get_restore_status": lambda since_seq="0", job_id=None: {"ok": True, "running": False, "events": [], "result": {"ok": True}},
                 "_rcon_rejected_response": lambda message, status=400: (message, status),
                 "is_rcon_enabled": lambda: True,
-                "get_status": lambda: "active",
+                "get_status": lambda: status_state["value"],
                 "_run_mcrcon": lambda command, timeout=8: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
                 "APP_STATE_DB_PATH": Path("data/test_app_state_routes.sqlite3"),
             }
@@ -72,6 +75,7 @@ class ControlRoutesCoverageTests(unittest.TestCase):
         _assert_rule_methods(self, app, "/backup", {"POST"})
         _assert_rule_methods(self, app, "/restore-backup", {"POST"})
         _assert_rule_methods(self, app, "/restore-status", {"GET"})
+        _assert_rule_methods(self, app, "/stream/restore_logs", {"GET"})
         _assert_rule_methods(self, app, "/operation-status/<op_id>", {"GET"})
         _assert_rule_methods(self, app, "/rcon", {"POST"})
 
@@ -81,11 +85,13 @@ class ControlRoutesCoverageTests(unittest.TestCase):
         self.assertTrue(start_op_id)
         self.assertEqual(client.get(f"/operation-status/{start_op_id}").status_code, 200)
 
+        intent_state["value"] = "starting"
         stop_resp = client.post("/stop", data={"sudo_password": "ok"})
         self.assertEqual(stop_resp.status_code, 202)
         stop_op_id = (stop_resp.get_json() or {}).get("op_id", "")
         self.assertTrue(stop_op_id)
         self.assertEqual(client.get(f"/operation-status/{stop_op_id}").status_code, 200)
+        intent_state["value"] = ""
         backup_resp = client.post("/backup")
         self.assertEqual(backup_resp.status_code, 202)
         backup_op_id = (backup_resp.get_json() or {}).get("op_id", "")
@@ -98,6 +104,8 @@ class ControlRoutesCoverageTests(unittest.TestCase):
         self.assertTrue(restore_op_id)
         self.assertEqual(client.get(f"/operation-status/{restore_op_id}").status_code, 200)
         self.assertEqual(client.get("/restore-status?since=0").status_code, 200)
+        self.assertEqual(client.get("/stream/restore_logs").status_code, 200)
+        status_state["value"] = "active"
         self.assertEqual(
             client.post("/rcon", data={"sudo_password": "ok", "rcon_command": "list"}).status_code,
             200,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import abort, jsonify, render_template, request
 from app.commands import setup_commands
 from app.queries import setup_queries
+from app.services import setup_service as setup_service_service
 
 _REQUIRED_MESSAGE = "Please fill in all required fields."
 

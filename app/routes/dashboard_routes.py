@@ -94,7 +94,12 @@ def register_routes(app, state):
     @app.route("/home-heartbeat", methods=["POST"])
     def home_heartbeat():
         """Refresh the short-lived activity marker used by the home-page worker."""
-        state["_mark_home_page_client_active"]()
+        client_id = _current_request_client_id()
+        marker = state["_mark_home_page_client_active"]
+        try:
+            marker(client_id=client_id)
+        except TypeError:
+            marker()
         return ("", 204)
 
     @app.route("/ui-error-log", methods=["POST"])

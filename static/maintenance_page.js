@@ -15,6 +15,7 @@
 
         const shell = context.shell || window.MCWebShell || null;
         const http = window.MCWebHttp || null;
+        const CSRF_HEADER_NAME = "X-CSRF-Token";
         const domUtils = window.MCWebDomUtils || {};
         const maintenanceRuntime = window.MCWebMaintenancePage || {};
         const apiRuntime = window.MCWebMaintenanceApiRuntime || {};

@@ -1,9 +1,13 @@
 """Command handlers for control-plane start/stop/backup/restore actions."""
 from __future__ import annotations
 
+import json
 import time
 
+from flask import Response, stream_with_context
+
 from app.core import state_store as state_store_service
+from app.services import maintenance_engine as maintenance_engine_service
 from app.commands.control_support import (
     _accepted_operation_result,
     _enqueue_control_intent,
@@ -16,6 +20,68 @@ from app.commands.control_support import (
     _update_operation_record,
     enforce_rate_limit,
 )
+from app.commands.control_types import CommandResult
+
+_STARTING_STATES = {"activating", "starting"}
+_SHUTTING_STATES = {"deactivating", "shutting_down"}
+
+
+def _service_state_snapshot(state):
+    raw = ""
+    try:
+        raw = str(state["get_status"]() or "").strip().lower()
+    except Exception:
+        raw = ""
+    try:
+        intent = str(state.get("get_service_status_intent", lambda: "")() or "").strip().lower()
+    except Exception:
+        intent = ""
+    off_states = {str(item or "").strip().lower() for item in state.get("OFF_STATES", {"inactive", "failed"})}
+    is_off = raw in off_states and intent not in {"starting", "shutting"}
+    is_starting = raw in _STARTING_STATES or intent == "starting"
+    is_shutting = raw in _SHUTTING_STATES or intent == "shutting"
+    return raw, intent, is_off, is_starting, is_shutting
+
+
+def _reject_invalid_state(message, *, error="invalid_state", status_code=409):
+    return _payload_result({"ok": False, "error": error, "message": message}, status_code=status_code)
+
+
+def _has_pending_operation(ctx, op_type):
+    state = ctx.state
+    db_path = state.get("APP_STATE_DB_PATH")
+    if db_path is None:
+        return False
+    try:
+        rows = state_store_service.list_operations_by_status(
+            db_path,
+            statuses=("intent", "in_progress"),
+            limit=80,
+        )
+    except Exception:
+        return False
+    kind = str(op_type or "").strip().lower()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("op_type", "") or "").strip().lower() == kind:
+            return True
+    return False
+
+
+def _restore_in_progress(state):
+    getter = state.get("get_restore_status")
+    if not callable(getter):
+        return False
+    try:
+        payload = getter(since_seq=0, job_id=None)
+    except Exception:
+        return False
+    return bool(payload.get("running")) if isinstance(payload, dict) else False
+
+
+def _cleanup_in_progress():
+    return bool(maintenance_engine_service.cleanup_lock_held())
 
 
 def start_operation(ctx, *, idempotency_key, client_key):
@@ -23,6 +89,18 @@ def start_operation(ctx, *, idempotency_key, client_key):
     limited = enforce_rate_limit(ctx, "start", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
         return limited
+    _raw, intent, is_off, is_starting, is_shutting = _service_state_snapshot(state)
+    if not is_off:
+        state["log_mcweb_action"]("start", rejection_message="Server is not off.")
+        return _reject_invalid_state("Server is not off.")
+    if is_starting or is_shutting or intent == "starting":
+        state["log_mcweb_action"]("start", rejection_message="Start already queued or in progress.")
+        return _reject_invalid_state("Start already queued or in progress.")
+    guard = state.get("storage_guard")
+    if guard is not None and not guard.is_storage_sufficient(state, "start"):
+        message = guard.block_message(state, "start")
+        state["log_mcweb_action"]("start", rejection_message=message)
+        return _response_result(state["_low_storage_blocked_response"](message))
     if state["is_storage_low"]():
         message = state["low_storage_error_message"]()
         state["log_mcweb_action"]("start", rejection_message=message)
@@ -116,6 +194,10 @@ def stop_operation(ctx, *, idempotency_key, client_key, sudo_password):
     limited = enforce_rate_limit(ctx, "stop", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
         return limited
+    _raw, _intent, is_off, _is_starting, _is_shutting = _service_state_snapshot(state)
+    if is_off:
+        state["log_mcweb_action"]("stop", rejection_message="Server is already off.")
+        return _reject_invalid_state("Server is already off.")
     if not state["validate_sudo_password"](sudo_password):
         state["log_mcweb_action"]("stop", rejection_message="Password incorrect.")
         return _response_result(state["_password_rejected_response"]())
@@ -211,6 +293,25 @@ def backup_operation(ctx, *, idempotency_key, client_key):
     limited = enforce_rate_limit(ctx, "backup", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
         return limited
+    _raw, _intent, _is_off, is_starting, is_shutting = _service_state_snapshot(state)
+    if is_starting or is_shutting:
+        state["log_mcweb_action"]("backup", rejection_message="Backup unavailable while server is starting or shutting down.")
+        return _reject_invalid_state("Backup unavailable while server is starting or shutting down.")
+    if _cleanup_in_progress():
+        state["log_mcweb_action"]("backup", rejection_message="Cleanup is running.")
+        return _reject_invalid_state("Cleanup is running.")
+    if _restore_in_progress(state) or _has_pending_operation(ctx, "restore"):
+        state["log_mcweb_action"]("backup", rejection_message="Restore is running or queued.")
+        return _reject_invalid_state("Restore is running or queued.")
+    guard = state.get("storage_guard")
+    if guard is not None and not guard.is_storage_sufficient(state, "backup"):
+        message = guard.block_message(state, "backup")
+        state["log_mcweb_action"]("backup", rejection_message=message)
+        return _response_result(state["_low_storage_blocked_response"](message))
+    if state["is_storage_low"]():
+        message = state["low_storage_error_message"]()
+        state["log_mcweb_action"]("backup", rejection_message=message)
+        return _response_result(state["_low_storage_blocked_response"](message))
 
     op_id, resumed, result = _prepare_operation(
         ctx,
@@ -301,6 +402,17 @@ def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filena
             {"ok": False, "error": "restore_failed", "message": "Backup filename is required."},
             status_code=400,
         )
+
+    _raw_status, _intent, is_off, _is_starting, _is_shutting = _service_state_snapshot(state)
+    if not is_off:
+        state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Restore is only available when server is Off.")
+        return _reject_invalid_state("Restore is only available when server is Off.")
+    if _cleanup_in_progress():
+        state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Cleanup is running.")
+        return _reject_invalid_state("Cleanup is running.")
+    if state["is_backup_running"]() or _has_pending_operation(ctx, "backup"):
+        state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Backup is running or queued.")
+        return _reject_invalid_state("Backup is running or queued.")
 
     op_id, resumed, result = _prepare_operation(
         ctx,
@@ -461,6 +573,57 @@ def restore_status(ctx, *, since, job_id=None):
     state = ctx.state
     payload = state["get_restore_status"](since_seq=since, job_id=job_id)
     return _payload_result(payload)
+
+
+def restore_log_stream(ctx, *, since, job_id=None):
+    state = ctx.state
+    try:
+        since_seq = int(since or 0)
+    except (TypeError, ValueError):
+        since_seq = 0
+    requested_job_id = str(job_id or "").strip() or None
+
+    def generate():
+        last_seq = since_seq
+        status_sent = False
+        while True:
+            payload = state["get_restore_status"](since_seq=last_seq, job_id=requested_job_id)
+            if not isinstance(payload, dict):
+                payload = {"ok": False}
+            events = payload.get("events") if isinstance(payload.get("events"), list) else []
+            for event in events:
+                seq = int(event.get("seq", last_seq) or last_seq)
+                last_seq = max(last_seq, seq)
+                data = {
+                    "type": "line",
+                    "seq": seq,
+                    "at": event.get("at"),
+                    "message": event.get("message", ""),
+                }
+                yield f"id: {seq}\n"
+                yield "event: line\n"
+                yield f"data: {json.dumps(data)}\n\n"
+            if not payload.get("running") and not status_sent:
+                status_sent = True
+                status_payload = {
+                    "type": "status",
+                    "payload": payload,
+                }
+                yield "event: status\n"
+                yield f"data: {json.dumps(status_payload)}\n\n"
+                return
+            yield ": keepalive\n\n"
+            time.sleep(1.0)
+
+    response = Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+    return CommandResult(response=response)
 
 
 def operation_status(ctx, *, op_id, client_key):

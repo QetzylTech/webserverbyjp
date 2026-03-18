@@ -20,7 +20,7 @@ class _ImmediateThread:
 
 
 class ControlRouteStartSemanticsTests(unittest.TestCase):
-    def _build_state(self, events, *, start_ok=True, session_ok=True, db_path=None):
+    def _build_state(self, events, *, start_ok=True, session_ok=True, db_path=None, service_status="inactive"):
         return {
             "is_storage_low": lambda: False,
             "low_storage_error_message": lambda: "low",
@@ -47,7 +47,7 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
             "get_restore_status": lambda since_seq="0", job_id=None: {"ok": True, "running": False, "events": []},
             "_rcon_rejected_response": lambda message, status=400: (message, status),
             "is_rcon_enabled": lambda: True,
-            "get_status": lambda: "active",
+            "get_status": lambda: service_status,
             "_run_mcrcon": lambda command, timeout=8: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
             "APP_STATE_DB_PATH": Path(db_path or f"data/test_state_{uuid.uuid4().hex}.sqlite3"),
         }
@@ -73,6 +73,36 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
             response = app.test_client().post("/start")
         self.assertEqual(response.status_code, 202)
         self.assertFalse(any(event[0] == "write_session" for event in events))
+
+    def test_start_rejected_when_service_not_off(self):
+        app = Flask(__name__)
+        events = []
+        state = self._build_state(events, service_status="active")
+        dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+        response = app.test_client().post("/start")
+        payload = response.get_json() or {}
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload.get("error"), "invalid_state")
+
+    def test_stop_rejected_when_service_off(self):
+        app = Flask(__name__)
+        events = []
+        state = self._build_state(events, service_status="inactive")
+        dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+        response = app.test_client().post("/stop", data={"sudo_password": "ok"})
+        payload = response.get_json() or {}
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload.get("error"), "invalid_state")
+
+    def test_backup_rejected_when_service_starting(self):
+        app = Flask(__name__)
+        events = []
+        state = self._build_state(events, service_status="starting")
+        dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+        response = app.test_client().post("/backup")
+        payload = response.get_json() or {}
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload.get("error"), "invalid_state")
 
 
 if __name__ == "__main__":

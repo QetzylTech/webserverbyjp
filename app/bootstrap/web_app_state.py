@@ -5,6 +5,7 @@ import re
 import threading
 
 from app.state import BackupState, SessionState
+from app.services.storage_guard import StorageGuard
 
 FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
 
@@ -88,6 +89,7 @@ def build_state(app_config, *, app_dir, display_tz):
 
     metrics_collect_interval_seconds = app_config.metrics_collect_interval_seconds
     metrics_collect_interval_off_seconds = app_config.metrics_collect_interval_off_seconds
+    metrics_idle_storage_refresh_seconds = app_config.metrics_idle_storage_refresh_seconds
     metrics_stream_heartbeat_seconds = app_config.metrics_stream_heartbeat_seconds
     log_stream_heartbeat_seconds = app_config.log_stream_heartbeat_seconds
     log_stream_event_buffer_size = app_config.log_stream_event_buffer_size
@@ -122,6 +124,7 @@ def build_state(app_config, *, app_dir, display_tz):
     slow_metrics_interval_active_seconds = app_config.slow_metrics_interval_active_seconds
     slow_metrics_interval_off_seconds = app_config.slow_metrics_interval_off_seconds
     log_fetcher_idle_sleep_seconds = app_config.log_fetcher_idle_sleep_seconds
+    log_fetcher_idle_poll_seconds = app_config.log_fetcher_idle_poll_seconds
     crash_stop_markers = (
         "Preparing crash report with UUID",
         "This crash report has been saved to:",
@@ -175,7 +178,6 @@ def build_state(app_config, *, app_dir, display_tz):
         "seq": 0,
         "events": [],
         "result": None,
-        "undo_filename": "",
     }
     backup_warning_lock = threading.Lock()
     backup_warning_seq = 0
@@ -183,6 +185,9 @@ def build_state(app_config, *, app_dir, display_tz):
     backup_warning_at = 0.0
     storage_emergency_lock = threading.Lock()
     storage_emergency_active = False
+    storage_guard = StorageGuard()
+    client_registry_lock = threading.Lock()
+    client_registry = {}
     device_name_map_lock = threading.Lock()
     device_name_map_cache = {}
     device_name_map_mtime_ns_ref = [None]
@@ -192,6 +197,9 @@ def build_state(app_config, *, app_dir, display_tz):
             "cond": threading.Condition(),
             "seq": 0,
             "events": deque(maxlen=log_stream_event_buffer_size),
+            "buffered_lines": deque(maxlen=log_stream_event_buffer_size),
+            "file_offset": 0,
+            "follow_initialized": False,
             "started": False,
             "lifecycle_lock": threading.Lock(),
             "clients": 0,
@@ -261,6 +269,7 @@ def build_state(app_config, *, app_dir, display_tz):
         "rcon_last_config_read_at": rcon_last_config_read_at,
         "METRICS_COLLECT_INTERVAL_SECONDS": metrics_collect_interval_seconds,
         "METRICS_COLLECT_INTERVAL_OFF_SECONDS": metrics_collect_interval_off_seconds,
+        "METRICS_IDLE_STORAGE_REFRESH_SECONDS": metrics_idle_storage_refresh_seconds,
         "METRICS_STREAM_HEARTBEAT_SECONDS": metrics_stream_heartbeat_seconds,
         "LOG_STREAM_HEARTBEAT_SECONDS": log_stream_heartbeat_seconds,
         "LOG_STREAM_EVENT_BUFFER_SIZE": log_stream_event_buffer_size,
@@ -295,6 +304,7 @@ def build_state(app_config, *, app_dir, display_tz):
         "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS": slow_metrics_interval_active_seconds,
         "SLOW_METRICS_INTERVAL_OFF_SECONDS": slow_metrics_interval_off_seconds,
         "LOG_FETCHER_IDLE_SLEEP_SECONDS": log_fetcher_idle_sleep_seconds,
+        "LOG_FETCHER_IDLE_POLL_SECONDS": log_fetcher_idle_poll_seconds,
         "CRASH_STOP_MARKERS": crash_stop_markers,
         "PROCESS_ROLE": process_role,
         "DEBUG_APP_HOST": debug_app_host,
@@ -341,6 +351,9 @@ def build_state(app_config, *, app_dir, display_tz):
         "backup_warning_at": backup_warning_at,
         "storage_emergency_lock": storage_emergency_lock,
         "storage_emergency_active": storage_emergency_active,
+        "storage_guard": storage_guard,
+        "client_registry_lock": client_registry_lock,
+        "client_registry": client_registry,
         "device_name_map_lock": device_name_map_lock,
         "device_name_map_cache": device_name_map_cache,
         "device_name_map_mtime_ns_ref": device_name_map_mtime_ns_ref,

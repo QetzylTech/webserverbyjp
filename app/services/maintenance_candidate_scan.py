@@ -27,6 +27,8 @@ def _backup_bucket(name):
         return "auto"
     if "_session_end" in lowered:
         return "session"
+    if "_emergency" in lowered:
+        return "emergency"
     if "_manual" in lowered:
         return "manual"
     return "other"
@@ -63,7 +65,7 @@ def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, kee
     """Apply retention rules to backup archives and return a preview/result payload."""
     now = time.time()
     files = _iter_backup_files(backup_dir)
-    by_bucket = {"manual": [], "other": [], "auto": [], "session": [], "pre_restore": []}
+    by_bucket = {"manual": [], "emergency": [], "other": [], "auto": [], "session": [], "pre_restore": []}
     for item in files:
         by_bucket[item["bucket"]].append(item)
     for bucket in by_bucket:

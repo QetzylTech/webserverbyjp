@@ -1,5 +1,6 @@
 """Minecraft log-stream use cases."""
 
+from collections import deque
 import time
 
 from app.ports import ports
@@ -80,6 +81,25 @@ def get_log_source_text(ctx, source):
     return None
 
 
+def drain_buffered_log_lines(ctx, source):
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return []
+    stream_state = ctx.log_stream_states.get(normalized)
+    if stream_state is None:
+        return []
+    with stream_state["lifecycle_lock"]:
+        buffered = stream_state.get("buffered_lines")
+        if not isinstance(buffered, deque) or not buffered:
+            return []
+        lines = list(buffered)
+        buffered.clear()
+        return lines
+
+
+
+
+
 def publish_log_stream_line(ctx, source, line):
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
@@ -91,15 +111,17 @@ def publish_log_stream_line(ctx, source, line):
             if pattern is not None and pattern.search(str(line or "")):
                 with ctx.rcon_startup_lock:
                     ctx.rcon_startup_ready = True
-    state = ctx.log_stream_states.get(normalized)
-    if state is None:
+    stream_state = ctx.log_stream_states.get(normalized)
+    if stream_state is None:
         return
     process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
-    with state["lifecycle_lock"]:
-        has_clients = int(state.get("clients", 0) or 0) > 0
-    emit_to_db = has_clients or process_role == "worker"
-    if emit_to_db:
-        with state["cond"]:
+    with stream_state["lifecycle_lock"]:
+        has_clients = int(stream_state.get("clients", 0) or 0) > 0
+        buffered = stream_state.get("buffered_lines")
+        if not has_clients and isinstance(buffered, deque):
+            buffered.append(str(line or ""))
+    if has_clients:
+        with stream_state["cond"]:
             db_event_id = 0
             try:
                 db_event_id = int(
@@ -112,9 +134,9 @@ def publish_log_stream_line(ctx, source, line):
                 )
             except Exception:
                 db_event_id = 0
-            state["seq"] = int(db_event_id or (state["seq"] + 1))
-            state["events"].append((state["seq"], line))
-            state["cond"].notify_all()
+            stream_state["seq"] = int(db_event_id or (stream_state["seq"] + 1))
+            stream_state["events"].append((stream_state["seq"], line))
+            stream_state["cond"].notify_all()
     appenders = {
         "minecraft": ctx._append_minecraft_log_cache_line,
         "backup": ctx._append_backup_log_cache_line,
@@ -178,8 +200,6 @@ def log_source_fetcher_loop(ctx, source):
     if settings is None:
         return
     normalized = settings["source"]
-    file_poll_offset = 0
-    follow_from_end_initialized = False
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
     backup_status_cache_at = 0.0
     backup_status_cache_value = False
@@ -217,51 +237,95 @@ def log_source_fetcher_loop(ctx, source):
             return True
         return False
 
-    while True:
-        state = ctx.log_stream_states.get(normalized)
-        if state is None:
+    def _refresh_idle_log_cache():
+        if normalized == "minecraft":
+            loader = getattr(ctx, "_load_minecraft_log_cache_from_journal", None)
+            if callable(loader):
+                loader()
+        elif normalized == "backup":
+            loader = getattr(ctx, "_load_backup_log_cache_from_disk", None)
+            if callable(loader):
+                loader()
+        # Control panel logs are only updated when a client is connected.
+
+    def _load_offset_state(stream_state):
+        with stream_state["lifecycle_lock"]:
+            return int(stream_state.get("file_offset", 0) or 0), bool(stream_state.get("follow_initialized", False))
+
+    def _store_offset_state(stream_state, offset, initialized):
+        with stream_state["lifecycle_lock"]:
+            stream_state["file_offset"] = int(offset)
+            stream_state["follow_initialized"] = bool(initialized)
+
+    def _read_file_updates(stream_state, path, *, allow_break_on_no_clients):
+        nonlocal file_poll_offset, follow_from_end_initialized
+        if not path.exists():
+            file_poll_offset = 0
+            follow_from_end_initialized = False
+            _store_offset_state(stream_state, file_poll_offset, follow_from_end_initialized)
+            time.sleep(1)
             return
-        with state["lifecycle_lock"]:
-            client_count = state["clients"]
-        if client_count <= 0 and not _allow_background_follow():
-            time.sleep(ctx.LOG_FETCHER_IDLE_SLEEP_SECONDS)
+        try:
+            file_size = int(path.stat().st_size)
+        except OSError:
+            file_size = 0
+        if not follow_from_end_initialized and file_poll_offset == 0:
+            # Initial "live follow" should not replay the entire existing file.
+            file_poll_offset = file_size
+            follow_from_end_initialized = True
+            _store_offset_state(stream_state, file_poll_offset, follow_from_end_initialized)
+            return
+        if file_poll_offset > file_size:
+            file_poll_offset = 0
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            fh.seek(file_poll_offset)
+            for line in fh:
+                if allow_break_on_no_clients:
+                    with stream_state["lifecycle_lock"]:
+                        if stream_state["clients"] <= 0 and not _allow_background_follow():
+                            break
+                clean = line.rstrip("\n")
+                if not clean:
+                    continue
+                if normalized == "minecraft" and is_rcon_noise_line(clean):
+                    continue
+                publish_log_stream_line(ctx, normalized, clean)
+                if normalized == "minecraft":
+                    schedule_crash_stop_if_needed(ctx, clean)
+            file_poll_offset = int(fh.tell())
+        _store_offset_state(stream_state, file_poll_offset, follow_from_end_initialized)
+
+    while True:
+        stream_state = ctx.log_stream_states.get(normalized)
+        if stream_state is None:
+            return
+        file_poll_offset, follow_from_end_initialized = _load_offset_state(stream_state)
+        with stream_state["lifecycle_lock"]:
+            client_count = stream_state["clients"]
+        if client_count <= 0:
+            if settings["type"] in {"file", "file_poll"}:
+                if not _allow_background_follow():
+                    try:
+                        service_status = str(ctx.get_status() or "").strip().lower()
+                    except Exception:
+                        service_status = ""
+                    if service_status in off_states:
+                        time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                        continue
+                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=False)
+                time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                continue
+            if _allow_background_follow():
+                _refresh_idle_log_cache()
+                time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                continue
+            time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
             continue
 
         proc = None
         try:
             if settings["type"] == "file_poll":
-                path = settings["path"]
-                if not path.exists():
-                    file_poll_offset = 0
-                    time.sleep(1)
-                    continue
-                try:
-                    file_size = int(path.stat().st_size)
-                except OSError:
-                    file_size = 0
-                if not follow_from_end_initialized and file_poll_offset == 0:
-                    # Initial "live follow" should not replay the entire existing file.
-                    file_poll_offset = file_size
-                    follow_from_end_initialized = True
-                    time.sleep(1)
-                    continue
-                if file_poll_offset > file_size:
-                    file_poll_offset = 0
-                with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                    fh.seek(file_poll_offset)
-                    for line in fh:
-                        with state["lifecycle_lock"]:
-                            if state["clients"] <= 0 and not _allow_background_follow():
-                                break
-                        clean = line.rstrip("\r\n")
-                        if not clean:
-                            continue
-                        if normalized == "minecraft" and is_rcon_noise_line(clean):
-                            continue
-                        publish_log_stream_line(ctx, normalized, clean)
-                        if normalized == "minecraft":
-                            schedule_crash_stop_if_needed(ctx, clean)
-                    file_poll_offset = int(fh.tell())
+                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=True)
                 time.sleep(1)
                 continue
             if settings["type"] == "journal":
@@ -270,40 +334,17 @@ def log_source_fetcher_loop(ctx, source):
                     time.sleep(1)
                     continue
             else:
-                path = settings["path"]
-                if not path.exists():
-                    time.sleep(1)
-                    continue
-                file_size = int(path.stat().st_size if path.exists() else 0)
-                if not follow_from_end_initialized and file_poll_offset == 0:
-                    # Keep /log-text as the history source; stream endpoint should emit only new lines.
-                    file_poll_offset = file_size
-                    follow_from_end_initialized = True
-                    time.sleep(1)
-                    continue
-                if file_poll_offset > file_size:
-                    file_poll_offset = 0
-                with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                    fh.seek(file_poll_offset)
-                    for line in fh:
-                        with state["lifecycle_lock"]:
-                            if state["clients"] <= 0 and not _allow_background_follow():
-                                break
-                        clean = line.rstrip("\r\n")
-                        if not clean:
-                            continue
-                        publish_log_stream_line(ctx, normalized, clean)
-                    file_poll_offset = int(fh.tell())
+                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=True)
                 time.sleep(1)
                 continue
 
-            with state["lifecycle_lock"]:
+            with stream_state["lifecycle_lock"]:
                 state["proc"] = proc
             for line in ports.log.iter_process_lines(proc):
-                with state["lifecycle_lock"]:
-                    if state["clients"] <= 0 and not _allow_background_follow():
+                with stream_state["lifecycle_lock"]:
+                    if stream_state["clients"] <= 0 and not _allow_background_follow():
                         break
-                clean = line.rstrip("\r\n")
+                clean = line.rstrip("\n")
                 if not clean:
                     continue
                 if normalized == "minecraft" and is_rcon_noise_line(clean):
@@ -314,7 +355,7 @@ def log_source_fetcher_loop(ctx, source):
         except Exception as exc:
             ctx.log_mcweb_exception(settings["context"], exc)
         finally:
-            with state["lifecycle_lock"]:
+            with stream_state["lifecycle_lock"]:
                 state["proc"] = None
             ports.log.terminate_process(proc)
         time.sleep(1)
@@ -327,7 +368,7 @@ def ensure_log_stream_fetcher_started(ctx, source):
     state = ctx.log_stream_states.get(normalized)
     if state is None or state["started"]:
         return
-    with state["lifecycle_lock"]:
+    with stream_state["lifecycle_lock"]:
         if state["started"]:
             return
         start_worker(
@@ -348,10 +389,10 @@ def increment_log_stream_clients(ctx, source):
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
-    state = ctx.log_stream_states.get(normalized)
-    if state is None:
+    stream_state = ctx.log_stream_states.get(normalized)
+    if stream_state is None:
         return
-    with state["lifecycle_lock"]:
+    with stream_state["lifecycle_lock"]:
         state["clients"] += 1
 
 
@@ -359,10 +400,10 @@ def decrement_log_stream_clients(ctx, source):
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
-    state = ctx.log_stream_states.get(normalized)
-    if state is None:
+    stream_state = ctx.log_stream_states.get(normalized)
+    if stream_state is None:
         return
-    with state["lifecycle_lock"]:
+    with stream_state["lifecycle_lock"]:
         state["clients"] = max(0, state["clients"] - 1)
         proc = state["proc"]
     ports.log.terminate_process(proc)

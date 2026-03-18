@@ -206,6 +206,12 @@ def reconcile_operations_once(ctx):
                             message="Service stop observed by reconciler.",
                             finished=True,
                         )
+                        intent_setter = getattr(ctx, "set_service_status_intent", None)
+                        if callable(intent_setter):
+                            try:
+                                intent_setter(None)
+                            except Exception:
+                                pass
                         updated += 1
                         continue
                     if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):

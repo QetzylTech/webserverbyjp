@@ -34,7 +34,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
     def _db_path(self, stem):
         return Path("data") / f"{stem}_{uuid.uuid4().hex[:8]}.sqlite3"
 
-    def _base_state(self, db_path, *, start_results=None, stop_results=None, backup_results=None, restore_results=None):
+    def _base_state(self, db_path, *, start_results=None, stop_results=None, backup_results=None, restore_results=None, service_status="inactive"):
         start_queue = list(start_results or [{"ok": True}])
         stop_queue = list(stop_results or [{"systemd_ok": True, "backup_ok": True}])
         backup_queue = list(backup_results or [True])
@@ -85,7 +85,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
             "get_restore_status": lambda since_seq="0", job_id=None: {"ok": True, "running": False, "result": {"ok": True, "message": "done"}},
             "_rcon_rejected_response": lambda message, status=400: (message, status),
             "is_rcon_enabled": lambda: True,
-            "get_status": lambda: "active",
+            "get_status": lambda: service_status,
             "_run_mcrcon": lambda command, timeout=8: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
             "APP_STATE_DB_PATH": Path(db_path),
             "SERVICE": "minecraft",
@@ -94,7 +94,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
     def test_web_role_can_execute_start_locally(self):
         db_path = self._db_path("test_web_role_enqueue_start")
         app = Flask(__name__)
-        state = self._base_state(db_path)
+        state = self._base_state(db_path, service_status="inactive")
         state["PROCESS_ROLE"] = "web"
         started = {"count": 0}
 
@@ -121,7 +121,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
     def test_start_idempotency_reuses_existing_operation(self):
         db_path = self._db_path("test_start_idempotency_reuse")
         app = Flask(__name__)
-        state = self._base_state(db_path)
+        state = self._base_state(db_path, service_status="inactive")
         with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
             client = app.test_client()
@@ -221,10 +221,31 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
         self.assertEqual(after["status"], "observed")
         self.assertEqual(after["attempt"], 2)
 
+    def test_restore_rejected_when_in_progress_without_idempotency_key(self):
+        db_path = self._db_path("test_restore_in_progress_conflict")
+        state_store_service.create_operation(
+            db_path,
+            op_id="restore-active",
+            op_type="restore",
+            target="a.zip",
+            idempotency_key="",
+            status="in_progress",
+            checkpoint="worker_started",
+            payload={},
+        )
+        app = Flask(__name__)
+        state = self._base_state(db_path)
+        dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+        client = app.test_client()
+        response = client.post("/restore-backup", data={"sudo_password": "ok", "filename": "b.zip"})
+        body = response.get_json() or {}
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(body.get("error"), "restore_in_progress")
+
     def test_stop_idempotency_reuses_existing_operation(self):
         db_path = self._db_path("test_stop_idempotency_reuse")
         app = Flask(__name__)
-        state = self._base_state(db_path)
+        state = self._base_state(db_path, service_status="active")
         with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
             client = app.test_client()
@@ -248,6 +269,7 @@ class ControlRouteIdempotencyTests(unittest.TestCase):
                 {"systemd_ok": False, "backup_ok": True},
                 {"systemd_ok": True, "backup_ok": True},
             ],
+            service_status="active",
         )
         with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
             dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)

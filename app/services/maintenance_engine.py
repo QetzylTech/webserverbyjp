@@ -83,3 +83,13 @@ def _cleanup_run_with_lock(ctx, cfg, *, mode, selected_paths=None, trigger="manu
         )
     finally:
         _cleanup_run_lock.release()
+
+
+
+def cleanup_lock_held():
+    """Return True when a cleanup run is currently executing."""
+    try:
+        return bool(_cleanup_run_lock.locked())
+    except Exception:
+        return False
+

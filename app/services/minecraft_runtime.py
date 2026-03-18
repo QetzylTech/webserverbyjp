@@ -7,6 +7,7 @@ from app.services import status_projection_service as _status
 _LOG_STREAM_EXPORTS = (
     "_file_source_settings",
     "crash_stop_after_grace",
+    "drain_buffered_log_lines",
     "decrement_log_stream_clients",
     "ensure_log_stream_fetcher_started",
     "get_log_source_text",

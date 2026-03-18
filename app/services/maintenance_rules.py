@@ -73,7 +73,7 @@ def _add_age_targets(eligible, rules, reasons_map, to_delete):
     age_rule = rules.get("age", {})
     if not age_rule.get("enabled", True):
         return
-    cutoff = time.time() - (_safe_int(age_rule.get("days", 7), 7, minimum=7, maximum=3650) * 86400)
+    cutoff = time.time() - (_safe_int(age_rule.get("days", 3), 3, minimum=3, maximum=3650) * 86400)
     for row in eligible:
         if row["mtime"] <= cutoff:
             to_delete.append(row)
@@ -186,53 +186,47 @@ def _bucket_keep_limit(bucket, count_rule):
         return _safe_int(count_rule.get("session_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
     if bucket == "manual":
         return _safe_int(count_rule.get("manual_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
+    if bucket == "emergency":
+        return _safe_int(count_rule.get("emergency_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
     if bucket == "pre_restore":
         return _safe_int(count_rule.get("prerestore_backups_to_keep", default_limit), default_limit, minimum=3, maximum=100000)
     return default_limit
 
 
-def _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete):
-    """Add backup targets that satisfy all enabled rules."""
-    ctx = as_ctx(ctx)
-    backup_rows = [row for row in candidates if row["eligible"] and row.get("category") == "backup_zip"]
-    if not backup_rows:
-        return
-
+def _add_backup_age_targets(backup_rows, rules, reasons_map, to_delete):
+    """Add backup targets that satisfy the age rule."""
     age_rule = rules.get("age", {})
+    if not age_rule.get("enabled", True):
+        return
+    cutoff = time.time() - (_safe_int(age_rule.get("days", 3), 3, minimum=3, maximum=3650) * 86400)
+    for row in backup_rows:
+        if row["mtime"] <= cutoff:
+            to_delete.append(row)
+            _mark(reasons_map, row["path"], "age_rule")
+
+
+def _add_backup_count_targets(by_category, rules, reasons_map, to_delete):
+    """Add backup targets that satisfy the count rule."""
     count_rule = rules.get("count", {})
-    age_enabled = bool(age_rule.get("enabled", True))
-    count_enabled = bool(count_rule.get("enabled", True))
-    space_enabled = bool(rules.get("space", {}).get("enabled", True))
-    space_ok = _space_rule_gate(ctx, cfg, rules) if space_enabled else True
-
-    cutoff = None
-    if age_enabled:
-        cutoff = time.time() - (_safe_int(age_rule.get("days", 7), 7, minimum=0, maximum=3650) * 86400)
-
-    backup_by_bucket = {"session": [], "manual": [], "pre_restore": [], "auto": [], "other": []}
+    if not count_rule.get("enabled", True):
+        return
+    backup_by_bucket = {"session": [], "manual": [], "emergency": [], "pre_restore": [], "auto": [], "other": []}
     for row in by_category.get("backup_zip", []):
         bucket = _backup_bucket(row["name"])
         backup_by_bucket.setdefault(bucket, []).append(row)
-
-    count_allowed = {}
     for bucket, rows in backup_by_bucket.items():
         keep_limit = _bucket_keep_limit(bucket, count_rule)
         for idx, row in enumerate(rows):
-            count_allowed[row["path"]] = idx >= keep_limit
+            if idx >= keep_limit and row["eligible"]:
+                to_delete.append(row)
+                _mark(reasons_map, row["path"], "count_rule")
 
-    for row in backup_rows:
-        age_ok = (not age_enabled) or (row["mtime"] <= cutoff)
-        count_ok = (not count_enabled) or bool(count_allowed.get(row["path"], False))
-        all_ok = age_ok and count_ok and space_ok
-        if not all_ok:
-            continue
-        to_delete.append(row)
-        if age_enabled:
-            _mark(reasons_map, row["path"], "age_rule")
-        if count_enabled:
-            _mark(reasons_map, row["path"], "count_rule")
-        if space_enabled:
-            _mark(reasons_map, row["path"], "space_reclaim")
+
+def _add_backup_space_targets(ctx, cfg, backup_rows, rules, reasons_map, to_delete):
+    """Add backup targets that satisfy the space rule."""
+    if not rules.get("space", {}).get("enabled", True):
+        return
+    _add_space_targets(ctx, cfg, backup_rows, rules, reasons_map, to_delete)
 
 
 def _dedupe_oldest_first(rows):
@@ -246,8 +240,8 @@ def _dedupe_oldest_first(rows):
 def _apply_blast_radius_cap(ordered, eligible_count, rules):
     """Apply blast radius cap."""
     caps = rules.get("caps", {})
-    absolute_cap = _safe_int(caps.get("max_delete_files_absolute", 5), 5, minimum=1, maximum=500)
-    pct = _safe_int(caps.get("max_delete_percent_eligible", 10), 10, minimum=1, maximum=100)
+    absolute_cap = _safe_int(caps.get("max_delete_files_absolute", 10), 10, minimum=1, maximum=500)
+    pct = _safe_int(caps.get("max_delete_percent_eligible", 50), 50, minimum=1, maximum=100)
     min_non_empty = _safe_int(caps.get("max_delete_min_if_non_empty", 1), 1, minimum=1, maximum=20)
     pct_cap = math.floor((eligible_count * pct) / 100.0)
     if eligible_count > 0:
@@ -316,7 +310,11 @@ def _select_manual_targets(candidates, selected_paths, reasons_map):
 
 def _select_rule_targets(ctx, cfg, candidates, by_category, eligible, rules, reasons_map):
     to_delete = []
-    _add_backup_targets_all_rules(ctx, cfg, candidates, by_category, rules, reasons_map, to_delete)
+    backup_eligible = [row for row in eligible if row.get("category") == "backup_zip"]
+    if backup_eligible:
+        _add_backup_age_targets(backup_eligible, rules, reasons_map, to_delete)
+        _add_backup_count_targets(by_category, rules, reasons_map, to_delete)
+        _add_backup_space_targets(ctx, cfg, backup_eligible, rules, reasons_map, to_delete)
 
     non_backup_eligible = [row for row in eligible if row.get("category") != "backup_zip"]
     if not non_backup_eligible:

@@ -46,6 +46,7 @@ _SESSION_METHODS = (
 _MINECRAFT_CTX_METHODS = (
     "_log_source_settings",
     "get_log_source_text",
+    "_drain_buffered_log_lines",
     "ensure_log_stream_fetcher_started",
     "_increment_log_stream_clients",
     "_decrement_log_stream_clients",
@@ -151,6 +152,11 @@ def build_runtime_bindings(
     bindings.update(_bind_methods(session_watchers_service, _SESSION_WATCHER_CTX_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(session_watchers_service, _SESSION_WATCHER_PLAIN_METHODS, _plain_delegate))
 
+
+    def _get_storage_guard():
+        guard = ns.get("storage_guard")
+        return guard
+
     def get_storage_used_percent(storage_usage_text=None):
         usage_text = storage_usage_text if storage_usage_text is not None else ns["get_storage_usage"]()
         match = re.search(r"\(([\d.]+)%\)", usage_text or "")
@@ -168,12 +174,24 @@ def build_runtime_bindings(
         return max(0.0, 100.0 - used)
 
     def is_storage_low(storage_usage_text=None):
+        guard = _get_storage_guard()
+        if guard is not None and storage_usage_text is None:
+            try:
+                return bool(guard.is_below_minimum(ns))
+            except Exception:
+                pass
         available = get_storage_available_percent(storage_usage_text)
         if available is None:
             return False
         return available < ns["LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT"]
 
     def low_storage_error_message(storage_usage_text=None):
+        guard = _get_storage_guard()
+        if guard is not None and storage_usage_text is None:
+            try:
+                return str(guard.block_message(ns, "start"))
+            except Exception:
+                pass
         usage_text = storage_usage_text if storage_usage_text is not None else ns["get_storage_usage"]()
         available = get_storage_available_percent(usage_text)
         available_text = "unknown"

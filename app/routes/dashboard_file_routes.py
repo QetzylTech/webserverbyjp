@@ -3,6 +3,7 @@ import time
 
 from flask import Response, abort, after_this_request, jsonify, redirect, render_template, request, send_file, send_from_directory, stream_with_context, url_for
 from app.core import state_store as state_store_service
+from app.services import client_registry as client_registry_service
 from app.commands import snapshot_commands
 from app.queries import dashboard_file_queries as file_queries
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
@@ -39,7 +40,7 @@ def register_file_routes(app, state):
             list_api_path="/file-page-items/backups",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
-            file_page_refresh_interval_ms=int(float(state["FILE_PAGE_CACHE_REFRESH_SECONDS"]) * 1000),
+            file_page_refresh_interval_ms=int(float(state.get("FILE_PAGE_CACHE_REFRESH_SECONDS", 15)) * 1000),
         )
 
     # Route: /crash-logs
@@ -69,7 +70,7 @@ def register_file_routes(app, state):
             list_api_path="/log-files/minecraft",
             csrf_token=state["_ensure_csrf_token"](),
             file_page_heartbeat_interval_ms=state["FILE_PAGE_HEARTBEAT_INTERVAL_MS"],
-            file_page_refresh_interval_ms=int(float(state["FILE_PAGE_CACHE_REFRESH_SECONDS"]) * 1000),
+            file_page_refresh_interval_ms=int(float(state.get("FILE_PAGE_CACHE_REFRESH_SECONDS", 15)) * 1000),
             initial_log_source=initial_log_source,
         )
 
@@ -79,7 +80,12 @@ def register_file_routes(app, state):
     def file_page_heartbeat():
         """Refresh the activity marker used by the file-page cache worker."""
         state["ensure_file_page_cache_refresher_started"]()
-        state["_mark_file_page_client_active"]()
+        client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
+        marker = state["_mark_file_page_client_active"]
+        try:
+            marker(client_id=client_id)
+        except TypeError:
+            marker()
         return ("", 204)
 
     # Route: /file-page-items/<page_name>
@@ -258,10 +264,18 @@ def register_file_routes(app, state):
         source_key = settings["source"]
         state["ensure_log_stream_fetcher_started"](source_key)
         db_topic = f"log:{source_key}"
+        client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
+        channel = f"log_stream:{source_key}"
 
         def generate():
             """Runtime helper generate."""
+            if client_id:
+                client_registry_service.register_client(state, client_id, channel=channel)
             state["_increment_log_stream_clients"](source_key)
+            buffered_lines = state["_drain_buffered_log_lines"](source_key)
+            for line in buffered_lines:
+                if line:
+                    yield f"data: {line}\n\n"
             last_event_id = 0
             db_path = state.get("APP_STATE_DB_PATH")
             if db_path is not None:
@@ -293,8 +307,12 @@ def register_file_routes(app, state):
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
                             continue
                     yield ": keepalive\n\n"
+                    if client_id:
+                        client_registry_service.touch_client(state, client_id, channel=channel)
                     time.sleep(state["LOG_STREAM_HEARTBEAT_SECONDS"])
             finally:
+                if client_id:
+                    client_registry_service.unregister_client(state, client_id, channel=channel)
                 state["_decrement_log_stream_clients"](source_key)
 
         return _sse_response(generate())

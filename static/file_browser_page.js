@@ -13,8 +13,11 @@ function mountFileBrowserPage() {
         }
         const __MCWEB_FILES_CONFIG = window.__MCWEB_FILES_CONFIG || {};
         const csrfToken = __MCWEB_FILES_CONFIG.csrfToken ?? "";
-        const http = window.MCWebHttp || null;
         const shell = window.MCWebShell || null;
+        const clientId = shell && typeof shell.getPersistentClientId === "function"
+            ? shell.getPersistentClientId("mcweb.clientId")
+            : "";
+        const http = window.MCWebHttp || null;
         const domUtils = window.MCWebDomUtils || {};
         const cleanup = typeof domUtils.createCleanupStack === "function"
             ? domUtils.createCleanupStack()
@@ -45,6 +48,7 @@ function mountFileBrowserPage() {
             path: "/file-page-heartbeat",
             csrfToken,
             intervalMs: FILE_PAGE_HEARTBEAT_INTERVAL_MS,
+            clientId,
         });
         fileHeartbeatController.start();
 
@@ -99,6 +103,10 @@ function mountFileBrowserPage() {
         let restorePollTimer = null;
         let restorePollJobId = "";
         let restorePollSeq = 0;
+        let restoreLogStream = null;
+        let restoreStreamReconnectTimer = null;
+        let restoreStreamSeq = 0;
+        let restoreStreamJobId = "";
         let restoreOperationPollTimer = null;
         let restoreOperationOpId = "";
         let restorePaneAlertTimer = null;
@@ -405,6 +413,21 @@ function mountFileBrowserPage() {
             openViewer();
         }
 
+        function stopRestoreLogStream() {
+            if (restoreStreamReconnectTimer) {
+                window.clearTimeout(restoreStreamReconnectTimer);
+                restoreStreamReconnectTimer = null;
+            }
+            if (!restoreLogStream) return;
+            try {
+                restoreLogStream.close();
+            } catch (_) {
+                // Ignore stream close errors.
+            }
+            restoreLogStream = null;
+            restoreStreamJobId = "";
+        }
+
         function stopRestorePolling() {
             if (!restorePollTimer) return;
             window.clearTimeout(restorePollTimer);
@@ -416,6 +439,69 @@ function mountFileBrowserPage() {
             window.clearTimeout(restoreOperationPollTimer);
             restoreOperationPollTimer = null;
             restoreOperationOpId = "";
+        }
+
+        function scheduleRestoreStreamReconnect(delayMs) {
+            if (restoreStreamReconnectTimer) {
+                window.clearTimeout(restoreStreamReconnectTimer);
+            }
+            restoreStreamReconnectTimer = window.setTimeout(() => {
+                restoreStreamReconnectTimer = null;
+                if (!restoreStreamJobId || !pageRuntimeActive) return;
+                startRestoreLogStream(restoreStreamJobId);
+            }, delayMs);
+        }
+
+        function startRestoreLogStream(jobId) {
+            const restoreJobId = String(jobId || "").trim();
+            if (!restoreJobId) return false;
+            if (typeof EventSource !== "function") return false;
+            stopRestoreLogStream();
+            restoreStreamJobId = restoreJobId;
+            const stream = (dataClient && typeof dataClient.openRestoreLogStream === "function")
+                ? dataClient.openRestoreLogStream({ jobId: restoreJobId, since: restoreStreamSeq })
+                : new EventSource(`/stream/restore_logs?job_id=${encodeURIComponent(restoreJobId)}&since=${encodeURIComponent(restoreStreamSeq)}`);
+            stream.addEventListener("line", (event) => handleRestoreStreamLine(event));
+            stream.addEventListener("status", (event) => handleRestoreStreamStatus(event));
+            stream.onerror = () => {
+                scheduleRestoreStreamReconnect(1200);
+                if (!restorePollTimer) {
+                    scheduleRestorePoll(1200);
+                }
+            };
+            restoreLogStream = stream;
+            return true;
+        }
+
+        function handleRestoreStreamLine(event) {
+            if (!event || !event.data) return;
+            let payload = null;
+            try {
+                payload = JSON.parse(event.data);
+            } catch (_) {
+                payload = null;
+            }
+            if (!payload || payload.type !== "line") return;
+            const seqValue = Number(payload.seq || 0);
+            if (seqValue > restoreStreamSeq) restoreStreamSeq = seqValue;
+            if (seqValue > restorePollSeq) restorePollSeq = seqValue;
+            appendRestoreLine(payload.at || "", payload.message || "");
+            syncRestoreAvailabilityUi();
+        }
+
+        function handleRestoreStreamStatus(event) {
+            if (!event || !event.data) return;
+            let payload = null;
+            try {
+                payload = JSON.parse(event.data);
+            } catch (_) {
+                payload = null;
+            }
+            if (!payload || payload.type !== "status") return;
+            const statusPayload = payload.payload;
+            if (statusPayload && typeof statusPayload === "object") {
+                handleRestoreStatusPayload(statusPayload, { skipEvents: true });
+            }
         }
 
         function scheduleRestorePoll(delayMs) {
@@ -472,8 +558,39 @@ function mountFileBrowserPage() {
             scheduleRestoreOperationPoll(700);
         }
 
+        function handleRestoreStatusPayload(payload, options = {}) {
+            if (!payload || typeof payload !== "object") return;
+            const skipEvents = !!options.skipEvents;
+            const events = Array.isArray(payload.events) ? payload.events : [];
+            if (!skipEvents && events.length) {
+                events.forEach((eventItem) => {
+                    const seqValue = Number(eventItem && eventItem.seq ? eventItem.seq : 0);
+                    if (seqValue > restorePollSeq) restorePollSeq = seqValue;
+                    if (seqValue > restoreStreamSeq) restoreStreamSeq = seqValue;
+                    appendRestoreLine(eventItem.at || "", eventItem.message || "");
+                });
+            }
+
+            syncRestoreAvailabilityUi();
+            if (payload.running) return;
+            stopRestorePolling();
+            stopRestoreLogStream();
+            restorePollJobId = "";
+            restoreStreamSeq = 0;
+            if (payload.result && payload.result.ok) {
+                announceFileListInvalidation({ backups: true });
+                setDownloadError("");
+            } else if (payload.result && payload.result.message) {
+                modals.showErrorModal(payload.result.message || "Restore failed.", {
+                    errorCode: payload.result.error || "",
+                });
+                setDownloadError(payload.result.message);
+            }
+        }
+
         async function pollRestoreStatus() {
             if (pageId !== "backups" || !restorePollJobId) return;
+            if (restoreLogStream && restoreStreamJobId === restorePollJobId) return;
             let response;
             try {
                 const params = new URLSearchParams();
@@ -501,27 +618,11 @@ function mountFileBrowserPage() {
                 return;
             }
 
-            const events = Array.isArray(payload.events) ? payload.events : [];
-            events.forEach((eventItem) => {
-                const seqValue = Number(eventItem && eventItem.seq ? eventItem.seq : 0);
-                if (seqValue > restorePollSeq) restorePollSeq = seqValue;
-                appendRestoreLine(eventItem.at || "", eventItem.message || "");
-            });
-
-            syncRestoreAvailabilityUi();
+            handleRestoreStatusPayload(payload);
             if (payload.running) {
                 scheduleRestorePoll(800);
             } else {
                 stopRestorePolling();
-                if (payload.result && payload.result.ok) {
-                    announceFileListInvalidation({ backups: true });
-                    setDownloadError("");
-                } else if (payload.result && payload.result.message) {
-                    modals.showErrorModal(payload.result.message || "Restore failed.", {
-                        errorCode: payload.result.error || "",
-                    });
-                    setDownloadError(payload.result.message);
-                }
             }
         }
 
@@ -529,13 +630,17 @@ function mountFileBrowserPage() {
             if (pageId !== "backups") return;
             restorePollJobId = jobId || "";
             restorePollSeq = 0;
+            restoreStreamSeq = 0;
             startRestorePaneAlertHeartbeat();
             ensureRestoreViewerOpen(title || "Restore Progress");
             if (fileViewerContent) fileViewerContent.innerHTML = "";
             syncRestoreAvailabilityUi();
             appendRestoreLine("", startMessage || "Restore started.");
             if (restorePollJobId) {
-                scheduleRestorePoll(200);
+                const streaming = startRestoreLogStream(restorePollJobId);
+                if (!streaming) {
+                    scheduleRestorePoll(200);
+                }
             }
         }
 
@@ -1027,6 +1132,8 @@ function mountFileBrowserPage() {
             setBackupRestoreControlsVisible(false);
             setActiveViewedFilename("");
             setActiveRestoreFilename("");
+            stopRestorePolling();
+            stopRestoreLogStream();
             persistFileViewState({ viewerOpen: false });
             if (viewerController) {
                 viewerController.close();
@@ -1409,6 +1516,7 @@ function mountFileBrowserPage() {
             stopFileListRefreshPolling();
             stopRestorePaneAlertHeartbeat();
             stopRestorePolling();
+            stopRestoreLogStream();
             stopRestoreOperationPolling();
             if (typeof fileMetricsUnsubscribe === "function") {
                 fileMetricsUnsubscribe();
