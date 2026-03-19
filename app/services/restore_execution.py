@@ -3,6 +3,8 @@
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+import os
+import shutil
 import zipfile
 
 from app.core import state_store as state_store_service
@@ -30,10 +32,11 @@ from app.services.restore_workflow_helpers import (
 SNAPSHOT_TOKEN_PREFIX = "snapshot::"
 
 
-def _safe_extract_zip(zip_file, destination):
+def _safe_extract_zip(zip_file, destination, progress=None):
     """Extract zip members under destination only (blocks path traversal)."""
     dest_resolved = Path(destination).resolve()
-    for member in zip_file.infolist():
+    members = list(zip_file.infolist())
+    for member in members:
         name = str(member.filename or "")
         if not name or "\x00" in name:
             raise ValueError("Invalid zip entry.")
@@ -42,15 +45,34 @@ def _safe_extract_zip(zip_file, destination):
             target.relative_to(dest_resolved)
         except ValueError as exc:
             raise ValueError("Unsafe path in zip archive.") from exc
-    zip_file.extractall(dest_resolved)
+    for member in members:
+        name = str(member.filename or "")
+        if not name:
+            continue
+        if member.is_dir():
+            target_dir = (dest_resolved / name).resolve()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            _emit_progress(progress, f"Extracted dir: {target_dir.relative_to(dest_resolved)}")
+            continue
+        zip_file.extract(member, dest_resolved)
+        _emit_progress(progress, f"Extracted file: {name}")
 
 
-def _create_pre_restore_snapshot(world_path, snapshot_zip_path):
+def _create_pre_restore_snapshot(world_path, snapshot_zip_path, progress=None):
     source = Path(world_path)
     target = Path(snapshot_zip_path)
     if not source.exists() or not source.is_dir():
         return False, "World directory not found for snapshot."
     target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        for root, _dirs, files in os.walk(source):
+            root_path = Path(root)
+            for filename in files:
+                file_path = root_path / filename
+                rel_path = file_path.relative_to(source)
+                _emit_progress(progress, f"Snapshot include file: {rel_path}")
+    except Exception:
+        pass
     archive_path = ports.filesystem.make_zip_archive(
         target.with_suffix(""),
         root_dir=source.parent,
@@ -61,12 +83,27 @@ def _create_pre_restore_snapshot(world_path, snapshot_zip_path):
     return True, ""
 
 
-def _copy_world_tree(source_dir, target_dir):
+def _copy_world_tree(source_dir, target_dir, progress=None):
     src = Path(source_dir)
     dst = Path(target_dir)
     if dst.exists():
+        _emit_progress(progress, f"Removing existing restore target: {dst}")
         ports.filesystem.rmtree(dst, ignore_errors=True)
-    ports.filesystem.copytree(src, dst)
+    for root, dirs, files in os.walk(src):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(src)
+        dest_root = dst / rel_root
+        dest_root.mkdir(parents=True, exist_ok=True)
+        _emit_progress(progress, f"Created dir: {dest_root}")
+        for dirname in dirs:
+            child_dir = dest_root / dirname
+            child_dir.mkdir(parents=True, exist_ok=True)
+            _emit_progress(progress, f"Created dir: {child_dir}")
+        for filename in files:
+            src_path = root_path / filename
+            dest_path = dest_root / filename
+            shutil.copy2(src_path, dest_path)
+            _emit_progress(progress, f"Copied file: {dest_path}")
 
 
 def _emit_progress(progress_callback, message):
@@ -148,7 +185,7 @@ def _prepare_restore_source(ctx, selected_name, source_entry, restore_state, pro
     extract_root = ports.filesystem.mkdtemp(prefix="restore_")
     progress("Extracting backup zip.")
     with zipfile.ZipFile(source_entry, "r") as zf:
-        _safe_extract_zip(zf, extract_root)
+        _safe_extract_zip(zf, extract_root, progress)
 
     restore_source = _restore_source_from_extraction(ctx, extract_root)
     if restore_source is None:
@@ -176,7 +213,7 @@ def _create_snapshot_for_restore(ctx, world_dir, stored_world_name, safe_name, p
     snapshot_base = _sanitize_backup_name_component(stored_world_name)
     pre_restore_snapshot = ctx.BACKUP_DIR / f"{snapshot_base}_{stamp}_prerestore.zip"
     progress("Creating pre-restore snapshot.")
-    snapshot_ok, snapshot_err = _create_pre_restore_snapshot(world_dir, pre_restore_snapshot)
+    snapshot_ok, snapshot_err = _create_pre_restore_snapshot(world_dir, pre_restore_snapshot, progress)
     if snapshot_ok:
         progress(f"Pre-restore snapshot saved: {pre_restore_snapshot.name}")
         return pre_restore_snapshot, None
@@ -202,14 +239,15 @@ def _next_restore_world_dir(ctx, restore_base_name, stored_id, active_id, world_
 def _apply_restore_data(restore_source, new_world_dir, progress, fail):
     progress(f"Applying restore data to new world directory: {new_world_dir.name}.")
     try:
-        _copy_world_tree(restore_source, new_world_dir)
+        _copy_world_tree(restore_source, new_world_dir, progress)
     except Exception:
         return fail("Restore copy failed while applying backup data.")
     progress("Restore data applied to new world directory.")
     return None
 
 
-def _switch_server_properties(props_path, props_text, world_dir, archived_old_world_dir, new_world_dir, fail):
+def _switch_server_properties(props_path, props_text, world_dir, archived_old_world_dir, new_world_dir, fail, progress, old_level_name):
+    progress(f"Updating server.properties: level-name {old_level_name} -> {new_world_dir.name}")
     try:
         next_props = _update_property_text(props_text, "level-name", new_world_dir.name)
         props_path.write_text(next_props, encoding="utf-8")
@@ -221,6 +259,7 @@ def _switch_server_properties(props_path, props_text, world_dir, archived_old_wo
                 "Restore applied, but failed to update server.properties level-name and failed to rollback archived world."
             )
         return fail("Restore applied, but failed to update server.properties level-name.")
+    progress(f"server.properties updated: {props_path}")
     return None
 
 
@@ -327,6 +366,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             restore_source_name,
             restore_source,
         )
+        progress(f"Reserved restore names: stored={stored_world_name} active_base={restore_base_name}")
         pre_restore_snapshot, failure = _create_snapshot_for_restore(
             ctx,
             world_dir,
@@ -350,7 +390,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             return failure
 
         progress("Archiving previous world directory.")
-        archived_old_world_dir, archive_err = _archive_old_world_dir(ctx, world_dir, stored_world_name)
+        archived_old_world_dir, archive_err = _archive_old_world_dir(ctx, world_dir, stored_world_name, progress=progress)
         if archived_old_world_dir is None:
             return fail(archive_err or "Failed to archive previous world directory.")
 
@@ -361,6 +401,8 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             archived_old_world_dir,
             new_world_dir,
             fail,
+            progress,
+            old_level_name,
         )
         if failure is not None:
             return failure
@@ -395,6 +437,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
 
         restore_state.restore_succeeded = True
         progress("Restore completed.")
+        progress("Restore completed successfully.")
         return {
             "ok": True,
             "message": "Restore completed successfully.",
@@ -426,5 +469,6 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
         return _restore_failed("Restore failed due to an internal error.")
     finally:
         if extract_root is not None:
+            progress(f"Cleaning temporary extraction directory: {extract_root}")
             ports.filesystem.rmtree(extract_root, ignore_errors=True)
         ctx.restore_lock.release()

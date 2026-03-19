@@ -39,11 +39,12 @@
             if (state.currentActionView !== "history") {
                 if (dom.historyViewToggle) dom.historyViewToggle.hidden = true;
             }
-            const meta = state.config?.meta || {};
+            const scopeConfig = helpers.resolveScopeConfig
+                ? helpers.resolveScopeConfig(state.config, state.currentScope)
+                : (state.config || {});
+            const meta = (scopeConfig && typeof scopeConfig === "object" ? scopeConfig.meta : null) || state.config?.meta || {};
             const missedRuns = getMissedRuns();
             const lastRun = dom.historyLastRun;
-            const ruleVersion = dom.historyRuleVersion;
-            const scheduleVersion = dom.historyScheduleVersion;
             const lastChangedBy = dom.historyLastChangedBy;
             const missedRunsCount = dom.historyMissedRuns;
             const ackBtn = dom.runAcknowledgeBtn;
@@ -54,8 +55,6 @@
                 const result = meta.last_run_result || "-";
                 lastRun.textContent = `${runAt} | ${trigger} | ${result}`;
             }
-            if (ruleVersion) ruleVersion.textContent = String(meta.rule_version ?? "-");
-            if (scheduleVersion) scheduleVersion.textContent = String(meta.schedule_version ?? "-");
             if (lastChangedBy) {
                 const by = helpers.formatAuditActor?.(meta.last_changed_by || "-", state.deviceMap) || "-";
                 const at = helpers.formatAuditTimestamp?.(meta.last_changed_at || "-") || "-";

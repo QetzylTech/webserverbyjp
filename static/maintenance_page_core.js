@@ -192,10 +192,10 @@
                     return;
                 }
                 state.manualSelectedPaths?.add?.(path);
-                if (row) row.classList.add("deletable");
+                if (row) row.classList.add("selected");
             } else {
                 state.manualSelectedPaths?.delete?.(path);
-                if (row) row.classList.remove("deletable");
+                if (row) row.classList.remove("selected");
             }
             actions.syncManualRunState?.();
         }

@@ -1,4 +1,4 @@
-﻿// File pages keep only transient viewer/restore UI state locally. Shared data
+// File pages keep only transient viewer/restore UI state locally. Shared data
 // such as metrics, file lists, and log text comes from the persistent shell.
 // Modal wiring lives in file_page_modals.js to keep this runtime focused.
 let teardownFileBrowserPage = null;
@@ -85,6 +85,7 @@ function mountFileBrowserPage() {
         const fileViewerClose = document.getElementById("file-viewer-close");
         const backupRestoreControls = document.getElementById("backup-restore-controls");
         const backupRestoreStart = document.getElementById("backup-restore-start");
+        const backupRestoreLastRun = document.getElementById("backup-restore-last-run");
         const backupRestoreCancel = document.getElementById("backup-restore-cancel");
         const pageId = document.body.getAttribute("data-page") || "files";
         const listApiPath = String(__MCWEB_FILES_CONFIG.listApiPath || "").trim();
@@ -118,6 +119,20 @@ function mountFileBrowserPage() {
         let remoteRestoreFilename = "";
         let remoteRestoreOpenedByName = "";
         let restorePaneForcedByRemote = false;
+        let restoreProgressActive = false;
+        let restoreStatusFinalLogged = false;
+        const RESTORE_LOG_BUFFER_LIMIT = 500;
+        const RESTORE_LOG_BATCH_SIZE = 40;
+        const RESTORE_LOG_FLUSH_INTERVAL_MS = 80;
+        const RESTORE_LOG_BURST_LINES = 200;
+        const RESTORE_LOG_BURST_PAUSE_MS = 120;
+        let restoreLogLines = [];
+        let restoreLogPersistTimer = null;
+        let selectedRestoreLastLog = "";
+        let restoreLastLogVisible = false;
+        let restoreLogPending = [];
+        let restoreLogFlushTimer = null;
+        let restoreLogBurstCount = 0;
         let activeLogSource = "";
         let currentLogFileSource = "";
         let fileListClickBound = false;
@@ -205,7 +220,11 @@ function mountFileBrowserPage() {
         fileListScrollbarCleanup = watchVerticalScrollbarClass(fileList);
         if (fileViewerContent) {
             addScopedListener(fileViewerContent, "scroll", () => {
-                persistFileViewState({ viewerScrollTop: fileViewerContent.scrollTop });
+                const patch = { viewerScrollTop: fileViewerContent.scrollTop };
+                if (pageId === "backups" && (restoreProgressActive || selectedRestoreFilename || activeRestoreFilename)) {
+                    patch.restoreLogScrollTop = fileViewerContent.scrollTop;
+                }
+                persistFileViewState(patch);
             });
         }
         if (fileList) {
@@ -344,6 +363,8 @@ function mountFileBrowserPage() {
                     const filename = restoreBtn.getAttribute("data-filename") || "";
                     const displayName = restoreBtn.getAttribute("data-display-name") || filename;
                     if (!filename) return;
+                    selectedRestoreLastLog = String(restoreBtn.getAttribute("data-last-restore-log") || "").trim();
+                    restoreLastLogVisible = false;
                     openBackupRestorePane(filename, "local", displayName);
                 }
             });
@@ -377,6 +398,8 @@ function mountFileBrowserPage() {
             selectedRestoreFilename = filename || "";
             selectedRestoreDisplayName = displayName || selectedRestoreFilename;
             restorePaneForcedByRemote = source === "remote";
+            restoreLastLogVisible = false;
+            selectedRestoreLastLog = resolveLastRestoreLogFromSelection();
             setActiveRestoreFilename(selectedRestoreDisplayName);
             if (restorePaneForcedByRemote) {
                 stopRestorePaneAlertHeartbeat();
@@ -395,16 +418,193 @@ function mountFileBrowserPage() {
                 const message = selectedRestoreDisplayName
                     ? `Ready to restore ${selectedRestoreDisplayName}. Press Restore to continue.`
                     : "Select a backup to restore.";
+                const restored = restorePersistedRestoreLog(selectedRestoreFilename);
+                if (!restored) {
+                    restoreLogLines = [];
+                }
+                if (!restored) {
+                    fileViewerContent.innerHTML = formatViewerLogHtml(message);
+                }
+            }
+            persistFileViewState({
+                viewerOpen: true,
+                viewerKind: "restore",
+                viewerRequest: {
+                    filename: selectedRestoreFilename,
+                    displayName: selectedRestoreDisplayName,
+                },
+                activeRestoreFilename: selectedRestoreFilename,
+            });
+            syncRestoreLastRunButton();
+        }
+
+        function schedulePersistRestoreLogState() {
+            if (restoreLogPersistTimer) return;
+            restoreLogPersistTimer = window.setTimeout(() => {
+                restoreLogPersistTimer = null;
+                persistRestoreLogState();
+            }, 200);
+        }
+
+        function persistRestoreLogState() {
+            if (pageId !== "backups") return;
+            persistFileViewState({
+                restoreLogFilename: selectedRestoreFilename || activeRestoreFilename || "",
+                restoreLogLines: restoreLogLines.slice(-RESTORE_LOG_BUFFER_LIMIT),
+                restoreLogScrollTop: fileViewerContent ? fileViewerContent.scrollTop : 0,
+            });
+        }
+
+        function formatRestoreLogBatch(lines) {
+            return (lines || [])
+                .map((line) => logUtils.formatLiveLogLine(String(line || ""), { highlightErrorLine: true }))
+                .join("");
+        }
+
+        function renderRestoreLogLines(lines, options = {}) {
+            if (!fileViewerContent) return;
+            const keepScroll = !!options.keepScroll;
+            if (!keepScroll) {
+                fileViewerContent.innerHTML = "";
+            }
+            const html = formatRestoreLogBatch(lines);
+            if (html) {
+                fileViewerContent.insertAdjacentHTML("beforeend", html);
+            }
+        }
+
+        function restorePersistedRestoreLog(filename) {
+            const target = String(filename || "").trim();
+            if (!target) return false;
+            const state = getPersistedFileViewState();
+            const storedName = String(state.restoreLogFilename || "").trim();
+            if (!storedName || storedName !== target) return false;
+            const lines = Array.isArray(state.restoreLogLines) ? state.restoreLogLines.slice(-RESTORE_LOG_BUFFER_LIMIT) : [];
+            if (!lines.length) return false;
+            restoreLogLines = lines.slice(-RESTORE_LOG_BUFFER_LIMIT);
+            renderRestoreLogLines(restoreLogLines);
+            if (fileViewerContent && Number.isFinite(Number(state.restoreLogScrollTop))) {
+                fileViewerContent.scrollTop = Number(state.restoreLogScrollTop || 0);
+            }
+            return true;
+        }
+
+        function resolveLastRestoreLogFromSelection() {
+            if (!fileList || !selectedRestoreFilename) return "";
+            const buttons = fileList.querySelectorAll(".file-restore-btn");
+            for (const btn of buttons) {
+                const target = String(btn.getAttribute("data-filename") || "");
+                if (target === selectedRestoreFilename) {
+                    return String(btn.getAttribute("data-last-restore-log") || "").trim();
+                }
+            }
+            return "";
+        }
+
+        function syncRestoreLastRunButton() {
+            if (!backupRestoreLastRun) return;
+            if (!selectedRestoreLastLog) {
+                backupRestoreLastRun.hidden = true;
+                return;
+            }
+            backupRestoreLastRun.hidden = false;
+            backupRestoreLastRun.textContent = restoreLastLogVisible ? "Hide last restore" : "View last run";
+        }
+
+        async function showLastRestoreLog() {
+            if (!selectedRestoreLastLog || !fileViewerContent) return;
+            stopRestoreLogStream();
+            stopRestorePolling();
+            const url = `/view-log-file/restore/${encodeURIComponent(selectedRestoreLastLog)}`;
+            let payload = null;
+            try {
+                payload = dataClient && typeof dataClient.loadViewedFile === "function"
+                    ? await dataClient.loadViewedFile(url)
+                    : await fetch(url, {
+                        method: "GET",
+                        headers: { "X-Requested-With": "XMLHttpRequest" },
+                        cache: "no-store",
+                    }).then((response) => response.ok ? response.json() : Promise.reject(new Error("Failed to load file.")));
+            } catch (_) {
+                modals.showErrorModal("Failed to load last restore log.");
+                return;
+            }
+            if (!payload || !payload.ok) {
+                modals.showErrorModal((payload && payload.message) ? payload.message : "Failed to load last restore log.");
+                return;
+            }
+            restoreLastLogVisible = true;
+            syncRestoreLastRunButton();
+            if (fileViewerTitle) {
+                fileViewerTitle.textContent = selectedRestoreDisplayName
+                    ? `Last Restore: ${selectedRestoreDisplayName}`
+                    : "Last Restore Log";
+            }
+            fileViewerContent.innerHTML = formatViewerLogHtml(payload.content || "(no log data)");
+        }
+
+        function hideLastRestoreLog() {
+            restoreLastLogVisible = false;
+            syncRestoreLastRunButton();
+            restoreLogLines = [];
+            if (fileViewerContent) {
+                const message = selectedRestoreDisplayName
+                    ? `Ready to restore ${selectedRestoreDisplayName}. Press Restore to continue.`
+                    : "Select a backup to restore.";
                 fileViewerContent.innerHTML = formatViewerLogHtml(message);
+            }
+            persistRestoreLogState();
+        }
+
+        function scheduleRestoreLogFlush(delayMs) {
+            if (restoreLogFlushTimer) return;
+            restoreLogFlushTimer = window.setTimeout(() => {
+                restoreLogFlushTimer = null;
+                flushRestoreLogQueue();
+            }, Math.max(0, Number(delayMs || 0)));
+        }
+
+        function flushRestoreLogQueue() {
+            if (!fileViewerContent) {
+                restoreLogPending = [];
+                restoreLogBurstCount = 0;
+                return;
+            }
+            const batch = restoreLogPending.splice(0, RESTORE_LOG_BATCH_SIZE);
+            if (!batch.length) return;
+            const html = formatRestoreLogBatch(batch);
+            if (html) {
+                fileViewerContent.insertAdjacentHTML("beforeend", html);
+            }
+            const overflow = fileViewerContent.children.length - RESTORE_LOG_BUFFER_LIMIT;
+            if (overflow > 0) {
+                for (let i = 0; i < overflow; i += 1) {
+                    if (!fileViewerContent.firstElementChild) break;
+                    fileViewerContent.removeChild(fileViewerContent.firstElementChild);
+                }
+            }
+            fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
+            restoreLogBurstCount += batch.length;
+            if (restoreLogPending.length) {
+                let delay = RESTORE_LOG_FLUSH_INTERVAL_MS;
+                if (restoreLogBurstCount >= RESTORE_LOG_BURST_LINES) {
+                    restoreLogBurstCount = 0;
+                    delay = RESTORE_LOG_BURST_PAUSE_MS;
+                }
+                scheduleRestoreLogFlush(delay);
             }
         }
 
         function appendRestoreLine(at, message) {
+            const fullLine = at ? `[${at}] ${String(message || "")}` : String(message || "");
+            restoreLogLines.push(fullLine);
+            if (restoreLogLines.length > RESTORE_LOG_BUFFER_LIMIT) {
+                restoreLogLines.splice(0, restoreLogLines.length - RESTORE_LOG_BUFFER_LIMIT);
+            }
+            schedulePersistRestoreLogState();
             if (!fileViewerContent) return;
-            const timeHtml = at ? `<span class="log-ts">[${escapeHtml(at)}]</span> ` : "";
-            const lineHtml = `<span class="log-line">${timeHtml}<span class="log-text">${escapeHtml(message || "")}</span></span>`;
-            fileViewerContent.insertAdjacentHTML("beforeend", lineHtml);
-            fileViewerContent.scrollTop = fileViewerContent.scrollHeight;
+            restoreLogPending.push(fullLine);
+            scheduleRestoreLogFlush(0);
         }
 
         function ensureRestoreViewerOpen(title) {
@@ -453,16 +653,13 @@ function mountFileBrowserPage() {
         }
 
         function startRestoreLogStream(jobId) {
-            const restoreJobId = String(jobId || "").trim();
-            if (!restoreJobId) return false;
             if (typeof EventSource !== "function") return false;
             stopRestoreLogStream();
-            restoreStreamJobId = restoreJobId;
+            restoreStreamJobId = String(jobId || "").trim() || "restore";
             const stream = (dataClient && typeof dataClient.openRestoreLogStream === "function")
-                ? dataClient.openRestoreLogStream({ jobId: restoreJobId, since: restoreStreamSeq })
-                : new EventSource(`/stream/restore_logs?job_id=${encodeURIComponent(restoreJobId)}&since=${encodeURIComponent(restoreStreamSeq)}`);
-            stream.addEventListener("line", (event) => handleRestoreStreamLine(event));
-            stream.addEventListener("status", (event) => handleRestoreStreamStatus(event));
+                ? dataClient.openRestoreLogStream({ clientId: restorePaneClientId })
+                : new EventSource(`/log-stream/restore?client_id=${encodeURIComponent(restorePaneClientId)}`);
+            stream.onmessage = (event) => handleRestoreStreamLine(event);
             stream.onerror = () => {
                 scheduleRestoreStreamReconnect(1200);
                 if (!restorePollTimer) {
@@ -476,16 +673,22 @@ function mountFileBrowserPage() {
         function handleRestoreStreamLine(event) {
             if (!event || !event.data) return;
             let payload = null;
-            try {
-                payload = JSON.parse(event.data);
-            } catch (_) {
-                payload = null;
+            if (event.data && event.data.startsWith("{")) {
+                try {
+                    payload = JSON.parse(event.data);
+                } catch (_) {
+                    payload = null;
+                }
             }
-            if (!payload || payload.type !== "line") return;
-            const seqValue = Number(payload.seq || 0);
-            if (seqValue > restoreStreamSeq) restoreStreamSeq = seqValue;
-            if (seqValue > restorePollSeq) restorePollSeq = seqValue;
-            appendRestoreLine(payload.at || "", payload.message || "");
+            if (payload && payload.type === "line") {
+                const seqValue = Number(payload.seq || 0);
+                if (seqValue > restoreStreamSeq) restoreStreamSeq = seqValue;
+                if (seqValue > restorePollSeq) restorePollSeq = seqValue;
+                appendRestoreLine(payload.at || "", payload.message || "");
+                syncRestoreAvailabilityUi();
+                return;
+            }
+            appendRestoreLine("", String(event.data || ""));
             syncRestoreAvailabilityUi();
         }
 
@@ -540,8 +743,13 @@ function mountFileBrowserPage() {
                 scheduleRestoreOperationPoll(1300);
                 return;
             }
-            const operation = payload.operation || {};
+                        const operation = payload.operation || {};
             const status = String(operation.status || "").trim().toLowerCase();
+            const opData = operation.data && typeof operation.data === "object" ? operation.data : {};
+            const restoreJobId = String(opData.restore_job_id || "").trim();
+            if (restoreJobId && restorePollJobId !== restoreJobId) {
+                startRestoreProgressPanel(restoreJobId, "Restore Progress", "Restore started.", { preserveContent: true });
+            }
             if (status === "failed") {
                 appendRestoreLine("", String(operation.message || "Restore failed."));
                 modals.showErrorModal(String(operation.message || "Restore failed."), {
@@ -577,7 +785,15 @@ function mountFileBrowserPage() {
             stopRestoreLogStream();
             restorePollJobId = "";
             restoreStreamSeq = 0;
+            restoreProgressActive = false;
+            restoreStatusFinalLogged = false;
             if (payload.result && payload.result.ok) {
+                if (!restoreStatusFinalLogged) {
+                    const successMessage = String(payload.result.message || "Restore completed successfully.");
+                    appendRestoreLine("", successMessage);
+                    modals.showSuccessModal(successMessage);
+                    restoreStatusFinalLogged = true;
+                }
                 announceFileListInvalidation({ backups: true });
                 setDownloadError("");
             } else if (payload.result && payload.result.message) {
@@ -626,21 +842,46 @@ function mountFileBrowserPage() {
             }
         }
 
-        function startRestoreProgressPanel(jobId, title, startMessage) {
+        function startRestoreProgressPanel(jobId, title, startMessage, options = {}) {
             if (pageId !== "backups") return;
-            restorePollJobId = jobId || "";
-            restorePollSeq = 0;
-            restoreStreamSeq = 0;
+            const nextJobId = jobId || "";
+            const sameJob = nextJobId && restorePollJobId === nextJobId;
+            const preserveContent = !!options.preserveContent || restoreProgressActive || sameJob;
+            if (nextJobId && restorePollJobId !== nextJobId) {
+                restorePollJobId = nextJobId;
+                restorePollSeq = 0;
+                restoreStreamSeq = 0;
+            }
+            if (selectedRestoreFilename) {
+                const persisted = getPersistedFileViewState();
+                if (persisted.restoreLogFilename !== selectedRestoreFilename) {
+                    restoreLogLines = [];
+                }
+                if (!restoreLogLines.length) {
+                    restorePersistedRestoreLog(selectedRestoreFilename);
+                }
+            }
+            restoreProgressActive = true;
+            restoreStatusFinalLogged = false;
             startRestorePaneAlertHeartbeat();
             ensureRestoreViewerOpen(title || "Restore Progress");
-            if (fileViewerContent) fileViewerContent.innerHTML = "";
+            if (fileViewerContent && !preserveContent) fileViewerContent.innerHTML = "";
             syncRestoreAvailabilityUi();
-            appendRestoreLine("", startMessage || "Restore started.");
-            if (restorePollJobId) {
-                const streaming = startRestoreLogStream(restorePollJobId);
-                if (!streaming) {
-                    scheduleRestorePoll(200);
-                }
+            if (startMessage) {
+                appendRestoreLine("", startMessage || "Restore started.");
+            }
+            persistFileViewState({
+                viewerOpen: true,
+                viewerKind: "restore",
+                viewerRequest: {
+                    filename: selectedRestoreFilename,
+                    displayName: selectedRestoreDisplayName,
+                },
+                activeRestoreFilename: selectedRestoreFilename,
+            });
+            const streaming = startRestoreLogStream(restorePollJobId);
+            if (restorePollJobId && !streaming) {
+                scheduleRestorePoll(200);
             }
         }
 
@@ -823,6 +1064,17 @@ function mountFileBrowserPage() {
 </li>`.trim();
         }
 
+        function restoreListStateNodes(list) {
+            if (!list) return;
+            const loadingNode = ensureListLoadingNode();
+            if (loadingNode && loadingNode.parentElement !== list) {
+                list.prepend(loadingNode);
+            }
+            if (listEmptyDynamic && listEmptyDynamic.parentElement !== list) {
+                list.appendChild(listEmptyDynamic);
+            }
+        }
+
         function ensureListLoadingNode() {
             if (!fileList) return null;
             let node = document.getElementById("list-loading");
@@ -911,6 +1163,19 @@ function mountFileBrowserPage() {
                     source,
                     title: String(state.viewerRequest.title || logSourceTitleFor(source) || "Log Viewer"),
                 }, { restoreState: true }).catch(() => {});
+                return;
+            }
+            if (state.viewerKind === "restore") {
+                const filename = String(state.viewerRequest.filename || "").trim();
+                const displayName = String(state.viewerRequest.displayName || filename || "");
+                if (!filename) return;
+                openBackupRestorePane(filename, "local", displayName);
+                if (fileViewerContent) {
+                    const restoredTop = Number(state.restoreLogScrollTop || 0);
+                    if (Number.isFinite(restoredTop) && restoredTop >= 0) {
+                        fileViewerContent.scrollTop = restoredTop;
+                    }
+                }
             }
         }
 
@@ -931,6 +1196,8 @@ function mountFileBrowserPage() {
             if (pageId === "backups") {
                 const restoreName = escapeHtml(String(item?.restore_name || item?.name || ""));
                 const downloadName = escapeHtml(String(item?.download_name || item?.name || ""));
+                const lastRestoreLog = escapeHtml(String(item?.last_restore_log || ""));
+                const lastRestoreAt = escapeHtml(String(item?.last_restore_at || ""));
                 return `
 <li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
     <span class="file-name">${nameHtml}</span>
@@ -946,6 +1213,8 @@ function mountFileBrowserPage() {
             type="button"
             data-filename="${restoreName}"
             data-display-name="${nameHtml}"
+            data-last-restore-log="${lastRestoreLog}"
+            data-last-restore-at="${lastRestoreAt}"
         >Restore</button>
     </div>
     <span class="meta">${modified} | ${sizeText}</span>
@@ -985,6 +1254,7 @@ function mountFileBrowserPage() {
             const items = Array.isArray(payload?.items) ? payload.items : [];
             const rows = items.map((item) => buildStandardFileItemRow(item, payload)).filter(Boolean);
             list.innerHTML = rows.join("\n");
+            restoreListStateNodes(list);
             setListLoadingState(false);
             toggleEmptyState(rows.length > 0);
             if (pageId === "backups") {
@@ -1031,6 +1301,7 @@ function mountFileBrowserPage() {
             const items = Array.isArray(payload?.items) ? payload.items : [];
             const rows = items.map((item) => buildLogFileItemRow(item, payload)).filter(Boolean);
             list.innerHTML = rows.join("\n");
+            restoreListStateNodes(list);
             toggleEmptyState(rows.length > 0);
             setListLoadingState(false);
             applyFileSort(sortSelect ? (sortSelect.value || "newest") : "newest");
@@ -1129,6 +1400,8 @@ function mountFileBrowserPage() {
             selectedRestoreFilename = "";
             selectedRestoreDisplayName = "";
             restorePaneForcedByRemote = false;
+            restoreProgressActive = false;
+            restoreStatusFinalLogged = false;
             setBackupRestoreControlsVisible(false);
             setActiveViewedFilename("");
             setActiveRestoreFilename("");
@@ -1144,6 +1417,10 @@ function mountFileBrowserPage() {
         }
 
         function openViewer() {
+            if (wrap && wrap.classList.contains("viewer-open") && !wrap.classList.contains("viewer-closing")) {
+                persistFileViewState({ viewerOpen: true });
+                return;
+            }
             persistFileViewState({ viewerOpen: true });
             if (viewerController) {
                 viewerController.open();
@@ -1284,7 +1561,7 @@ function mountFileBrowserPage() {
             const jobId = (payload && payload.job_id) ? payload.job_id : "";
             const opId = (payload && payload.op_id) ? payload.op_id : "";
             const restoreDisplay = restoreRequest.displayName || restoreRequest.filename || "selected backup";
-            startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreDisplay}.`);
+            startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreDisplay}.`, { preserveContent: true });
             if (opId) {
                 restoreOperationOpId = String(opId || "").trim();
                 scheduleRestoreOperationPoll(500);
@@ -1411,6 +1688,16 @@ function mountFileBrowserPage() {
                     filename: selectedRestoreFilename,
                     displayName: selectedRestoreDisplayName,
                 });
+            });
+        }
+        if (backupRestoreLastRun) {
+            addScopedListener(backupRestoreLastRun, "click", () => {
+                if (!selectedRestoreFilename) return;
+                if (restoreLastLogVisible) {
+                    hideLastRestoreLog();
+                    return;
+                }
+                showLastRestoreLog();
             });
         }
         if (backupRestoreCancel) {
@@ -1554,7 +1841,7 @@ function mountFileBrowserPage() {
             });
         });
         if (pageId === "minecraft_logs") {
-            currentLogFileSource = initialLogFileSource || currentLogFileSource || "minecraft";
+            currentLogFileSource = currentLogFileSource || initialLogFileSource || "minecraft";
             persistFileViewState({ currentLogFileSource });
             setActiveLogSource(activeLogSource || currentLogFileSource || "minecraft");
             if (logSourceToggles.length > 0) {
@@ -1580,6 +1867,9 @@ if (pageModules && typeof pageModules.register === "function") {
 if (!document.getElementById("mcweb-app-content")) {
     mountFileBrowserPage();
 }
+
+
+
 
 
 

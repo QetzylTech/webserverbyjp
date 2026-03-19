@@ -19,6 +19,7 @@ def build_state(app_config, *, app_dir, display_tz):
     minecraft_logs_dir = minecraft_root_dir / "logs"
     mcweb_log_dir = app_dir / "logs"
     backup_log_file = mcweb_log_dir / "backup.log"
+    restore_log_file = mcweb_log_dir / "restore.log"
     mcweb_action_log_file = mcweb_log_dir / "mcweb_actions.log"
     mcweb_log_file = mcweb_log_dir / "mcweb.log"
     data_dir = app_dir / "data"
@@ -68,7 +69,7 @@ def build_state(app_config, *, app_dir, display_tz):
     restore_lock = threading.Lock()
 
     off_states = {"inactive", "failed"}
-    log_source_keys = ("minecraft", "backup", "mcweb", "mcweb_log")
+    log_source_keys = ("minecraft", "backup", "restore", "mcweb", "mcweb_log")
 
     mc_query_interval_seconds = app_config.mc_query_interval_seconds
     mc_query_lock = threading.Lock()
@@ -191,6 +192,8 @@ def build_state(app_config, *, app_dir, display_tz):
     device_name_map_lock = threading.Lock()
     device_name_map_cache = {}
     device_name_map_mtime_ns_ref = [None]
+    password_throttle_lock = threading.Lock()
+    password_throttle_state = {"by_ip": {}}
 
     log_stream_states = {
         source: {
@@ -220,6 +223,7 @@ def build_state(app_config, *, app_dir, display_tz):
         "MINECRAFT_LOGS_DIR": minecraft_logs_dir,
         "MCWEB_LOG_DIR": mcweb_log_dir,
         "BACKUP_LOG_FILE": backup_log_file,
+        "RESTORE_LOG_FILE": restore_log_file,
         "MCWEB_ACTION_LOG_FILE": mcweb_action_log_file,
         "MCWEB_LOG_FILE": mcweb_log_file,
         "DATA_DIR": data_dir,
@@ -357,6 +361,8 @@ def build_state(app_config, *, app_dir, display_tz):
         "device_name_map_lock": device_name_map_lock,
         "device_name_map_cache": device_name_map_cache,
         "device_name_map_mtime_ns_ref": device_name_map_mtime_ns_ref,
+        "password_throttle_lock": password_throttle_lock,
+        "password_throttle_state": password_throttle_state,
         "log_stream_states": log_stream_states,
         "APP_DIR": app_dir,
         "APP_CONFIG": app_config,

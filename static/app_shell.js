@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
     const contentRoot = document.getElementById("mcweb-app-content");
     if (!contentRoot) return;
 
@@ -18,6 +18,16 @@
         mcweb: "/log-stream/mcweb",
         mcweb_log: "/log-stream/mcweb_log",
     };
+    const CHIME_SOUNDS = {
+        startup: "https://cdn.jsdelivr.net/gh/Calinou/kenney-interface-sounds@master/addons/kenney_interface_sounds/maximize_008.wav",
+        shutdown: "https://cdn.jsdelivr.net/gh/Calinou/kenney-interface-sounds@master/addons/kenney_interface_sounds/minimize_008.wav",
+        error: "https://cdn.jsdelivr.net/gh/Calinou/kenney-interface-sounds@master/addons/kenney_interface_sounds/question_002.wav",
+    };
+    const MULTITAB_CHANNEL = "mcweb.data";
+    const PRIMARY_STORAGE_KEY = "mcweb.primaryTab";
+    const VIEW_STATE_STORAGE_KEY = "mcweb.viewState.v1";
+    const PRIMARY_TTL_MS = 6000;
+    const PRIMARY_HEARTBEAT_MS = 2000;
 
     let currentPath = window.location.pathname;
     let navigationToken = 0;
@@ -25,6 +35,10 @@
     let navBound = false;
     let themeBound = false;
     let metricsEventSource = null;
+    let notificationsEventSource = null;
+    let isPrimaryTab = false;
+    let primaryHeartbeatTimer = null;
+    let primaryCheckTimer = null;
     const loadedScriptUrls = new Set();
     const loadingScriptPromises = new Map();
     const pageModules = window.MCWebPageModules || {
@@ -63,6 +77,9 @@
             activeLogSource: "",
             activeViewedFilename: "",
             activeRestoreFilename: "",
+            restoreLogFilename: "",
+            restoreLogLines: [],
+            restoreLogScrollTop: 0,
             viewerOpen: false,
             viewerKind: "",
             viewerRequest: null,
@@ -71,8 +88,52 @@
         };
     }
 
+    function createDefaultMaintenanceViewState() {
+        return {
+            currentScope: "backups",
+            currentActionView: "rules",
+            historyViewMode: "successful",
+        };
+    }
+
+    function createDefaultDocsViewState() {
+        return {
+            scrollByUrl: {},
+        };
+    }
+
+    function readPersistedViewState() {
+        try {
+            const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return null;
+            return parsed;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writePersistedViewState(payload) {
+        try {
+            window.localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify(payload || {}));
+        } catch (_) {
+            // Ignore storage failures.
+        }
+    }
+
+    function persistViewState() {
+        writePersistedViewState({
+            homeView: shellState.homeView,
+            fileViews: shellState.fileViews,
+            maintenanceView: shellState.maintenanceView,
+            docsView: shellState.docsView,
+        });
+    }
+
     const shellState = {
         metricsSnapshot: window.__MCWEB_LAST_METRICS_SNAPSHOT || null,
+        lastServiceStatus: "",
         deviceMapEntry: null,
         readmeUrlEntry: null,
         readmeUrlPromise: null,
@@ -97,6 +158,8 @@
             crash_logs: createDefaultFilePageViewState(),
             minecraft_logs: createDefaultFilePageViewState(),
         },
+        maintenanceView: createDefaultMaintenanceViewState(),
+        docsView: createDefaultDocsViewState(),
         homeLogs: {
             buffers: {
                 minecraft: [],
@@ -125,6 +188,334 @@
             activeSource: "",
         },
     };
+    const persistedViewState = readPersistedViewState();
+    if (persistedViewState && typeof persistedViewState === "object") {
+        if (persistedViewState.homeView && typeof persistedViewState.homeView === "object") {
+            Object.assign(shellState.homeView, persistedViewState.homeView);
+        }
+        if (persistedViewState.fileViews && typeof persistedViewState.fileViews === "object") {
+            Object.keys(shellState.fileViews).forEach((key) => {
+                const stored = persistedViewState.fileViews[key];
+                if (stored && typeof stored === "object") {
+                    Object.assign(shellState.fileViews[key], stored);
+                }
+            });
+        }
+        if (persistedViewState.maintenanceView && typeof persistedViewState.maintenanceView === "object") {
+            Object.assign(shellState.maintenanceView, persistedViewState.maintenanceView);
+        }
+        if (persistedViewState.docsView && typeof persistedViewState.docsView === "object") {
+            Object.assign(shellState.docsView, persistedViewState.docsView);
+        }
+    }
+    const soundState = {
+        unlocked: false,
+        unlockAttempted: false,
+        audioByKey: {},
+    };
+
+    const tabId = (() => {
+        try {
+            const existing = window.sessionStorage.getItem("mcweb.tabId");
+            if (existing) return existing;
+            const generated = (window.crypto && typeof window.crypto.randomUUID === "function")
+                ? window.crypto.randomUUID()
+                : `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+            window.sessionStorage.setItem("mcweb.tabId", generated);
+            return generated;
+        } catch (_) {
+            return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        }
+    })();
+
+    const broadcast = (() => {
+        let channel = null;
+        const listeners = new Set();
+        if (typeof BroadcastChannel === "function") {
+            channel = new BroadcastChannel(MULTITAB_CHANNEL);
+            channel.onmessage = (event) => {
+                listeners.forEach((listener) => listener(event.data));
+            };
+        } else if (window.addEventListener) {
+            window.addEventListener("storage", (event) => {
+                if (event.key !== `${MULTITAB_CHANNEL}:fallback` || !event.newValue) return;
+                try {
+                    const payload = JSON.parse(event.newValue);
+                    listeners.forEach((listener) => listener(payload));
+                } catch (_) {
+                    // Ignore malformed payloads.
+                }
+            });
+        }
+        return {
+            send: (payload) => {
+                const message = Object.assign({}, payload, { origin: tabId, sentAt: Date.now() });
+                if (channel) {
+                    channel.postMessage(message);
+                    return;
+                }
+                try {
+                    window.localStorage.setItem(`${MULTITAB_CHANNEL}:fallback`, JSON.stringify(message));
+                } catch (_) {
+                    // Ignore storage failures.
+                }
+            },
+            onMessage: (listener) => {
+                if (typeof listener !== "function") return () => {};
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        };
+    })();
+
+    function shouldPlaySoundHere() {
+        return document.visibilityState === "visible";
+    }
+
+    function createSoundElement(src) {
+        const audio = new Audio();
+        audio.preload = "auto";
+        audio.src = src;
+        audio.crossOrigin = "anonymous";
+        return audio;
+    }
+
+    function ensureSoundBank() {
+        Object.keys(CHIME_SOUNDS).forEach((key) => {
+            if (soundState.audioByKey[key]) return;
+            soundState.audioByKey[key] = createSoundElement(CHIME_SOUNDS[key]);
+        });
+    }
+
+    function attemptUnlockSounds() {
+        if (soundState.unlocked || soundState.unlockAttempted) return;
+        soundState.unlockAttempted = true;
+        ensureSoundBank();
+        const audio = soundState.audioByKey.startup;
+        if (!audio) return;
+        audio.muted = true;
+        const playAttempt = audio.play();
+        if (playAttempt && typeof playAttempt.then === "function") {
+            playAttempt.then(() => {
+                audio.pause();
+                audio.currentTime = 0;
+                audio.muted = false;
+                soundState.unlocked = true;
+            }).catch(() => {
+                audio.muted = false;
+            });
+        } else {
+            audio.muted = false;
+        }
+    }
+
+    function bindSoundUnlock() {
+        const unlock = () => {
+            attemptUnlockSounds();
+            document.removeEventListener("pointerdown", unlock);
+            document.removeEventListener("keydown", unlock);
+        };
+        document.addEventListener("pointerdown", unlock, { once: true });
+        document.addEventListener("keydown", unlock, { once: true });
+    }
+
+    function playSound(key) {
+        ensureSoundBank();
+        if (!shouldPlaySoundHere()) return;
+        const audio = soundState.audioByKey[key];
+        if (!audio) return;
+        if (!soundState.unlocked) {
+            attemptUnlockSounds();
+            return;
+        }
+        try {
+            audio.currentTime = 0;
+            const result = audio.play();
+            if (result && typeof result.catch === "function") {
+                result.catch(() => {});
+            }
+        } catch (_) {
+            // Ignore playback failures (autoplay restrictions).
+        }
+    }
+
+    function emitSoundEvent(key) {
+        if (isPrimaryTab) {
+            broadcast.send({ type: "sound_event", sound: key });
+        }
+        playSound(key);
+    }
+
+    function readPrimaryRecord() {
+        try {
+            const raw = window.localStorage.getItem(PRIMARY_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return null;
+            return parsed;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writePrimaryRecord() {
+        try {
+            window.localStorage.setItem(
+                PRIMARY_STORAGE_KEY,
+                JSON.stringify({ id: tabId, ts: Date.now() })
+            );
+        } catch (_) {
+            // Ignore storage failures.
+        }
+    }
+
+    function primaryRecordActive(record) {
+        if (!record || typeof record !== "object") return false;
+        const ts = Number(record.ts || 0);
+        if (!Number.isFinite(ts)) return false;
+        return (Date.now() - ts) < PRIMARY_TTL_MS;
+    }
+
+    function startPrimaryHeartbeat() {
+        if (primaryHeartbeatTimer) return;
+        writePrimaryRecord();
+        broadcast.send({ type: "primary_heartbeat", primaryId: tabId });
+        primaryHeartbeatTimer = window.setInterval(() => {
+            writePrimaryRecord();
+            broadcast.send({ type: "primary_heartbeat", primaryId: tabId });
+        }, PRIMARY_HEARTBEAT_MS);
+    }
+
+    function stopPrimaryHeartbeat() {
+        if (!primaryHeartbeatTimer) return;
+        window.clearInterval(primaryHeartbeatTimer);
+        primaryHeartbeatTimer = null;
+    }
+
+    function startPrimaryStreams() {
+        startMetricsStream();
+        startNotificationsStream();
+        if (shellState.homeLogs.activeSource) {
+            ensureHomeLogStreamStarted(shellState.homeLogs.activeSource);
+        }
+    }
+
+    function stopPrimaryStreams() {
+        stopMetricsStream();
+        stopNotificationsStream();
+        stopAllHomeLogStreams();
+    }
+
+    function setPrimaryState(nextIsPrimary) {
+        if (nextIsPrimary === isPrimaryTab) return;
+        isPrimaryTab = nextIsPrimary;
+        if (isPrimaryTab) {
+            startPrimaryHeartbeat();
+            startPrimaryStreams();
+            broadcast.send({ type: "primary_active", primaryId: tabId });
+        } else {
+            stopPrimaryHeartbeat();
+            stopPrimaryStreams();
+        }
+    }
+
+    function evaluatePrimaryRole() {
+        const record = readPrimaryRecord();
+        if (primaryRecordActive(record) && record.id !== tabId) {
+            setPrimaryState(false);
+            return;
+        }
+        setPrimaryState(true);
+    }
+
+    function startPrimaryElection() {
+        evaluatePrimaryRole();
+        if (primaryCheckTimer) return;
+        primaryCheckTimer = window.setInterval(() => {
+            evaluatePrimaryRole();
+        }, PRIMARY_HEARTBEAT_MS);
+    }
+
+    function broadcastStateSnapshot(targetId = "") {
+        if (!isPrimaryTab) return;
+        broadcast.send({
+            type: "state_snapshot",
+            targetId,
+            payload: {
+                metricsSnapshot: shellState.metricsSnapshot || null,
+                homeLogs: {
+                    buffers: shellState.homeLogs.buffers,
+                },
+            },
+        });
+    }
+
+    broadcast.onMessage((message) => {
+        if (!message || typeof message !== "object") return;
+        if (message.origin === tabId) return;
+        const type = String(message.type || "");
+        if (type === "primary_heartbeat") {
+            const record = readPrimaryRecord();
+            if (record && record.id !== tabId) {
+                setPrimaryState(false);
+            }
+            return;
+        }
+        if (type === "primary_active") {
+            if (message.primaryId && message.primaryId !== tabId) {
+                setPrimaryState(false);
+            }
+            return;
+        }
+        if (type === "request_state") {
+            if (isPrimaryTab) {
+                broadcastStateSnapshot(message.origin || "");
+            }
+            return;
+        }
+        if (type === "request_log_source") {
+            if (isPrimaryTab && message.source) {
+                activateHomeLogStream(String(message.source || ""));
+                broadcastStateSnapshot(message.origin || "");
+            }
+            return;
+        }
+        if (type === "state_snapshot") {
+            if (message.targetId && message.targetId !== tabId) return;
+            const payload = message.payload || {};
+            if (payload.metricsSnapshot) {
+                dispatchMetricsSnapshot(payload.metricsSnapshot, { fromBroadcast: true });
+            }
+            const logs = payload.homeLogs && payload.homeLogs.buffers ? payload.homeLogs.buffers : null;
+            if (logs && typeof logs === "object") {
+                Object.keys(logs).forEach((key) => {
+                    const lines = Array.isArray(logs[key]) ? logs[key].join("\n") : "";
+                    setHomeLogSnapshot(key, lines, { fromBroadcast: true });
+                });
+            }
+            return;
+        }
+        if (type === "metrics_snapshot" && message.payload) {
+            dispatchMetricsSnapshot(message.payload, { fromBroadcast: true });
+            return;
+        }
+        if (type === "log_snapshot" && message.source) {
+            const lines = Array.isArray(message.lines) ? message.lines.join("\n") : "";
+            setHomeLogSnapshot(message.source, lines, { fromBroadcast: true });
+            return;
+        }
+        if (type === "log_line" && message.source) {
+            appendHomeLogLine(message.source, message.line || "", { fromBroadcast: true });
+            return;
+        }
+        if (type === "notification" && message.payload) {
+            handleNotificationPayload(message.payload, { fromBroadcast: true });
+            return;
+        }
+        if (type === "sound_event" && message.sound) {
+            playSound(String(message.sound || ""));
+        }
+    });
 
     function isInternalNavLink(anchor) {
         if (!(anchor instanceof HTMLAnchorElement)) return false;
@@ -138,6 +529,23 @@
 
     function currentPageManifest() {
         return contentRoot.querySelector("#mcweb-page-root");
+    }
+
+    function pruneContentRootWhitespace() {
+        if (!contentRoot) return;
+        const nodes = Array.from(contentRoot.childNodes || []);
+        nodes.forEach((node) => {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                if (!String(node.nodeValue || "").trim()) {
+                    node.remove();
+                }
+                return;
+            }
+            if (node.nodeType === 8) {
+                node.remove();
+            }
+        });
     }
 
     function parseAssetListFromManifest(manifest, attrName) {
@@ -554,6 +962,48 @@
         applyMobileToggleAttention(homeAttention, restoreAttention);
     }
 
+    function ensureGlobalNotificationModal() {
+        let modal = document.getElementById("mcweb-global-notification");
+        if (modal) return modal;
+        modal = document.createElement("div");
+        modal.id = "mcweb-global-notification";
+        modal.className = "modal-overlay";
+        modal.setAttribute("aria-hidden", "true");
+        modal.innerHTML = `
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mcweb-global-notification-title">
+                <h3 id="mcweb-global-notification-title" class="modal-title">Notice</h3>
+                <p id="mcweb-global-notification-text" class="modal-text"></p>
+                <div class="modal-actions">
+                    <button id="mcweb-global-notification-ok" class="modal-btn-submit" type="button">OK</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const ok = modal.querySelector("#mcweb-global-notification-ok");
+        if (ok) {
+            ok.addEventListener("click", () => {
+                modal.classList.remove("open");
+                modal.setAttribute("aria-hidden", "true");
+            });
+        }
+        return modal;
+    }
+
+    function showGlobalNotification(message, options = {}) {
+        const modal = ensureGlobalNotificationModal();
+        const text = modal.querySelector("#mcweb-global-notification-text");
+        const title = modal.querySelector("#mcweb-global-notification-title");
+        if (text) text.textContent = String(message || "Notification");
+        if (title && options.title) title.textContent = String(options.title || "Notice");
+        modal.setAttribute("aria-hidden", "false");
+        modal.classList.add("open");
+    }
+
+    function broadcastMetricsSnapshot(payload) {
+        if (!isPrimaryTab) return;
+        broadcast.send({ type: "metrics_snapshot", payload });
+    }
+
     function notifyMetricsSubscribers(payload) {
         shellState.metricsSubscribers.forEach((listener) => {
             try {
@@ -564,12 +1014,44 @@
         });
     }
 
-    function dispatchMetricsSnapshot(payload) {
+    function dispatchMetricsSnapshot(payload, options = {}) {
         if (!payload || typeof payload !== "object") return;
+        const previousStatus = String(shellState.lastServiceStatus || "").trim().toLowerCase();
+        const nextStatus = String(payload.service_status || payload.minecraft?.status || "").trim().toLowerCase();
+        if (nextStatus) {
+            shellState.lastServiceStatus = payload.service_status || payload.minecraft?.status || "";
+        }
         shellState.metricsSnapshot = payload;
         window.__MCWEB_LAST_METRICS_SNAPSHOT = payload;
         applyNavAttentionPayload(payload);
         notifyMetricsSubscribers(payload);
+        if (previousStatus && nextStatus && previousStatus !== nextStatus) {
+            if (previousStatus === "starting" && nextStatus === "running") {
+                emitSoundEvent("startup");
+            } else if (nextStatus === "shutting down") {
+                emitSoundEvent("shutdown");
+            } else if (nextStatus === "crashed") {
+                emitSoundEvent("error");
+            }
+        }
+        if (!options.fromBroadcast) {
+            broadcastMetricsSnapshot(payload);
+        }
+    }
+
+    function handleNotificationPayload(payload, options = {}) {
+        if (!payload || typeof payload !== "object") return;
+        const message = String(payload.message || "").trim();
+        if (message) {
+            showGlobalNotification(message, { title: payload.title || "Notice" });
+        }
+        const kind = String(payload.kind || "").trim().toLowerCase();
+        if (kind === "error" || kind === "danger") {
+            emitSoundEvent("error");
+        }
+        if (!options.fromBroadcast && isPrimaryTab) {
+            broadcast.send({ type: "notification", payload });
+        }
     }
 
     function metricsStreamPath() {
@@ -587,8 +1069,34 @@
         metricsEventSource = null;
     }
 
+    function stopNotificationsStream() {
+        if (!notificationsEventSource) return;
+        try {
+            notificationsEventSource.close();
+        } catch (_) {
+            // Ignore close errors.
+        }
+        notificationsEventSource = null;
+    }
+
+    function startNotificationsStream() {
+        if (!isPrimaryTab || notificationsEventSource) return;
+        notificationsEventSource = new EventSource("/notifications-stream");
+        notificationsEventSource.addEventListener("notification", (event) => {
+            try {
+                const payload = JSON.parse(event.data || "{}");
+                handleNotificationPayload(payload, { fromBroadcast: false });
+            } catch (_) {
+                // Ignore malformed payloads.
+            }
+        });
+        notificationsEventSource.onerror = () => {
+            // EventSource reconnects automatically.
+        };
+    }
+
     function startMetricsStream() {
-        if (metricsEventSource) return;
+        if (!isPrimaryTab || metricsEventSource) return;
         metricsEventSource = new EventSource(metricsStreamPath());
         metricsEventSource.onmessage = (event) => {
             try {
@@ -915,15 +1423,18 @@
         });
     }
 
-    function setHomeLogSnapshot(source, rawText) {
+    function setHomeLogSnapshot(source, rawText, options = {}) {
         const sourceKey = String(source || "").trim().toLowerCase();
         if (!HOME_LOG_LIMITS[sourceKey]) return;
         const lines = capHomeLogLines(String(rawText || "").split("\n"), homeLogLimit(sourceKey));
         shellState.homeLogs.buffers[sourceKey] = lines;
         notifyHomeLogSubscribers(sourceKey);
+        if (!options.fromBroadcast && isPrimaryTab) {
+            broadcast.send({ type: "log_snapshot", source: sourceKey, lines });
+        }
     }
 
-    function appendHomeLogLine(source, line) {
+    function appendHomeLogLine(source, line, options = {}) {
         const sourceKey = String(source || "").trim().toLowerCase();
         if (!HOME_LOG_LIMITS[sourceKey]) return;
         shellState.homeLogs.pending[sourceKey].push(String(line || ""));
@@ -936,11 +1447,19 @@
             shellState.homeLogs.buffers[sourceKey] = capHomeLogLines(merged, homeLogLimit(sourceKey));
             notifyHomeLogSubscribers(sourceKey);
         }, 75);
+        if (!options.fromBroadcast && isPrimaryTab) {
+            broadcast.send({ type: "log_line", source: sourceKey, line: String(line || "") });
+        }
     }
 
     function ensureHomeLogStreamStarted(source) {
         const sourceKey = String(source || "").trim().toLowerCase();
         if (!HOME_LOG_PATHS[sourceKey] || shellState.homeLogs.streams[sourceKey]) return;
+        if (!isPrimaryTab) {
+            broadcast.send({ type: "request_log_source", source: sourceKey });
+            broadcast.send({ type: "request_state" });
+            return;
+        }
         const clientId = getPersistentClientId("mcweb.clientId");
         const basePath = HOME_LOG_PATHS[sourceKey];
         const streamPath = clientId ? `${basePath}?client_id=${encodeURIComponent(clientId)}` : basePath;
@@ -1010,6 +1529,7 @@
         if (patch.logScrollTopBySource && typeof patch.logScrollTopBySource === "object") {
             Object.assign(shellState.homeView.logScrollTopBySource, patch.logScrollTopBySource);
         }
+        persistViewState();
         return getHomeViewState();
     }
 
@@ -1027,6 +1547,9 @@
             activeLogSource: state.activeLogSource,
             activeViewedFilename: state.activeViewedFilename,
             activeRestoreFilename: state.activeRestoreFilename,
+            restoreLogFilename: state.restoreLogFilename,
+            restoreLogLines: Array.isArray(state.restoreLogLines) ? state.restoreLogLines.slice(0) : [],
+            restoreLogScrollTop: Number(state.restoreLogScrollTop || 0),
             viewerOpen: !!state.viewerOpen,
             viewerKind: state.viewerKind,
             viewerRequest: state.viewerRequest ? Object.assign({}, state.viewerRequest) : null,
@@ -1053,9 +1576,62 @@
                     : null;
                 return;
             }
+            if (key === "restoreLogLines") {
+                state.restoreLogLines = Array.isArray(patch.restoreLogLines)
+                    ? patch.restoreLogLines.slice(0, 500)
+                    : [];
+                return;
+            }
             state[key] = patch[key];
         });
+        persistViewState();
         return getFilePageViewState(normalized);
+    }
+
+    function getMaintenanceViewState() {
+        const state = shellState.maintenanceView || createDefaultMaintenanceViewState();
+        shellState.maintenanceView = state;
+        return {
+            currentScope: state.currentScope,
+            currentActionView: state.currentActionView,
+            historyViewMode: state.historyViewMode,
+        };
+    }
+
+    function updateMaintenanceViewState(patch = {}) {
+        if (!patch || typeof patch !== "object") return getMaintenanceViewState();
+        const state = shellState.maintenanceView || createDefaultMaintenanceViewState();
+        shellState.maintenanceView = state;
+        if (typeof patch.currentScope === "string" && patch.currentScope.trim()) {
+            state.currentScope = patch.currentScope.trim().toLowerCase();
+        }
+        if (typeof patch.currentActionView === "string" && patch.currentActionView.trim()) {
+            state.currentActionView = patch.currentActionView.trim().toLowerCase();
+        }
+        if (typeof patch.historyViewMode === "string" && patch.historyViewMode.trim()) {
+            state.historyViewMode = patch.historyViewMode.trim().toLowerCase();
+        }
+        persistViewState();
+        return getMaintenanceViewState();
+    }
+
+    function getDocsViewState() {
+        const state = shellState.docsView || createDefaultDocsViewState();
+        shellState.docsView = state;
+        return {
+            scrollByUrl: state.scrollByUrl ? Object.assign({}, state.scrollByUrl) : {},
+        };
+    }
+
+    function updateDocsViewState(patch = {}) {
+        if (!patch || typeof patch !== "object") return getDocsViewState();
+        const state = shellState.docsView || createDefaultDocsViewState();
+        shellState.docsView = state;
+        if (patch.scrollByUrl && typeof patch.scrollByUrl === "object") {
+            Object.assign(state.scrollByUrl, patch.scrollByUrl);
+        }
+        persistViewState();
+        return getDocsViewState();
     }
     // Public shell API for page runtimes. Shell boot concerns like theme and nav
     // stay internal; pages consume shared caches, live metrics, and view state.
@@ -1079,6 +1655,10 @@
         updateHomeViewState,
         getFilePageViewState,
         updateFilePageViewState,
+        getMaintenanceViewState,
+        updateMaintenanceViewState,
+        getDocsViewState,
+        updateDocsViewState,
         activateHomeLogStream,
         stopAllHomeLogStreams,
         setHomeLogSnapshot,
@@ -1091,6 +1671,7 @@
         }
         setActiveNavForPath(pathname);
         closeNav();
+        pruneContentRootWhitespace();
         if (!options.skipStyleSync) {
             await syncPageStyles();
             if (typeof token === "number" && !isLatestNavigationToken(token)) {
@@ -1165,6 +1746,7 @@
             pageModules.unmount(contentRoot.dataset.currentPage || document.body.dataset.page || "");
             dispatchSyntheticPageHide();
             contentRoot.innerHTML = html;
+            pruneContentRootWhitespace();
             await mountCurrentContent(
                 nextUrl.pathname,
                 response.headers.get("X-MCWEB-Page-Title") || "",
@@ -1214,27 +1796,35 @@
 
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
-            stopMetricsStream();
-            stopAllHomeLogStreams();
             return;
         }
-        startMetricsStream();
-        if (shellState.homeLogs.activeSource) {
-            ensureHomeLogStreamStarted(shellState.homeLogs.activeSource);
+        startPrimaryElection();
+        if (!isPrimaryTab) {
+            broadcast.send({ type: "request_state" });
         }
     });
 
     window.addEventListener("beforeunload", () => {
-        stopMetricsStream();
-        stopAllHomeLogStreams();
+        if (isPrimaryTab) {
+            try {
+                window.localStorage.removeItem(PRIMARY_STORAGE_KEY);
+            } catch (_) {
+                // Ignore storage failures.
+            }
+        }
+        stopPrimaryStreams();
     });
 
     startThemePreferenceWatcher();
     startSidebarNav();
+    bindSoundUnlock();
     if (shellState.metricsSnapshot) {
         applyNavAttentionPayload(shellState.metricsSnapshot);
     }
-    startMetricsStream();
+    startPrimaryElection();
+    if (!isPrimaryTab) {
+        broadcast.send({ type: "request_state" });
+    }
     mountCurrentContent(currentPath, document.title, { navigationToken }).catch(() => {});
 })();
 

@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 from werkzeug.security import check_password_hash
 
+from app.services import notification_service as notification_service
+from app.services import password_throttle as password_throttle_service
+
 from app.ports import ports
 from app.services.restore_workflow_helpers import ensure_session_file, ensure_startup_rcon_settings
 
@@ -33,14 +36,66 @@ def get_service_status_intent(ctx):
 
 
 def validate_sudo_password(ctx, sudo_password):
+    client_ip = ""
+    getter = getattr(ctx, "_get_client_ip", None)
+    if callable(getter):
+        try:
+            client_ip = str(getter() or "").strip()
+        except Exception:
+            client_ip = ""
+    if password_throttle_service.is_blocked(ctx, client_ip):
+        return False
+
     expected_hash = (getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
     candidate = (sudo_password or "").strip()
     if not expected_hash or not candidate:
+        blocked_until, triggered = password_throttle_service.record_failure(ctx, client_ip)
+        if triggered:
+            retry_seconds = max(0, int(blocked_until - time.time()))
+            notification_service.publish_ui_notification(
+                ctx,
+                {
+                    "code": "password_throttle",
+                    "kind": "warning",
+                    "message": f"Password retries paused for {retry_seconds} seconds after 3 failed attempts.",
+                    "retry_after_seconds": retry_seconds,
+                },
+            )
+            try:
+                ctx.log_mcweb_action(
+                    "password_throttle",
+                    rejection_message=f"Password retries paused for {retry_seconds} seconds.",
+                )
+            except Exception:
+                pass
         return False
     try:
-        return bool(check_password_hash(expected_hash, candidate))
+        ok = bool(check_password_hash(expected_hash, candidate))
     except ValueError:
-        return False
+        ok = False
+    if ok:
+        password_throttle_service.record_success(ctx, client_ip)
+        return True
+    blocked_until, triggered = password_throttle_service.record_failure(ctx, client_ip)
+    if triggered:
+        retry_seconds = max(0, int(blocked_until - time.time()))
+        notification_service.publish_ui_notification(
+            ctx,
+            {
+                "code": "password_throttle",
+                "kind": "warning",
+                "message": f"Password retries paused for {retry_seconds} seconds after 3 failed attempts.",
+                "retry_after_seconds": retry_seconds,
+            },
+        )
+        try:
+            ctx.log_mcweb_action(
+                "password_throttle",
+                rejection_message=f"Password retries paused for {retry_seconds} seconds.",
+            )
+        except Exception:
+            pass
+    return False
 
 
 def read_session_start_time(ctx):

@@ -277,6 +277,7 @@ def register_file_routes(app, state):
                 if line:
                     yield f"data: {line}\n\n"
             last_event_id = 0
+            last_seq = 0
             db_path = state.get("APP_STATE_DB_PATH")
             if db_path is not None:
                 try:
@@ -285,8 +286,26 @@ def register_file_routes(app, state):
                     latest_event = None
                 if isinstance(latest_event, dict):
                     last_event_id = int(latest_event.get("id", 0) or 0)
+                    last_seq = last_event_id
+            stream_state = state.get("log_stream_states", {}).get(source_key)
+            heartbeat_seconds = float(state.get("LOG_STREAM_HEARTBEAT_SECONDS", 5) or 5)
+            poll_interval = min(0.5, heartbeat_seconds)
+            last_keepalive = time.time()
             try:
                 while True:
+                    delivered = False
+                    if stream_state is not None:
+                        with stream_state["cond"]:
+                            events = list(stream_state["events"])
+                        if events:
+                            for seq, line in events:
+                                if seq <= last_seq:
+                                    continue
+                                last_seq = seq
+                                last_event_id = max(last_event_id, seq)
+                                if line:
+                                    delivered = True
+                                    yield f"data: {line}\n\n"
                     db_path = state.get("APP_STATE_DB_PATH")
                     if db_path is not None:
                         try:
@@ -303,13 +322,22 @@ def register_file_routes(app, state):
                                 payload = row.get("payload", {}) if isinstance(row, dict) else {}
                                 line = str(payload.get("line", "") if isinstance(payload, dict) else "")
                                 if line:
+                                    delivered = True
                                     yield f"data: {line}\n\n"
                                 last_event_id = int(row.get("id", last_event_id) or last_event_id)
+                                last_seq = max(last_seq, last_event_id)
                             continue
-                    yield ": keepalive\n\n"
+                    now = time.time()
+                    if (now - last_keepalive) >= heartbeat_seconds:
+                        yield ": keepalive\n\n"
+                        last_keepalive = now
                     if client_id:
                         client_registry_service.touch_client(state, client_id, channel=channel)
-                    time.sleep(state["LOG_STREAM_HEARTBEAT_SECONDS"])
+                    if not delivered and stream_state is not None:
+                        with stream_state["cond"]:
+                            stream_state["cond"].wait(timeout=poll_interval)
+                    else:
+                        time.sleep(poll_interval)
             finally:
                 if client_id:
                     client_registry_service.unregister_client(state, client_id, channel=channel)

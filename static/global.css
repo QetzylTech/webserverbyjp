@@ -593,78 +593,60 @@ button,
 
 .btn-backup,
 #rcon-submit,
-.debug-explorer-btn,
-.debug-explorer-toggle,
-.debug-row-reset,
 .file-download-btn,
 .file-viewer-download,
 .modal-btn-submit,
-.debug-pane-reset,
 .nav-link.active:not(.nav-attention),
 select,
 #log-source,
-.sort-select,
-select.debug-password,
-select.debug-props-input {
+.sort-select {
     background: var(--ui-blue) !important;
     color: #ffffff !important;
 }
 
 .btn-backup:hover,
 #rcon-submit:hover,
-.debug-explorer-btn:hover,
-.debug-explorer-toggle:hover,
-.debug-row-reset:hover,
 .file-download-btn:hover,
 .file-viewer-download:hover,
 .modal-btn-submit:hover,
-.debug-pane-reset:hover,
 .nav-link.active:not(.nav-attention):hover,
 select:hover,
 #log-source:hover,
-.sort-select:hover,
-select.debug-password:hover,
-select.debug-props-input:hover {
+.sort-select:hover {
     background: var(--ui-blue-hover) !important;
     filter: none !important;
 }
 
 .btn-start,
 .file-view-btn,
-.backup-restore-cancel,
-.debug-open-editor {
+.backup-restore-cancel {
     background: var(--ui-teal) !important;
     color: #ffffff !important;
 }
 
 .btn-start:hover,
 .file-view-btn:hover,
-.backup-restore-cancel:hover,
-.debug-open-editor:hover {
+.backup-restore-cancel:hover {
     background: var(--ui-teal-hover) !important;
 }
 
 .btn-stop,
 .file-restore-btn,
-.backup-restore-start,
-.debug-pane-apply {
+.backup-restore-start {
     background: var(--ui-red) !important;
     color: #ffffff !important;
 }
 
 .btn-stop:hover,
 .file-restore-btn:hover,
-.backup-restore-start:hover,
-.debug-pane-apply:hover {
+.backup-restore-start:hover {
     background: var(--ui-red-hover) !important;
 }
 
 /* Global dropdown style (matches Home log-source dropdown). */
 select,
 #log-source,
-.sort-select,
-select.debug-password,
-select.debug-props-input {
+.sort-select {
     border: 0;
     border-radius: 10px;
     height: var(--btn-height);
@@ -693,26 +675,20 @@ select.debug-props-input {
 
 select:hover,
 #log-source:hover,
-.sort-select:hover,
-select.debug-password:hover,
-select.debug-props-input:hover {
+.sort-select:hover {
     background-color: var(--ui-blue-hover);
 }
 
 select:focus,
 #log-source:focus,
-.sort-select:focus,
-select.debug-password:focus,
-select.debug-props-input:focus {
+.sort-select:focus {
     outline: none;
     box-shadow: none;
 }
 
 select option,
 #log-source option,
-.sort-select option,
-select.debug-password option,
-select.debug-props-input option {
+.sort-select option {
     background: #ffffff;
     color: #0f172a;
 }
@@ -932,16 +908,11 @@ html.theme-dark .ui-select-option:disabled {
 /* Blue-role disabled colors */
 .btn-backup:disabled,
 #rcon-submit:disabled,
-.debug-explorer-btn:disabled,
-.debug-explorer-toggle:disabled,
-.debug-row-reset:disabled,
 .file-download-btn:disabled,
 .file-viewer-download:disabled,
 .modal-btn-submit:disabled,
-.debug-pane-reset:disabled,
 .nav-link.active:disabled,
 .sort-select:disabled,
-select.debug-password:disabled,
 #log-source:disabled,
 select:disabled {
     background: var(--ui-blue-disabled);
@@ -953,16 +924,11 @@ select:disabled {
 /* Blue-role disabled hover colors */
 .btn-backup:disabled:hover,
 #rcon-submit:disabled:hover,
-.debug-explorer-btn:disabled:hover,
-.debug-explorer-toggle:disabled:hover,
-.debug-row-reset:disabled:hover,
 .file-download-btn:disabled:hover,
 .file-viewer-download:disabled:hover,
 .modal-btn-submit:disabled:hover,
-.debug-pane-reset:disabled:hover,
 .nav-link.active:disabled:hover,
 .sort-select:disabled:hover,
-select.debug-password:disabled:hover,
 #log-source:disabled:hover,
 select:disabled:hover {
     background: var(--ui-blue-disabled-hover);
@@ -974,8 +940,7 @@ select:disabled:hover {
 /* Teal-role disabled colors */
 .btn-start:disabled,
 .file-view-btn:disabled,
-.backup-restore-cancel:disabled,
-.debug-open-editor:disabled {
+.backup-restore-cancel:disabled {
     background: var(--ui-teal-disabled);
     color: #ffffff;
     cursor: not-allowed;
@@ -985,8 +950,7 @@ select:disabled:hover {
 /* Teal-role disabled hover colors */
 .btn-start:disabled:hover,
 .file-view-btn:disabled:hover,
-.backup-restore-cancel:disabled:hover,
-.debug-open-editor:disabled:hover {
+.backup-restore-cancel:disabled:hover {
     background: var(--ui-teal-disabled-hover);
     color: #ffffff;
     cursor: not-allowed;
@@ -996,8 +960,7 @@ select:disabled:hover {
 /* Red-role disabled colors */
 .btn-stop:disabled,
 .file-restore-btn:disabled,
-.backup-restore-start:disabled,
-.debug-pane-apply:disabled {
+.backup-restore-start:disabled {
     background: var(--ui-red-disabled);
     color: #ffffff;
     cursor: not-allowed;
@@ -1007,8 +970,7 @@ select:disabled:hover {
 /* Red-role disabled hover colors */
 .btn-stop:disabled:hover,
 .file-restore-btn:disabled:hover,
-.backup-restore-start:disabled:hover,
-.debug-pane-apply:disabled:hover {
+.backup-restore-start:disabled:hover {
     background: var(--ui-red-disabled-hover);
     color: #ffffff;
     cursor: not-allowed;
@@ -1016,17 +978,14 @@ select:disabled:hover {
 }
 
 /* Shared pane surfaces via semantic pane classes */
-.panel.pane-primary,
-.debug-panel.pane-primary {
+.panel.pane-primary {
     border: 0;
     border-radius: var(--pane-radius);
     background: var(--surface);
     padding: 14px;
 }
 
-.file-viewer.pane-editor,
-.debug-viewer.pane-editor,
-.debug-explorer-drawer.pane-editor {
+.file-viewer.pane-editor {
     min-width: 0;
     border: 0;
     border-radius: var(--pane-radius);
@@ -1037,9 +996,6 @@ select:disabled:hover {
 /* Shared scrollable pane content */
 .console-box,
 .file-viewer-content,
-.debug-explorer-list,
-.debug-table-wrap,
-.debug-props-form,
 .sidebar,
 .list,
 .maintenance-action-content,
@@ -1051,9 +1007,6 @@ select:disabled:hover {
 
 .console-box::-webkit-scrollbar,
 .file-viewer-content::-webkit-scrollbar,
-.debug-explorer-list::-webkit-scrollbar,
-.debug-table-wrap::-webkit-scrollbar,
-.debug-props-form::-webkit-scrollbar,
 .sidebar::-webkit-scrollbar,
 .list::-webkit-scrollbar,
 .maintenance-action-content::-webkit-scrollbar,
@@ -1064,9 +1017,6 @@ select:disabled:hover {
 
 .console-box::-webkit-scrollbar-track,
 .file-viewer-content::-webkit-scrollbar-track,
-.debug-explorer-list::-webkit-scrollbar-track,
-.debug-table-wrap::-webkit-scrollbar-track,
-.debug-props-form::-webkit-scrollbar-track,
 .sidebar::-webkit-scrollbar-track,
 .list::-webkit-scrollbar-track,
 .maintenance-action-content::-webkit-scrollbar-track,
@@ -1076,9 +1026,6 @@ select:disabled:hover {
 
 .console-box::-webkit-scrollbar-thumb,
 .file-viewer-content::-webkit-scrollbar-thumb,
-.debug-explorer-list::-webkit-scrollbar-thumb,
-.debug-table-wrap::-webkit-scrollbar-thumb,
-.debug-props-form::-webkit-scrollbar-thumb,
 .sidebar::-webkit-scrollbar-thumb,
 .list::-webkit-scrollbar-thumb,
 .maintenance-action-content::-webkit-scrollbar-thumb,
@@ -1092,9 +1039,6 @@ select:disabled:hover {
 
 .console-box::-webkit-scrollbar-thumb:hover,
 .file-viewer-content::-webkit-scrollbar-thumb:hover,
-.debug-explorer-list::-webkit-scrollbar-thumb:hover,
-.debug-table-wrap::-webkit-scrollbar-thumb:hover,
-.debug-props-form::-webkit-scrollbar-thumb:hover,
 .sidebar::-webkit-scrollbar-thumb:hover,
 .list::-webkit-scrollbar-thumb:hover,
 .maintenance-action-content::-webkit-scrollbar-thumb:hover,
@@ -1103,8 +1047,7 @@ select:disabled:hover {
 }
 
 /* Shared pane resizers */
-.file-viewer-resizer,
-.debug-viewer-resizer {
+.file-viewer-resizer {
     border-radius: 8px;
     background: transparent;
     transition: background 0.15s ease;
@@ -1227,9 +1170,6 @@ html.theme-dark .status-row strong {
 
 html.theme-dark .console-box,
 html.theme-dark .file-viewer-content,
-html.theme-dark .debug-explorer-list,
-html.theme-dark .debug-table-wrap,
-html.theme-dark .debug-props-form,
 html.theme-dark .sidebar,
 html.theme-dark .list,
 html.theme-dark .maintenance-action-content,
@@ -1239,9 +1179,6 @@ html.theme-dark .maintenance-file-list {
 
 html.theme-dark .console-box::-webkit-scrollbar-track,
 html.theme-dark .file-viewer-content::-webkit-scrollbar-track,
-html.theme-dark .debug-explorer-list::-webkit-scrollbar-track,
-html.theme-dark .debug-table-wrap::-webkit-scrollbar-track,
-html.theme-dark .debug-props-form::-webkit-scrollbar-track,
 html.theme-dark .sidebar::-webkit-scrollbar-track,
 html.theme-dark .list::-webkit-scrollbar-track,
 html.theme-dark .maintenance-action-content::-webkit-scrollbar-track,
@@ -1251,9 +1188,6 @@ html.theme-dark .maintenance-file-list::-webkit-scrollbar-track {
 
 html.theme-dark .console-box::-webkit-scrollbar-thumb,
 html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb,
-html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb,
-html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb,
-html.theme-dark .debug-props-form::-webkit-scrollbar-thumb,
 html.theme-dark .sidebar::-webkit-scrollbar-thumb,
 html.theme-dark .list::-webkit-scrollbar-thumb,
 html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb,
@@ -1264,9 +1198,6 @@ html.theme-dark .maintenance-file-list::-webkit-scrollbar-thumb {
 
 html.theme-dark .console-box::-webkit-scrollbar-thumb:hover,
 html.theme-dark .file-viewer-content::-webkit-scrollbar-thumb:hover,
-html.theme-dark .debug-explorer-list::-webkit-scrollbar-thumb:hover,
-html.theme-dark .debug-table-wrap::-webkit-scrollbar-thumb:hover,
-html.theme-dark .debug-props-form::-webkit-scrollbar-thumb:hover,
 html.theme-dark .sidebar::-webkit-scrollbar-thumb:hover,
 html.theme-dark .list::-webkit-scrollbar-thumb:hover,
 html.theme-dark .maintenance-action-content::-webkit-scrollbar-thumb:hover,

@@ -183,3 +183,37 @@ def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcw
     except Exception as exc:
         if callable(log_mcweb_exception):
             log_mcweb_exception("data-bootstrap/initialize-state-db", exc)
+        return
+
+    # On app reboot, clear any restore operations that were left in intent/in_progress.
+    try:
+        active_ops = state_store_service.list_operations_by_status(
+            db_path,
+            statuses=("intent", "in_progress"),
+            limit=200,
+        )
+        restore_updates = []
+        for op in active_ops:
+            if not isinstance(op, dict):
+                continue
+            if str(op.get("op_type", "") or "").strip().lower() != "restore":
+                continue
+            op_id = str(op.get("op_id", "") or "").strip()
+            if not op_id:
+                continue
+            restore_updates.append(
+                {
+                    "op_id": op_id,
+                    "status": "failed",
+                    "error_code": "app_reboot_reset",
+                    "checkpoint": "app_reboot_reset",
+                    "message": "Restore operation cleared on app reboot.",
+                    "finished": True,
+                }
+            )
+        if restore_updates:
+            state_store_service.update_operations_batch(db_path, updates=restore_updates)
+            _log("restore-reboot-clear", f"Cleared {len(restore_updates)} restore operations on reboot.")
+    except Exception as exc:
+        if callable(log_mcweb_exception):
+            log_mcweb_exception("data-bootstrap/restore-reboot-clear", exc)

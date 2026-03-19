@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+import os
 import re
 import secrets
 import time
@@ -98,12 +99,32 @@ def is_backup_running(ctx, include_run_lock=True):
             except Exception:
                 pass
     try:
-        ports.filesystem.ensure_dir(ctx.BACKUP_STATE_FILE.parent)
-        raw = ports.filesystem.read_text(ctx.BACKUP_STATE_FILE, encoding="utf-8").strip().lower()
+        state_path = Path(ctx.BACKUP_STATE_FILE)
+        ports.filesystem.ensure_dir(state_path.parent)
+        raw = ports.filesystem.read_text(state_path, encoding="utf-8").strip().lower()
     except OSError:
         return False
-    return raw == "true"
-
+    if raw != "true":
+        return False
+    stale_seconds = float(getattr(ctx, "BACKUP_STATE_STALE_SECONDS", 1200.0) or 1200.0)
+    if stale_seconds > 0:
+        try:
+            mtime = state_path.stat().st_mtime
+            age = time.time() - float(mtime)
+            if age > stale_seconds:
+                ports.filesystem.write_text(state_path, "false\n", encoding="utf-8")
+                try:
+                    ctx.log_mcweb_log(
+                        "backup-state-stale",
+                        command=f"age={age:.1f}s",
+                        rejection_message="Cleared stale backup running flag.",
+                    )
+                except Exception:
+                    pass
+                return False
+        except Exception:
+            pass
+    return True
 
 def _restore_failed(message, error="restore_failed"):
     """Return normalized restore failure payload."""
@@ -261,7 +282,7 @@ def _new_restore_code(ctx):
     return uuid.uuid4().hex[:_RESTORE_ID_BODY_LEN]
 
 
-def _archive_old_world_dir(ctx, old_world_dir, archived_world_name):
+def _archive_old_world_dir(ctx, old_world_dir, archived_world_name, *, progress=None):
     """Move previous world directory to data/old_worlds and return destination."""
     data_dir = Path(ctx.session_state.session_file).parent
     old_worlds_dir = data_dir / "old_worlds"
@@ -276,6 +297,28 @@ def _archive_old_world_dir(ctx, old_world_dir, archived_world_name):
     while archived_old_world_dir.exists():
         archived_old_world_dir = old_worlds_dir / f"{base_name}_{suffix}"
         suffix += 1
+
+    def emit(message):
+        if not progress:
+            return
+        try:
+            progress(message)
+        except Exception:
+            pass
+
+    emit(f"Archiving world dir: {old_world_dir} -> {archived_old_world_dir}")
+    try:
+        for root, dirs, files in os.walk(old_world_dir):
+            root_path = Path(root)
+            rel_root = root_path.relative_to(old_world_dir)
+            dest_root = archived_old_world_dir / rel_root
+            emit(f"Archive dir: {dest_root}")
+            for dirname in dirs:
+                emit(f"Archive dir: {dest_root / dirname}")
+            for filename in files:
+                emit(f"Archive file: {dest_root / filename}")
+    except Exception:
+        pass
 
     try:
         ports.filesystem.move(old_world_dir, archived_old_world_dir)
@@ -302,3 +345,4 @@ def _restore_source_from_extraction(ctx, extract_root):
     if len(children) == 1:
         return children[0]
     return None
+

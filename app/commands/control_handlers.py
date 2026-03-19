@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 
 from flask import Response, stream_with_context
 
 from app.core import state_store as state_store_service
 from app.services import maintenance_engine as maintenance_engine_service
+from app.services.operation_state import has_pending_operation
+from app.services.restore_status import restore_running_from_getter, append_restore_event
 from app.commands.control_support import (
     _accepted_operation_result,
     _enqueue_control_intent,
@@ -47,37 +50,12 @@ def _reject_invalid_state(message, *, error="invalid_state", status_code=409):
     return _payload_result({"ok": False, "error": error, "message": message}, status_code=status_code)
 
 
-def _has_pending_operation(ctx, op_type):
-    state = ctx.state
-    db_path = state.get("APP_STATE_DB_PATH")
-    if db_path is None:
-        return False
+def _restore_in_progress(ctx):
     try:
-        rows = state_store_service.list_operations_by_status(
-            db_path,
-            statuses=("intent", "in_progress"),
-            limit=80,
-        )
+        state = ctx.state
     except Exception:
-        return False
-    kind = str(op_type or "").strip().lower()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("op_type", "") or "").strip().lower() == kind:
-            return True
-    return False
-
-
-def _restore_in_progress(state):
-    getter = state.get("get_restore_status")
-    if not callable(getter):
-        return False
-    try:
-        payload = getter(since_seq=0, job_id=None)
-    except Exception:
-        return False
-    return bool(payload.get("running")) if isinstance(payload, dict) else False
+        state = {}
+    return restore_running_from_getter(state.get("get_restore_status"))
 
 
 def _cleanup_in_progress():
@@ -300,7 +278,7 @@ def backup_operation(ctx, *, idempotency_key, client_key):
     if _cleanup_in_progress():
         state["log_mcweb_action"]("backup", rejection_message="Cleanup is running.")
         return _reject_invalid_state("Cleanup is running.")
-    if _restore_in_progress(state) or _has_pending_operation(ctx, "restore"):
+    if _restore_in_progress(ctx) or has_pending_operation(state, "restore"):
         state["log_mcweb_action"]("backup", rejection_message="Restore is running or queued.")
         return _reject_invalid_state("Restore is running or queued.")
     guard = state.get("storage_guard")
@@ -410,9 +388,23 @@ def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filena
     if _cleanup_in_progress():
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Cleanup is running.")
         return _reject_invalid_state("Cleanup is running.")
-    if state["is_backup_running"]() or _has_pending_operation(ctx, "backup"):
+    if state["is_backup_running"]() or has_pending_operation(state, "backup"):
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Backup is running or queued.")
         return _reject_invalid_state("Backup is running or queued.")
+
+    try:
+        client_ip = state.get("_get_client_ip")() if callable(state.get("_get_client_ip")) else ""
+        device_map = state.get("get_device_name_map")() if callable(state.get("get_device_name_map")) else {}
+        device_name = (device_map.get(client_ip, "") or "unmapped-device").strip()
+        display_tz = state.get("DISPLAY_TZ")
+        now = datetime.now(tz=display_tz) if display_tz else datetime.utcnow()
+        stamp = now.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+        append_restore_event(
+            ctx,
+            f"Restore requested for {filename} by {device_name} ({client_ip or 'unknown'}) at {stamp}.",
+        )
+    except Exception:
+        pass
 
     op_id, resumed, result = _prepare_operation(
         ctx,
@@ -586,23 +578,40 @@ def restore_log_stream(ctx, *, since, job_id=None):
     def generate():
         last_seq = since_seq
         status_sent = False
+        db_path = state.get("APP_STATE_DB_PATH")
         while True:
-            payload = state["get_restore_status"](since_seq=last_seq, job_id=requested_job_id)
-            if not isinstance(payload, dict):
-                payload = {"ok": False}
-            events = payload.get("events") if isinstance(payload.get("events"), list) else []
-            for event in events:
-                seq = int(event.get("seq", last_seq) or last_seq)
+            rows = []
+            if db_path:
+                try:
+                    rows = state_store_service.list_events_since(
+                        db_path,
+                        topic="restore_log",
+                        since_id=last_seq,
+                        limit=400,
+                    )
+                except Exception:
+                    rows = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                row_job_id = str(payload.get("job_id", "") or "")
+                if requested_job_id and row_job_id and row_job_id != requested_job_id:
+                    continue
+                seq = int(row.get("id", last_seq) or last_seq)
                 last_seq = max(last_seq, seq)
                 data = {
                     "type": "line",
                     "seq": seq,
-                    "at": event.get("at"),
-                    "message": event.get("message", ""),
+                    "at": payload.get("at") or row.get("created_at"),
+                    "message": payload.get("message", ""),
                 }
                 yield f"id: {seq}\n"
                 yield "event: line\n"
                 yield f"data: {json.dumps(data)}\n\n"
+            payload = state["get_restore_status"](since_seq=0, job_id=requested_job_id)
+            if not isinstance(payload, dict):
+                payload = {"ok": False}
             if not payload.get("running") and not status_sent:
                 status_sent = True
                 status_payload = {
@@ -682,3 +691,5 @@ def rcon_command(ctx, *, client_key, command, sudo_password):
 
     state["log_mcweb_action"]("submit", command=command)
     return _response_result(state["_ok_response"]())
+
+

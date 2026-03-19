@@ -29,6 +29,7 @@ _STATE_CORE_KEYS = (
     "BACKUP_LOG_FILE",
     "BACKUP_SCRIPT",
     "BACKUP_STATE_FILE",
+    "RESTORE_LOG_FILE",
     "APP_STATE_DB_PATH",
     "BACKUP_WATCH_INTERVAL_ACTIVE_SECONDS",
     "BACKUP_WATCH_INTERVAL_OFF_SECONDS",
@@ -147,6 +148,8 @@ _STATE_BINDING_KEYS = (
     "device_name_map_lock",
     "device_name_map_cache",
     "device_name_map_mtime_ns_ref",
+    "password_throttle_lock",
+    "password_throttle_state",
     "ensure_file_page_cache_refresher_started",
     "ensure_log_stream_fetcher_started",
     "ensure_session_file",
@@ -157,6 +160,7 @@ _STATE_BINDING_KEYS = (
     "file_page_last_seen",
     "get_backup_schedule_times",
     "get_backup_status",
+    "is_backup_running",
     "get_backup_warning_state",
     "get_cached_dashboard_metrics",
     "get_observed_state",
@@ -343,4 +347,7 @@ class AppState(MutableMapping[str, Any]):
             self.__setitem__(name, value)
             return
         raise AttributeError(name)
+
+
+
 

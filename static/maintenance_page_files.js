@@ -20,8 +20,9 @@
             const items = (Array.isArray(state.preview?.items) ? state.preview.items : []).filter((item) => isItemInCurrentScope(item));
             const showSelectors = state.currentActionView === "manual";
             const visiblePaths = new Set(items.map((item) => String(item?.path || "")));
+            const eligiblePaths = new Set(items.filter((item) => !!item?.eligible).map((item) => String(item?.path || "")));
             state.manualSelectedPaths = new Set(
-                Array.from(state.manualSelectedPaths).filter((path) => visiblePaths.has(String(path || "")))
+                Array.from(state.manualSelectedPaths).filter((path) => visiblePaths.has(String(path || "")) && eligiblePaths.has(String(path || "")))
             );
             dom.fileList.innerHTML = "";
             if (items.length === 0) {
@@ -42,16 +43,21 @@
             }
             items.forEach((item) => {
                 const rowMarkedForDelete = !!item.selected_for_delete;
-                let stateClass = "";
-                let deletableClass = "";
+                const rowClasses = [];
                 if (state.currentActionView === "manual") {
-                    stateClass = item.eligible ? "eligible" : "ineligible";
-                    deletableClass = rowMarkedForDelete ? "deletable" : "";
+                    if (!item.eligible) {
+                        rowClasses.push("ineligible");
+                    }
+                    if (state.manualSelectedPaths.has(item.path)) {
+                        rowClasses.push("selected");
+                    }
                 } else if (state.currentActionView === "rules") {
-                    stateClass = rowMarkedForDelete ? "eligible" : "";
+                    if (rowMarkedForDelete) {
+                        rowClasses.push("eligible");
+                    }
                 }
                 const li = document.createElement("li");
-                li.className = `maintenance-file ${stateClass} ${deletableClass}`.trim();
+                li.className = ["maintenance-file", ...rowClasses].join(" ").trim();
                 if (!showSelectors) li.classList.add("no-select");
                 li.dataset.path = item.path;
                 if (showSelectors) {
@@ -60,7 +66,7 @@
                     checkbox.className = "maintenance-select";
                     checkbox.disabled = !item.eligible;
                     checkbox.value = item.path;
-                    checkbox.checked = !!item.eligible && (state.manualSelectedPaths.has(item.path) || rowMarkedForDelete);
+                    checkbox.checked = !!item.eligible && state.manualSelectedPaths.has(item.path);
                     li.appendChild(checkbox);
                 }
                 const title = document.createElement("span");
@@ -86,14 +92,13 @@
             const rules = ctx.actions.getEffectiveRules?.() || {};
             const caps = rules?.caps || {};
             const eligibleCount = getVisibleManualEligibleItems().length;
-            const absoluteCap = Math.max(1, Math.min(500, Number(caps.max_delete_files_absolute ?? 5) || 5));
-            const pct = Math.max(1, Math.min(100, Number(caps.max_delete_percent_eligible ?? 10) || 10));
+            const pct = Math.max(1, Math.min(100, Number(caps.max_delete_percent_eligible ?? 50) || 50));
             const minNonEmpty = Math.max(1, Math.min(20, Number(caps.max_delete_min_if_non_empty ?? 1) || 1));
             let pctCap = Math.floor((eligibleCount * pct) / 100);
             if (eligibleCount > 0) {
                 pctCap = Math.max(minNonEmpty, pctCap);
             }
-            return Math.min(absoluteCap, eligibleCount > 0 ? pctCap : 0);
+            return eligibleCount > 0 ? pctCap : 0;
         }
 
         function syncManualSelectionCount() {

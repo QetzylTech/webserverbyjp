@@ -44,9 +44,7 @@ window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
 <body data-page="{{ current_page }}" data-shell="persistent">
 <div class="layout">
     {% include "partials/nav.html" %}
-    <div id="mcweb-app-content" class="content" data-current-page="{{ current_page }}">
-{{ initial_page_html|safe }}
-    </div>
+    <div id="mcweb-app-content" class="content" data-current-page="{{ current_page }}">{{- initial_page_html|safe -}}</div>
 </div>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>

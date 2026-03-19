@@ -1,6 +1,6 @@
-﻿const STATIC_CACHE = "mcweb-static-v3";
-const HTML_CACHE = "mcweb-html-v3";
-const FRAGMENT_CACHE = "mcweb-fragments-v3";
+﻿const STATIC_CACHE = "mcweb-static-v4";
+const HTML_CACHE = "mcweb-html-v4";
+const FRAGMENT_CACHE = "mcweb-fragments-v4";
 const OFFLINE_FALLBACK_URL = "/static/offline.html";
 const OFFLINE_FRAGMENT_HTML = "<main id=\"mcweb-page-root\" class=\"content\" data-page-key=\"offline\" data-page-title=\"Offline\" data-page-styles='[]' data-page-scripts='[]'><div class=\"wrap page-panes\"><section class=\"panel pane-primary\"><div class=\"pane-head\"><h1 class=\"pane-title\">Server offline</h1></div><div class=\"pane-content\"><p>Cached content is unavailable for this page. Reconnect to load data.</p></div></section></div></main>";
 
@@ -36,6 +36,7 @@ const PRECACHE_STATIC_URLS = [
     "/static/maintenance_page_modals.js",
     "/static/maintenance_page_core.js",
     "/static/maintenance_page.js",
+    "/doc/server_setup_doc.md",
 ];
 
 const PRECACHE_PAGE_ROUTES = [

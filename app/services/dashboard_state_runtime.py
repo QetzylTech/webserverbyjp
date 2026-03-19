@@ -83,6 +83,9 @@ def _transition_intent(ctx):
 def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, latest_stop, latest_restore):
     raw = str(service_status_raw or "inactive").strip().lower()
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    if raw in off_states:
+        # If the service is already off, prefer the probe result over stale intents.
+        return raw
     if raw == "active":
         return raw
     if _active_operation(latest_restore) or _active_operation(latest_stop):
@@ -95,8 +98,6 @@ def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, l
         return "shutting_down"
     if intent == "starting":
         return "starting"
-    if raw in off_states:
-        return raw
     return raw
 
 

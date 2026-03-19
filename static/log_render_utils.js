@@ -67,5 +67,6 @@
         escapeHtml,
         formatBracketAwareLogLine,
         formatBracketAwareLogHtml,
+        formatLiveLogLine: formatBracketAwareLogLine,
     });
 })(window);

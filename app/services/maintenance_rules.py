@@ -240,13 +240,12 @@ def _dedupe_oldest_first(rows):
 def _apply_blast_radius_cap(ordered, eligible_count, rules):
     """Apply blast radius cap."""
     caps = rules.get("caps", {})
-    absolute_cap = _safe_int(caps.get("max_delete_files_absolute", 10), 10, minimum=1, maximum=500)
     pct = _safe_int(caps.get("max_delete_percent_eligible", 50), 50, minimum=1, maximum=100)
     min_non_empty = _safe_int(caps.get("max_delete_min_if_non_empty", 1), 1, minimum=1, maximum=20)
     pct_cap = math.floor((eligible_count * pct) / 100.0)
     if eligible_count > 0:
         pct_cap = max(min_non_empty, pct_cap)
-    cap = min(absolute_cap, pct_cap if eligible_count > 0 else 0)
+    cap = pct_cap if eligible_count > 0 else 0
     return ordered[:cap] if cap >= 0 else []
 
 

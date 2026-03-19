@@ -23,9 +23,22 @@ def _connect(db_path):
     if profiling.ENABLED:
         profiling.record_duration("sqlite.connect", time.perf_counter() - started)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # Some filesystems (network shares, FAT variants) can reject WAL.
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        except Exception:
+            pass
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 

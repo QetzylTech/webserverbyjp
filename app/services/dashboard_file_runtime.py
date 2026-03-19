@@ -7,6 +7,7 @@ import time
 from app.core.filesystem_utils import format_file_size
 from app.core import state_store as state_store_service
 from app.services import file_inventory_index as file_inventory_index_service
+from app.services import restore_log_utils as restore_log_utils
 from app.services.worker_scheduler import WorkerSpec, start_worker
 from app.services import client_registry as client_registry_service
 
@@ -68,6 +69,34 @@ def _list_download_files_sorted(ctx, base_dir, patterns):
     return items
 
 
+def _build_restore_log_index(ctx):
+    """Return latest restore log file per sanitized backup name."""
+    log_dir = Path(getattr(ctx, "MCWEB_LOG_DIR", "") or Path(ctx.MCWEB_LOG_FILE).parent)
+    index = {}
+    try:
+        candidates = list(log_dir.glob("restore_*.log"))
+    except OSError:
+        candidates = []
+    for path in candidates:
+        safe_key = restore_log_utils.restore_log_safe_key_from_filename(path.name)
+        if not safe_key:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        ts = float(stat.st_mtime)
+        current = index.get(safe_key)
+        if current and ts <= float(current.get("mtime", 0) or 0):
+            continue
+        index[safe_key] = {
+            "name": path.name,
+            "mtime": ts,
+            "modified": datetime.fromtimestamp(ts, tz=ctx.DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z"),
+        }
+    return index
+
+
 def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items=None):
     """Build backup list items (zip backups + snapshot dirs) with mtime index cache."""
     backup_dir = Path(ctx.BACKUP_DIR)
@@ -90,6 +119,7 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
             if isinstance(item, dict) and str(item.get("name", "") or "").strip()
         }
 
+    restore_log_index = _build_restore_log_index(ctx)
     items = []
     for path in inventory.get("backup_zip_paths", []):
         try:
@@ -98,6 +128,8 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
             continue
         ts = float(stat.st_mtime)
         size_bytes = int(stat.st_size)
+        restore_key = restore_log_utils.restore_log_safe_key(path.name)
+        restore_log = restore_log_index.get(restore_key) or {}
         items.append(
             {
                 "name": path.name,
@@ -108,6 +140,8 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
                 "restore_name": path.name,
                 "download_name": path.name,
                 "download_url": f"/download/backups/{path.name}",
+                "last_restore_log": restore_log.get("name", ""),
+                "last_restore_at": restore_log.get("modified", ""),
             }
         )
     for path in inventory.get("snapshot_dir_paths", []):
@@ -130,6 +164,9 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
                 total_size = -1
                 size_text = "Calculating..."
         ts = float(dir_stat.st_mtime)
+        restore_name = f"snapshot::{path.name}"
+        restore_key = restore_log_utils.restore_log_safe_key(restore_name)
+        restore_log = restore_log_index.get(restore_key) or {}
         items.append(
             {
                 "name": path.name,
@@ -137,9 +174,11 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
                 "size_bytes": total_size,
                 "modified": datetime.fromtimestamp(ts, tz=ctx.DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z"),
                 "size_text": size_text,
-                "restore_name": f"snapshot::{path.name}",
+                "restore_name": restore_name,
                 "download_name": f"{path.name}.zip",
                 "download_url": f"/download/backups-snapshot/{path.name}",
+                "last_restore_log": restore_log.get("name", ""),
+                "last_restore_at": restore_log.get("modified", ""),
             }
         )
     items.sort(key=lambda item: item["mtime"], reverse=True)

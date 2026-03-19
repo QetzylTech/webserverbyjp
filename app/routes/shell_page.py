@@ -24,10 +24,11 @@ def render_shell_page(app, state, render_template_fn, fragment_template, *, curr
     except Exception:
         snapshot_getter = getattr(state, "get_cached_dashboard_metrics", None)
     initial_metrics_snapshot = snapshot_getter() if callable(snapshot_getter) else {}
+    cleaned_fragment = fragment_html.strip()
     return render_template_fn(
         "app_shell.html",
         current_page=current_page,
         page_title=page_title,
-        initial_page_html=Markup(fragment_html),
+        initial_page_html=Markup(cleaned_fragment),
         initial_metrics_snapshot=initial_metrics_snapshot,
     )

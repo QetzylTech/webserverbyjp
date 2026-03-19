@@ -5,8 +5,16 @@ import uuid
 
 from app.core import state_store as state_store_service
 from app.services.restore_execution import SNAPSHOT_TOKEN_PREFIX, restore_world_backup
+from app.services.restore_log_utils import build_restore_log_filename
 from app.services.restore_status import _ensure_restore_status_state, append_restore_event
 from app.services.worker_scheduler import start_detached
+
+
+def _resolve_restore_log_dir(ctx):
+    log_dir = getattr(ctx, "MCWEB_LOG_DIR", None)
+    if log_dir:
+        return Path(log_dir)
+    return Path(getattr(ctx, "MCWEB_LOG_FILE")).parent
 
 
 def _record_restore_run(ctx, job_id, backup_filename, result):
@@ -60,6 +68,12 @@ def start_restore_job(ctx, backup_filename):
                 "job_id": str(state.get("job_id", "") or ""),
             }
         job_id = uuid.uuid4().hex[:12]
+        try:
+            log_name = build_restore_log_filename(backup_filename, job_id, getattr(ctx, "DISPLAY_TZ", None))
+            log_dir = _resolve_restore_log_dir(ctx)
+            state["log_file"] = str(log_dir / log_name)
+        except Exception:
+            state["log_file"] = None
         state["job_id"] = job_id
         state["running"] = True
         state["result"] = None
@@ -106,3 +120,4 @@ def start_restore_job(ctx, backup_filename):
 
 def start_restore_worker(ctx, backup_filename):
     return start_restore_job(ctx, backup_filename)
+

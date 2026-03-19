@@ -214,8 +214,9 @@ body {
   border: 1px solid #b7efcf;
 }
 
-#cleanup-file-list .maintenance-file.deletable {
+#cleanup-file-list .maintenance-file.selected {
   background: #ffebe9;
+  border: 1px solid #fecaca;
 }
 
 #cleanup-file-list .maintenance-file.ineligible {
@@ -631,7 +632,7 @@ html.theme-dark #cleanup-file-list .maintenance-file.eligible {
   border-color: #1f6f53;
 }
 
-html.theme-dark #cleanup-file-list .maintenance-file.deletable {
+html.theme-dark #cleanup-file-list .maintenance-file.selected {
   background: #4c1d1d;
   border-color: #7f1d1d;
 }

@@ -47,6 +47,7 @@
                     <button class="nav-link log-source-toggle" type="button" data-log-source="minecraft">Minecraft Logs</button>
                     <button class="nav-link log-source-toggle" type="button" data-log-source="crash">Crash Reports</button>
                     <button class="nav-link log-source-toggle" type="button" data-log-source="backup">Backup Logs</button>
+                    <button class="nav-link log-source-toggle" type="button" data-log-source="restore">Restore Logs</button>
                     <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb">Control Panel Activity</button>
                     <button class="nav-link log-source-toggle" type="button" data-log-source="mcweb_log">Control Panel Errors/System</button>
                 </div>
@@ -74,8 +75,8 @@
             </div>
             <ul class="list">
                 <li id="list-loading" class="list-state empty" style="display:none;">Loading...</li>
+                <li id="list-empty-dynamic" class="list-state empty" style="display:none;">{{ empty_text }}</li>
             </ul>
-            <div id="list-empty-dynamic" class="empty" style="display:none;">{{ empty_text }}</div>
         </div>
         </section>
         <div id="file-viewer-resizer" class="file-viewer-resizer" aria-hidden="true"></div>
@@ -91,6 +92,7 @@
                         <div id="backup-restore-controls" class="pane-head-actions-group pane-head-actions-group--restore pane-editor" hidden>
                             <div class="pane-action-cluster pane-action-cluster--restore">
                                 <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
+                                <button id="backup-restore-last-run" class="backup-restore-last-run btn-backup" type="button" hidden>View last run</button>
                                 <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
                             </div>
                         </div>
@@ -152,3 +154,4 @@
 } | tojson }}
 </script>
 </main>
+

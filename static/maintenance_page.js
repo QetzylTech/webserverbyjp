@@ -50,8 +50,6 @@
             backupSummary: document.getElementById("maint-backup-summary"),
             staleSummary: document.getElementById("maint-stale-summary"),
             historyLastRun: document.getElementById("history-last-run"),
-            historyRuleVersion: document.getElementById("history-rule-version"),
-            historyScheduleVersion: document.getElementById("history-schedule-version"),
             historyLastChangedBy: document.getElementById("history-last-changed-by"),
             historyMissedRuns: document.getElementById("history-missed-runs"),
             scheduleCount: document.getElementById("maint-schedule-count"),
@@ -146,6 +144,20 @@
             pendingRunRulesDryRunOverride: null,
             actionBusy: false,
         };
+        const persistedView = shell && typeof shell.getMaintenanceViewState === "function"
+            ? shell.getMaintenanceViewState()
+            : null;
+        if (persistedView && typeof persistedView === "object") {
+            if (persistedView.currentScope) {
+                state.currentScope = normalizeScope(persistedView.currentScope);
+            }
+            if (persistedView.currentActionView) {
+                state.currentActionView = normalizeActionView(persistedView.currentActionView);
+            }
+            if (persistedView.historyViewMode) {
+                state.historyViewMode = String(persistedView.historyViewMode || "successful");
+            }
+        }
 
         const constants = {
             SCOPE_LABELS: {
@@ -286,7 +298,8 @@
                     : "0 items";
             }
             if (dom.scheduleCount) {
-                const schedules = Array.isArray(state.config?.schedules) ? state.config.schedules : [];
+                const scopeCfg = helpers.resolveScopeConfig ? helpers.resolveScopeConfig(state.config, state.currentScope) : (state.config || {});
+                const schedules = Array.isArray(scopeCfg?.schedules) ? scopeCfg.schedules : [];
                 dom.scheduleCount.textContent = String(schedules.length);
             }
             if (dom.nextRun) {
@@ -437,6 +450,9 @@
             const normalized = normalizeScope(nextScope);
             if (state.currentScope === normalized && !options.force) return;
             state.currentScope = normalized;
+            if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                shell.updateMaintenanceViewState({ currentScope: state.currentScope });
+            }
             state.manualSelectedPaths.clear();
             if (state.rulesEditMode && rulesController && typeof rulesController.cancelRulesEdit === "function") {
                 rulesController.cancelRulesEdit();
@@ -450,6 +466,12 @@
             const normalized = normalizeActionView(nextView);
             if (state.currentActionView === normalized) return;
             state.currentActionView = normalized;
+            if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                shell.updateMaintenanceViewState({ currentActionView: state.currentActionView });
+            }
+            if (state.currentActionView === "manual") {
+                state.manualSelectedPaths.clear();
+            }
             syncActionView();
             actions.renderFileList();
             actions.renderHistory();
@@ -465,6 +487,9 @@
             if (dom.historyShowSuccess) {
                 listen(dom.historyShowSuccess, "click", () => {
                     state.historyViewMode = "successful";
+                    if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                        shell.updateMaintenanceViewState({ historyViewMode: state.historyViewMode });
+                    }
                     syncHistoryViewToggle();
                     actions.renderHistory();
                 });
@@ -472,6 +497,9 @@
             if (dom.historyShowMissed) {
                 listen(dom.historyShowMissed, "click", () => {
                     state.historyViewMode = "missed";
+                    if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                        shell.updateMaintenanceViewState({ historyViewMode: state.historyViewMode });
+                    }
                     syncHistoryViewToggle();
                     actions.renderHistory();
                 });

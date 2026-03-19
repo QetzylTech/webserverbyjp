@@ -116,6 +116,14 @@ def log_file_source_spec(state, source):
             "download_base": "/download/log-files/mcweb_log",
             "view_base": "/view-log-file/mcweb_log",
         }
+    if normalized == "restore":
+        return {
+            "key": "restore",
+            "base_dir": log_dir,
+            "patterns": ("restore_*.log", "restore.log*"),
+            "download_base": "/download/log-files/restore",
+            "view_base": "/view-log-file/restore",
+        }
     return None
 
 

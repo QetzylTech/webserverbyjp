@@ -426,6 +426,8 @@
     let tocSidebarBody = null;
     let scrollContainer = null;
     let removeScrollListener = null;
+    let activeDocUrl = '';
+    let docScrollPersistTimer = null;
 
     const bindPageElements = () => {
       contentElement = document.getElementById('content');
@@ -466,7 +468,7 @@
     };
 
     const scrollToPosition = (top, behavior, target) => {
-      const nextTop = Math.max(0, Number(top) || 0);
+        const nextTop = Math.max(0, Number(top) || 0);
       const nextBehavior = behavior || 'auto';
       const activeScrollContainer = resolveScrollContainer(target);
       if (activeScrollContainer instanceof Element) {
@@ -474,7 +476,35 @@
         activeScrollContainer.scrollTop = nextTop;
         return;
       }
-      window.scrollTo({ top: nextTop, behavior: nextBehavior });
+        window.scrollTo({ top: nextTop, behavior: nextBehavior });
+    };
+
+    const persistDocScrollTop = () => {
+      if (!shell || typeof shell.updateDocsViewState !== 'function') return;
+      if (!activeDocUrl) return;
+      const nextTop = getScrollTop();
+      const patch = {};
+      patch[activeDocUrl] = nextTop;
+      shell.updateDocsViewState({ scrollByUrl: patch });
+    };
+
+    const schedulePersistDocScrollTop = () => {
+      if (docScrollPersistTimer) return;
+      docScrollPersistTimer = window.setTimeout(() => {
+        docScrollPersistTimer = null;
+        persistDocScrollTop();
+      }, 200);
+    };
+
+    const restoreDocScrollTop = () => {
+      if (!shell || typeof shell.getDocsViewState !== 'function') return;
+      if (!activeDocUrl) return;
+      const state = shell.getDocsViewState();
+      const scrollByUrl = state && typeof state.scrollByUrl === 'object' ? state.scrollByUrl : {};
+      const savedTop = Number(scrollByUrl[activeDocUrl] || 0);
+      if (Number.isFinite(savedTop) && savedTop > 0) {
+        scrollToPosition(savedTop, 'auto');
+      }
     };
 
     const getTargetTop = (target, offset) => {
@@ -903,11 +933,14 @@
           window.requestAnimationFrame(updateSticky);
           ticking = true;
         }
+        schedulePersistDocScrollTop();
       }, registerRenderCleanup);
+      restoreDocScrollTop();
     };
 
     const loadReadmeFromUrl = (url) => {
       if (!url) return;
+      activeDocUrl = String(url || '').trim();
       fetch(url)
         .then(res => {
           if (!res.ok) {
@@ -925,7 +958,12 @@
     const loadConfiguredReadme = () => {
       if (shell && typeof shell.fetchConfiguredReadme === 'function') {
         shell.fetchConfiguredReadme()
-          .then(({ text }) => {
+          .then(({ text, url }) => {
+            if (url) {
+              activeDocUrl = String(url || '').trim();
+            } else if (!activeDocUrl) {
+              activeDocUrl = defaultReadmeURL;
+            }
             processMarkdown(text || '');
           })
           .catch(err => {

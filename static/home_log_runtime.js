@@ -63,6 +63,7 @@
             mcweb: null,
             mcweb_log: null,
         };
+        let shellLogUnsubscribe = null;
 
         function persistHomeViewState(patch) {
             if (!shell || typeof shell.updateHomeViewState !== "function") return;
@@ -124,11 +125,11 @@
         }
 
         function formatMinecraftLogLine(line) {
-            return logUtils.formatBracketAwareLogLine(replaceIpsWithDeviceNames(line || ""), { highlightErrorLine: true });
+            return logUtils.formatLiveLogLine(replaceIpsWithDeviceNames(line || ""), { highlightErrorLine: true });
         }
 
         function formatNonMinecraftLogLine(line) {
-            return logUtils.formatBracketAwareLogLine(replaceIpsWithDeviceNames(line || ""));
+            return logUtils.formatLiveLogLine(replaceIpsWithDeviceNames(line || ""));
         }
 
         function buildLogEntry(source, line) {
@@ -229,6 +230,15 @@
             });
         }
 
+        function syncLogBufferFromShell(source, lines) {
+            if (!LOG_SOURCE_KEYS.includes(source)) return;
+            const rawText = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
+            setSourceLogText(source, rawText);
+            if (selectedLogSource === source) {
+                renderActiveLog();
+            }
+        }
+
         function closeLogStream(source) {
             const stream = logStreams[source];
             if (!stream) return;
@@ -269,6 +279,16 @@
 
         async function loadLogSourceFromServer(source) {
             try {
+                if (shell && typeof shell.getHomeLogLines === "function") {
+                    const cached = shell.getHomeLogLines(source);
+                    if (Array.isArray(cached) && cached.length > 0) {
+                        setSourceLogText(source, cached.join("\n"));
+                        if (selectedLogSource === source) {
+                            renderActiveLog();
+                        }
+                        return;
+                    }
+                }
                 const logs = shell && typeof shell.fetchLogText === "function"
                     ? await shell.fetchLogText(source)
                     : await fetch(LOG_SOURCE_TEXT_PATHS[source], { cache: "no-store" })
@@ -281,6 +301,14 @@
             if (selectedLogSource === source) {
                 renderActiveLog();
             }
+        }
+
+        function bindShellLogSubscription() {
+            if (!shell || typeof shell.subscribeHomeLogs !== "function") return;
+            if (shellLogUnsubscribe) return;
+            shellLogUnsubscribe = shell.subscribeHomeLogs(function (source, lines) {
+                syncLogBufferFromShell(source, lines);
+            });
         }
 
         function rebuildBufferedEntries() {
@@ -402,7 +430,13 @@
                 logElementCleanup();
                 logElementCleanup = null;
             }
+            if (typeof shellLogUnsubscribe === "function") {
+                shellLogUnsubscribe();
+                shellLogUnsubscribe = null;
+            }
         }
+
+        bindShellLogSubscription();
 
         return {
             getSourceKeys: function () { return LOG_SOURCE_KEYS.slice(); },

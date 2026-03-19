@@ -6,9 +6,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.worker_scheduler import WorkerSpec, start_worker
-from app.core import state_store as state_store_service
-
 from app.services.maintenance_context import as_ctx
+from app.services.maintenance_conflicts import priority_conflict
 from app.services.maintenance_engine import _cleanup_run_with_lock
 from app.services.maintenance_policy import _cleanup_schedule_due_now
 from app.services.maintenance_state_store import (
@@ -32,48 +31,6 @@ from app.services.maintenance_state_store import (
 _cleanup_scheduler_start_lock = threading.Lock()
 _cleanup_scheduler_started = False
 
-def _has_pending_operation(ctx, op_type):
-    db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
-    if db_path is None:
-        return False
-    try:
-        rows = state_store_service.list_operations_by_status(
-            db_path,
-            statuses=("intent", "in_progress"),
-            limit=80,
-        )
-    except Exception:
-        return False
-    kind = str(op_type or "").strip().lower()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("op_type", "") or "").strip().lower() == kind:
-            return True
-    return False
-
-
-def _restore_running(ctx):
-    getter = getattr(ctx, "get_restore_status", None)
-    if not callable(getter):
-        return False
-    try:
-        payload = getter(since_seq=0, job_id=None)
-    except Exception:
-        return False
-    return bool(payload.get("running")) if isinstance(payload, dict) else False
-
-
-def _priority_conflict(ctx):
-    if getattr(ctx, "is_backup_running", None) and ctx.is_backup_running():
-        return "backup_running"
-    if _has_pending_operation(ctx, "backup"):
-        return "backup_queued"
-    if _restore_running(ctx):
-        return "restore_running"
-    if _has_pending_operation(ctx, "restore"):
-        return "restore_queued"
-    return ""
 
 
 def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
@@ -110,7 +67,7 @@ def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
 
 def _run_cleanup_trigger(ctx, full_cfg, cfg, *, scope, trigger, schedule_id, why, what, extra_meta=None):
     """Run one cleanup trigger and record the outcome when work actually executes."""
-    conflict_reason = _priority_conflict(ctx)
+    conflict_reason = priority_conflict(ctx)
     if conflict_reason:
         _cleanup_mark_missed_run(ctx, "priority_conflict", schedule_id=schedule_id, scope=scope)
         return False

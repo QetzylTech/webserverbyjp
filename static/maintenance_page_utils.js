@@ -68,6 +68,18 @@
         return { count, total };
     }
 
+    function resolveScopeConfig(config, scope) {
+        if (!config || typeof config !== "object") return {};
+        const scopes = config.scopes;
+        if (scopes && typeof scopes === "object") {
+            const scoped = scopes[String(scope || "").trim()];
+            if (scoped && typeof scoped === "object") {
+                return scoped;
+            }
+        }
+        return config;
+    }
+
     function setPressedState(button, isPressed) {
         if (!button) return;
         button.classList.toggle("active", !!isPressed);
@@ -83,6 +95,7 @@
             formatAuditActor,
             reasonText,
             summarizeByCategory,
+            resolveScopeConfig,
             setPressedState,
         },
     });

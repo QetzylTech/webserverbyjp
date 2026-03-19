@@ -56,6 +56,7 @@ def log_source_settings(ctx, source):
         }
     file_sources = {
         "backup": _file_source_settings(normalized, "backup_log_stream", ctx.BACKUP_LOG_FILE, ctx.BACKUP_LOG_TEXT_LIMIT),
+        "restore": _file_source_settings(normalized, "restore_log_stream", ctx.RESTORE_LOG_FILE, ctx.MCWEB_LOG_TEXT_LIMIT),
         "mcweb_log": _file_source_settings(normalized, "mcweb_log_stream", ctx.MCWEB_LOG_FILE, ctx.MCWEB_LOG_TEXT_LIMIT),
         "mcweb": _file_source_settings(normalized, "mcweb_action_log_stream", ctx.MCWEB_ACTION_LOG_FILE, ctx.MCWEB_ACTION_LOG_TEXT_LIMIT),
     }
@@ -76,6 +77,9 @@ def get_log_source_text(ctx, source):
     if getter is not None:
         return getter()
     if normalized == "mcweb_log":
+        lines = ctx._read_recent_file_lines(settings["path"], settings["text_limit"])
+        return "\n".join(lines).strip() or "(no logs)"
+    if normalized == "restore":
         lines = ctx._read_recent_file_lines(settings["path"], settings["text_limit"])
         return "\n".join(lines).strip() or "(no logs)"
     return None
@@ -339,7 +343,7 @@ def log_source_fetcher_loop(ctx, source):
                 continue
 
             with stream_state["lifecycle_lock"]:
-                state["proc"] = proc
+                stream_state["proc"] = proc
             for line in ports.log.iter_process_lines(proc):
                 with stream_state["lifecycle_lock"]:
                     if stream_state["clients"] <= 0 and not _allow_background_follow():
@@ -356,7 +360,7 @@ def log_source_fetcher_loop(ctx, source):
             ctx.log_mcweb_exception(settings["context"], exc)
         finally:
             with stream_state["lifecycle_lock"]:
-                state["proc"] = None
+                stream_state["proc"] = None
             ports.log.terminate_process(proc)
         time.sleep(1)
 
@@ -368,7 +372,7 @@ def ensure_log_stream_fetcher_started(ctx, source):
     state = ctx.log_stream_states.get(normalized)
     if state is None or state["started"]:
         return
-    with stream_state["lifecycle_lock"]:
+    with state["lifecycle_lock"]:
         if state["started"]:
             return
         start_worker(
@@ -393,7 +397,7 @@ def increment_log_stream_clients(ctx, source):
     if stream_state is None:
         return
     with stream_state["lifecycle_lock"]:
-        state["clients"] += 1
+        stream_state["clients"] += 1
 
 
 def decrement_log_stream_clients(ctx, source):
@@ -404,6 +408,6 @@ def decrement_log_stream_clients(ctx, source):
     if stream_state is None:
         return
     with stream_state["lifecycle_lock"]:
-        state["clients"] = max(0, state["clients"] - 1)
-        proc = state["proc"]
+        stream_state["clients"] = max(0, stream_state["clients"] - 1)
+        proc = stream_state["proc"]
     ports.log.terminate_process(proc)
