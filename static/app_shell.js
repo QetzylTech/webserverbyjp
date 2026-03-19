@@ -36,6 +36,7 @@
     let themeBound = false;
     let metricsEventSource = null;
     let notificationsEventSource = null;
+    let pendingPromptAction = null;
     let isPrimaryTab = false;
     let primaryHeartbeatTimer = null;
     let primaryCheckTimer = null;
@@ -934,11 +935,19 @@
         if (active) backupsLink?.classList.add("nav-attention");
     }
 
-    function applyMobileToggleAttention(homeLevel, restoreAttention) {
+    function applyMaintenanceAttention(active) {
+        const maintenanceLink = document.getElementById("nav-maintenance-link");
+        clearNavAttentionClasses(maintenanceLink);
+        if (active && !maintenanceLink?.classList.contains("active")) {
+            maintenanceLink?.classList.add("nav-attention");
+        }
+    }
+
+    function applyMobileToggleAttention(homeLevel, restoreAttention, cleanupAttention) {
         const navToggle = document.getElementById("nav-toggle");
         clearNavAttentionClasses(navToggle);
         if (!window.matchMedia("(max-width: 1100px)").matches) return;
-        if (homeLevel === "red" || restoreAttention) {
+        if (homeLevel === "red" || restoreAttention || cleanupAttention) {
             navToggle?.classList.add("nav-attention-red");
             return;
         }
@@ -957,9 +966,12 @@
             : {};
         const restoreAttention = !!navAttention.restore_pane_attention && !navAttention.restore_pane_opened_by_self;
         const homeAttention = normalizeHomeAttention(navAttention.home_attention);
+        const cleanupAttention = !!navAttention.cleanup_has_missed
+            || Number(navAttention.cleanup_missed_runs || 0) > 0;
         applyHomeAttention(homeAttention);
         applyBackupsAttention(restoreAttention);
-        applyMobileToggleAttention(homeAttention, restoreAttention);
+        applyMaintenanceAttention(cleanupAttention);
+        applyMobileToggleAttention(homeAttention, restoreAttention, cleanupAttention);
     }
 
     function ensureGlobalNotificationModal() {
@@ -973,20 +985,120 @@
             <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mcweb-global-notification-title">
                 <h3 id="mcweb-global-notification-title" class="modal-title">Notice</h3>
                 <p id="mcweb-global-notification-text" class="modal-text"></p>
-                <div class="modal-actions">
-                    <button id="mcweb-global-notification-ok" class="modal-btn-submit" type="button">OK</button>
-                </div>
+                <div id="mcweb-global-notification-actions" class="modal-actions"></div>
             </div>
         `;
         document.body.appendChild(modal);
-        const ok = modal.querySelector("#mcweb-global-notification-ok");
-        if (ok) {
-            ok.addEventListener("click", () => {
-                modal.classList.remove("open");
-                modal.setAttribute("aria-hidden", "true");
-            });
-        }
         return modal;
+    }
+
+    function closeGlobalNotification(modal) {
+        if (!modal) return;
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+    }
+
+    function resolveCsrfToken() {
+        const shellConfig = window.__MCWEB_SHELL_CONFIG || {};
+        const homeConfig = window.__MCWEB_HOME_CONFIG || {};
+        const filesConfig = window.__MCWEB_FILES_CONFIG || {};
+        if (shellConfig.csrfToken) return String(shellConfig.csrfToken || "").trim();
+        if (homeConfig.csrfToken) return String(homeConfig.csrfToken || "").trim();
+        if (filesConfig.csrfToken) return String(filesConfig.csrfToken || "").trim();
+        const input = document.querySelector('input[name="csrf_token"]');
+        if (input && input.value) return String(input.value || "").trim();
+        const maintenanceInput = document.getElementById("maintenance-csrf-token");
+        if (maintenanceInput && maintenanceInput.value) return String(maintenanceInput.value || "").trim();
+        return "";
+    }
+
+    async function runBackupFromPrompt(csrfToken) {
+        const token = String(csrfToken || resolveCsrfToken() || "").trim();
+        if (!token) {
+            showGlobalNotification("Unable to run backup yet. Open the Home page and try again.", { title: "Backup" });
+            return;
+        }
+        try {
+            const result = await postJson("/backup", {}, { csrfToken: token });
+            const payload = result.payload || {};
+            if (!result.response.ok || payload.ok === false) {
+                const message = String(payload.message || "Backup request failed.").trim();
+                showGlobalNotification(message || "Backup request failed.", { title: "Backup" });
+                return;
+            }
+            const successMessage = String(payload.message || "Backup started.").trim();
+            showGlobalNotification(successMessage || "Backup started.", { title: "Backup" });
+        } catch (_) {
+            showGlobalNotification("Network request failed while starting backup.", { title: "Backup" });
+        }
+    }
+
+    function queuePromptAction(action) {
+        if (!action || typeof action !== "object") return;
+        const type = String(action.type || action.action || "").trim().toLowerCase();
+        if (!type) return;
+        pendingPromptAction = { type, requestedAt: Date.now() };
+        maybeRunPendingPromptAction();
+    }
+
+    async function maybeRunPendingPromptAction() {
+        if (!pendingPromptAction || !pendingPromptAction.type) return;
+        if (pendingPromptAction.type === "run_backup") {
+            const token = resolveCsrfToken();
+            if (!token) {
+                if (window.location.pathname !== "/") {
+                    navigateTo("/");
+                }
+                return;
+            }
+            pendingPromptAction = null;
+            await runBackupFromPrompt(token);
+        }
+    }
+
+    function handlePromptAction(action) {
+        if (!action || typeof action !== "object") return;
+        const type = String(action.action || action.type || "").trim().toLowerCase();
+        if (type === "run_backup") {
+            queuePromptAction({ type: "run_backup" });
+            return;
+        }
+        if (type === "open_backups") {
+            navigateTo("/backups");
+            return;
+        }
+        if (type === "navigate") {
+            const href = String(action.href || "").trim();
+            if (href) navigateTo(href);
+        }
+    }
+
+    function renderNotificationActions(modal, actions) {
+        const container = modal?.querySelector("#mcweb-global-notification-actions");
+        if (!container) return;
+        container.innerHTML = "";
+        const normalized = Array.isArray(actions) ? actions.filter((item) => item && typeof item === "object") : [];
+        const finalActions = normalized.length ? normalized : [{ label: "OK", action: "dismiss", style: "primary" }];
+        finalActions.forEach((action, index) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = String(action.label || (action.action === "dismiss" ? "OK" : "OK"));
+            const style = String(action.style || "").trim().toLowerCase();
+            if (style === "primary") {
+                button.className = "modal-btn-submit";
+            } else if (style === "secondary") {
+                button.className = "btn-start";
+            } else if (style === "danger") {
+                button.className = "btn-stop";
+            } else if (finalActions.length === 1 || index === 0) {
+                button.className = "modal-btn-submit";
+            }
+            button.addEventListener("click", () => {
+                closeGlobalNotification(modal);
+                handlePromptAction(action);
+            });
+            container.appendChild(button);
+        });
     }
 
     function showGlobalNotification(message, options = {}) {
@@ -995,6 +1107,7 @@
         const title = modal.querySelector("#mcweb-global-notification-title");
         if (text) text.textContent = String(message || "Notification");
         if (title && options.title) title.textContent = String(options.title || "Notice");
+        renderNotificationActions(modal, options.actions);
         modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
     }
@@ -1039,11 +1152,29 @@
         }
     }
 
+    function buildPromptActions(payload) {
+        if (!payload || typeof payload !== "object") return null;
+        const prompt = payload.prompt;
+        if (prompt && typeof prompt === "object" && Array.isArray(prompt.actions)) {
+            return prompt.actions;
+        }
+        const code = String(payload.code || "").trim().toLowerCase();
+        if (code === "backup_missed") {
+            return [
+                { label: "Run Backup", action: "run_backup", style: "primary" },
+                { label: "Open Backups", action: "open_backups", style: "secondary" },
+                { label: "Dismiss", action: "dismiss" },
+            ];
+        }
+        return null;
+    }
+
     function handleNotificationPayload(payload, options = {}) {
         if (!payload || typeof payload !== "object") return;
         const message = String(payload.message || "").trim();
+        const actions = buildPromptActions(payload);
         if (message) {
-            showGlobalNotification(message, { title: payload.title || "Notice" });
+            showGlobalNotification(message, { title: payload.title || "Notice", actions });
         }
         const kind = String(payload.kind || "").trim().toLowerCase();
         if (kind === "error" || kind === "danger") {
@@ -1697,6 +1828,7 @@
         if (typeof window.MCWebEnhanceCustomSelects === "function") {
             window.MCWebEnhanceCustomSelects(contentRoot);
         }
+        maybeRunPendingPromptAction();
     }
 
     function handleNavigationFailure(nextUrl, reason) {

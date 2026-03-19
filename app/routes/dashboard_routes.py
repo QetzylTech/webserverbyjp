@@ -13,6 +13,7 @@ from app.routes.dashboard_notifications_routes import register_notification_rout
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
 from app.commands.maintenance_commands import run_cleanup_event_if_enabled
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
+from app.services import maintenance_state_store as maintenance_state_store_service
 
 
 def register_routes(app, state):
@@ -61,6 +62,12 @@ def register_routes(app, state):
         opener_identity = opener_name or opener_ip or "unknown"
         observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
         home_attention = dashboard_queries_service.get_home_attention_level(observed)
+        cleanup_missed_runs = 0
+        try:
+            cleanup_missed_runs = int(maintenance_state_store_service.get_cleanup_missed_run_count(state) or 0)
+        except Exception:
+            cleanup_missed_runs = 0
+        cleanup_has_missed = cleanup_missed_runs > 0
         return {
             "restore_pane_attention": bool(active),
             "restore_pane_filename": filename,
@@ -68,6 +75,8 @@ def register_routes(app, state):
             "restore_pane_opened_by_ip": opener_ip or "unknown",
             "restore_pane_opened_by_self": opened_by_self,
             "home_attention": home_attention,
+            "cleanup_has_missed": cleanup_has_missed,
+            "cleanup_missed_runs": cleanup_missed_runs,
         }
 
     def _get_nav_alert_state_from_request():

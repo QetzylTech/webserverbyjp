@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import threading
 from datetime import datetime
 
 from flask import Response, stream_with_context
@@ -13,6 +14,7 @@ from app.services.operation_state import has_pending_operation
 from app.services.restore_status import restore_running_from_getter, append_restore_event
 from app.commands.control_support import (
     _accepted_operation_result,
+    _active_operation_response,
     _enqueue_control_intent,
     _invalidate_observed_cache,
     _payload_result,
@@ -27,6 +29,7 @@ from app.commands.control_types import CommandResult
 
 _STARTING_STATES = {"activating", "starting"}
 _SHUTTING_STATES = {"deactivating", "shutting_down"}
+_START_COOLDOWN_SECONDS = 10.0
 
 
 def _service_state_snapshot(state):
@@ -62,6 +65,52 @@ def _cleanup_in_progress():
     return bool(maintenance_engine_service.cleanup_lock_held())
 
 
+
+
+def _start_cooldown_container(state):
+    return state.ctx if hasattr(state, "ctx") else state
+
+
+def _cooldown_get(container, key, default=None):
+    if isinstance(container, dict):
+        return container.get(key, default)
+    return getattr(container, key, default)
+
+
+def _cooldown_set(container, key, value):
+    if isinstance(container, dict):
+        container[key] = value
+    else:
+        setattr(container, key, value)
+
+
+def _ensure_start_cooldown_state(state):
+    container = _start_cooldown_container(state)
+    lock = _cooldown_get(container, "start_cooldown_lock")
+    if lock is None:
+        lock = threading.Lock()
+        _cooldown_set(container, "start_cooldown_lock", lock)
+        _cooldown_set(container, "start_cooldown_until", 0.0)
+    return container, lock
+
+
+def _start_cooldown_remaining(state):
+    container, lock = _ensure_start_cooldown_state(state)
+    now = time.time()
+    with lock:
+        until = float(_cooldown_get(container, "start_cooldown_until", 0.0) or 0.0)
+    return max(0.0, until - now)
+
+
+def _set_start_cooldown(state, seconds):
+    if seconds is None:
+        return
+    container, lock = _ensure_start_cooldown_state(state)
+    until = time.time() + float(seconds)
+    with lock:
+        _cooldown_set(container, "start_cooldown_until", until)
+
+
 def start_operation(ctx, *, idempotency_key, client_key):
     state = ctx.state
     limited = enforce_rate_limit(ctx, "start", client_key=client_key, limit=8, window_seconds=30.0)
@@ -74,6 +123,30 @@ def start_operation(ctx, *, idempotency_key, client_key):
     if is_starting or is_shutting or intent == "starting":
         state["log_mcweb_action"]("start", rejection_message="Start already queued or in progress.")
         return _reject_invalid_state("Start already queued or in progress.")
+    if not idempotency_key:
+        active_response = _active_operation_response(
+            ctx,
+            "start",
+            log_action="start",
+            message="Start already queued or in progress.",
+        )
+        if active_response is not None:
+            return active_response
+        cooldown_remaining = _start_cooldown_remaining(state)
+        if cooldown_remaining > 0:
+            retry_after = max(1, int(cooldown_remaining + 0.5))
+            message = f"Start is cooling down. Retry in {retry_after} seconds."
+            state["log_mcweb_action"]("start", rejection_message=message)
+            return _payload_result(
+                {
+                    "ok": False,
+                    "error": "start_cooldown",
+                    "message": message,
+                    "retry_after_seconds": retry_after,
+                },
+                status_code=429,
+                headers={"Retry-After": str(int(retry_after))},
+            )
     guard = state.get("storage_guard")
     if guard is not None and not guard.is_storage_sufficient(state, "start"):
         message = guard.block_message(state, "start")
@@ -99,6 +172,7 @@ def start_operation(ctx, *, idempotency_key, client_key):
     if result is not None:
         return result
 
+    _set_start_cooldown(state, _START_COOLDOWN_SECONDS)
     _enqueue_control_intent(ctx, "start", op_id, target=state.get("SERVICE", "minecraft"))
     _refresh_runtime_status(ctx, "starting", invalidate_observed=True)
 

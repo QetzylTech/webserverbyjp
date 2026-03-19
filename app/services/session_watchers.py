@@ -1,5 +1,8 @@
 """Session lifecycle and background watcher services."""
 import time
+
+from app.services import backup_scheduler_state as backup_scheduler_state_service
+from app.services import notification_service as notification_service
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
@@ -93,6 +96,10 @@ def backup_session_watcher(ctx):
             should_run_periodic_backup = False
             should_run_shutdown_backup = False
             periodic_due_runs = 0
+            due_runs = 0
+            missed_runs = 0
+            should_notify_missed = False
+            interval_seconds = int(getattr(ctx, "BACKUP_INTERVAL_SECONDS", 0) or 0)
 
             session_started_at = ctx.read_session_start_time()
 
@@ -104,8 +111,46 @@ def backup_session_watcher(ctx):
                         if due_runs > backup_state.periodic_runs:
                             should_run_periodic_backup = True
                             periodic_due_runs = due_runs
+                            missed_runs = max(0, due_runs - backup_state.periodic_runs - 1)
+                            last_missed_due_runs = int(getattr(backup_state, "last_missed_due_runs", 0) or 0)
+                            if missed_runs > 0 and due_runs > last_missed_due_runs:
+                                backup_state.last_missed_due_runs = due_runs
+                                should_notify_missed = True
                 elif is_off and session_started_at is not None:
                     should_run_shutdown_backup = True
+
+            if should_notify_missed and missed_runs > 0:
+                try:
+                    backup_scheduler_state_service.record_missed_backup(
+                        ctx,
+                        count=missed_runs,
+                        reason="interval_gap",
+                        due_runs=due_runs,
+                        interval_seconds=interval_seconds,
+                    )
+                except Exception as exc:
+                    ctx.log_mcweb_exception("backup_missed_record", exc)
+                try:
+                    plural = "run" if missed_runs == 1 else "runs"
+                    notification_service.publish_ui_notification(
+                        ctx,
+                        {
+                            "code": "backup_missed",
+                            "kind": "warning",
+                            "title": "Backup Missed",
+                            "message": f"Backup schedule missed {missed_runs} {plural}. Run a backup now or review backups.",
+                            "missed_runs": missed_runs,
+                            "prompt": {
+                                "actions": [
+                                    {"label": "Run Backup", "action": "run_backup", "style": "primary"},
+                                    {"label": "Open Backups", "action": "open_backups", "style": "secondary"},
+                                    {"label": "Dismiss", "action": "dismiss"},
+                                ]
+                            },
+                        },
+                    )
+                except Exception as exc:
+                    ctx.log_mcweb_exception("backup_missed_notify", exc)
 
             if should_run_periodic_backup:
                 if ctx.run_backup_script(count_skip_as_success=False, trigger="auto"):
@@ -117,6 +162,7 @@ def backup_session_watcher(ctx):
                     ctx.clear_session_start_time()
                     with backup_state.lock:
                         backup_state.periodic_runs = 0
+                        backup_state.last_missed_due_runs = 0
         except Exception as exc:
             ctx.log_mcweb_exception("backup_session_watcher", exc)
 
