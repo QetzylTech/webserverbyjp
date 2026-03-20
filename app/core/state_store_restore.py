@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.core.state_store_core import _connect, _create_tables
 from app.core import profiling
 
 
-def restore_id_exists(db_path, restore_id):
+DbPath = str | Path
+JsonDict = dict[str, object]
+
+
+def _coerce_dict(raw: object) -> JsonDict | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(key): value for key, value in raw.items()}
+
+
+def restore_id_exists(db_path: DbPath, restore_id: object) -> bool:
     """Return True when the restore ID already exists in stored/active history."""
     with profiling.timed("sqlite.restore.id_exists"):
         return _restore_id_exists_impl(db_path, restore_id)
 
 
-def _restore_id_exists_impl(db_path, restore_id):
+def _restore_id_exists_impl(db_path: DbPath, restore_id: object) -> bool:
     """Return True when the restore ID already exists in stored/active history."""
     code = str(restore_id or "").strip()
     if not code:
@@ -31,15 +43,15 @@ def _restore_id_exists_impl(db_path, restore_id):
     return row is not None
 
 
-def append_restore_name_run(db_path, payload):
+def append_restore_name_run(db_path: DbPath, payload: object) -> None:
     """Append one restore naming run record."""
     with profiling.timed("sqlite.restore.append_name_run"):
         return _append_restore_name_run_impl(db_path, payload)
 
 
-def _append_restore_name_run_impl(db_path, payload):
+def _append_restore_name_run_impl(db_path: DbPath, payload: object) -> None:
     """Append one restore naming run record."""
-    item = payload if isinstance(payload, dict) else {}
+    item = _coerce_dict(payload) or {}
     with _connect(db_path) as conn:
         _create_tables(conn)
         conn.execute(
@@ -72,15 +84,15 @@ def _append_restore_name_run_impl(db_path, payload):
         conn.commit()
 
 
-def append_restore_run(db_path, payload):
+def append_restore_run(db_path: DbPath, payload: object) -> None:
     """Append one restore run status record (success/failure)."""
     with profiling.timed("sqlite.restore.append_run"):
         return _append_restore_run_impl(db_path, payload)
 
 
-def _append_restore_run_impl(db_path, payload):
+def _append_restore_run_impl(db_path: DbPath, payload: object) -> None:
     """Append one restore run status record (success/failure)."""
-    item = payload if isinstance(payload, dict) else {}
+    item = _coerce_dict(payload) or {}
     with _connect(db_path) as conn:
         _create_tables(conn)
         conn.execute(
@@ -120,13 +132,13 @@ def _append_restore_run_impl(db_path, payload):
 
 
 def restore_backup_records_match(
-    db_path,
+    db_path: DbPath,
     *,
-    backup_filename,
-    pre_restore_snapshot_name,
-    stored_restore_id="",
-    active_restore_id="",
-):
+    backup_filename: object,
+    pre_restore_snapshot_name: object,
+    stored_restore_id: object = "",
+    active_restore_id: object = "",
+) -> bool:
     """Return True when restore naming records match the backup restore run."""
     with profiling.timed("sqlite.restore.records_match"):
         return _restore_backup_records_match_impl(
@@ -139,13 +151,13 @@ def restore_backup_records_match(
 
 
 def _restore_backup_records_match_impl(
-    db_path,
+    db_path: DbPath,
     *,
-    backup_filename,
-    pre_restore_snapshot_name,
-    stored_restore_id="",
-    active_restore_id="",
-):
+    backup_filename: object,
+    pre_restore_snapshot_name: object,
+    stored_restore_id: object = "",
+    active_restore_id: object = "",
+) -> bool:
     """Return True when restore naming records match the backup restore run."""
     backup_name = str(backup_filename or "").strip()
     snapshot_name = str(pre_restore_snapshot_name or "").strip()

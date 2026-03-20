@@ -1,9 +1,12 @@
 """Password retry throttling helpers."""
 
+from __future__ import annotations
+
 import time
+from typing import Any
 
 
-def _get_state(ctx):
+def _get_state(ctx: Any) -> tuple[Any | None, dict[str, Any] | None]:
     lock = getattr(ctx, "password_throttle_lock", None)
     state = getattr(ctx, "password_throttle_state", None)
     if lock is None or state is None:
@@ -11,7 +14,7 @@ def _get_state(ctx):
     return lock, state
 
 
-def _get_entry(state, client_ip):
+def _get_entry(state: dict[str, Any], client_ip: Any) -> tuple[str, dict[str, Any]]:
     key = str(client_ip or "unknown").strip() or "unknown"
     entry = state.get("by_ip", {}).get(key)
     if not isinstance(entry, dict):
@@ -20,7 +23,7 @@ def _get_entry(state, client_ip):
     return key, entry
 
 
-def is_blocked(ctx, client_ip):
+def is_blocked(ctx: Any, client_ip: Any) -> bool:
     lock, state = _get_state(ctx)
     if lock is None or state is None:
         return False
@@ -36,7 +39,7 @@ def is_blocked(ctx, client_ip):
     return False
 
 
-def record_failure(ctx, client_ip, *, max_attempts=3, block_seconds=10):
+def record_failure(ctx: Any, client_ip: Any, *, max_attempts: int = 3, block_seconds: int = 10) -> tuple[float, bool]:
     lock, state = _get_state(ctx)
     if lock is None or state is None:
         return 0.0, False
@@ -55,7 +58,7 @@ def record_failure(ctx, client_ip, *, max_attempts=3, block_seconds=10):
     return 0.0, False
 
 
-def record_success(ctx, client_ip):
+def record_success(ctx: Any, client_ip: Any) -> None:
     lock, state = _get_state(ctx)
     if lock is None or state is None:
         return

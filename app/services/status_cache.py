@@ -1,22 +1,25 @@
 """Service status cache helpers."""
 import time
+from collections.abc import Callable
+from threading import Lock
+from typing import Any
 from app.ports import ports
 
 
 def get_status(
     *,
-    cache_lock,
-    cache_value_ref,
-    cache_at_ref,
-    service,
-    active_ttl_seconds,
-    off_ttl_seconds,
-    timeout_seconds,
-    minecraft_root,
-    log_action,
-    log_exception,
-):
-        # Return cached or freshly queried systemd service status.
+    cache_lock: Lock,
+    cache_value_ref: list[str],
+    cache_at_ref: list[float],
+    service: str,
+    active_ttl_seconds: float,
+    off_ttl_seconds: float,
+    timeout_seconds: float,
+    minecraft_root: Any,
+    log_action: Callable[..., Any],
+    log_exception: Callable[..., Any],
+) -> str:
+        # Return cached or freshly queried runtime service status.
     now = time.time()
     with cache_lock:
         cached = cache_value_ref[0]
@@ -49,7 +52,7 @@ def get_status(
     return status
 
 
-def invalidate_status_cache(cache_lock, cache_value_ref, cache_at_ref):
+def invalidate_status_cache(cache_lock: Lock, cache_value_ref: list[str], cache_at_ref: list[float]) -> None:
     """Reset cached service status value/time."""
     with cache_lock:
         cache_value_ref[0] = ""

@@ -2,8 +2,10 @@ Minecraft Web Dashboard Setup
 
 This project is a Flask dashboard (`mcweb.py`) that controls a Minecraft service, runs backups through `scripts/backup.sh`, and sends RCON commands.
 The app now uses a platform call layer (`app/platform/*`) for OS-specific command execution (service control, backup script invocation, etc.).
+Runtime app data lives in the project-root `data/` directory, not under `app/`.
 
 Documentation index:
+- High-level product requirements: `doc/project requirements.txt`
 - Architecture contract: `ARCHITECTURE.md`
 - CI gate order and commands: `doc/CI_QUALITY_GATES.md`
 - PR acceptance checklist (priority-ordered): `doc/PR_ACCEPTANCE_CHECKLIST.md`
@@ -41,6 +43,8 @@ Recommended location:
   data/app_state.sqlite3
   data/state.txt
   data/session.txt
+  data/properties/
+  data/old_app_data/
   templates/
   static/
   logs/
@@ -55,6 +59,10 @@ Required files relative to `mcweb.py`:
 - `templates/fragments/*.html`
 - `doc/server_setup_doc.md`
 
+Runtime state location:
+- active runtime data is stored in the project-root `data/`
+- do not place active runtime files under `app/data`
+
 2. Main configuration (`mcweb.env`)
 
 `mcweb.py` and `scripts/backup.sh` load settings from `mcweb.env` in the same folder as `mcweb.py`.
@@ -62,13 +70,11 @@ Required files relative to `mcweb.py`:
 Important keys:
 - `SERVICE`
 - `MCWEB_ADMIN_PASSWORD_HASH`
-- `WEB_HOST`
-- `WEB_PORT`
+- `PORT`
 - `MINECRAFT_ROOT_DIR`
 - `BACKUP_DIR`
-- `RCON_HOST`
-- `RCON_PORT`
 - `DISPLAY_TZ`
+- `MCWEB_PROCESS_ROLE`
 - backup/idle/metrics interval keys
 - `DEBUG` (controls debug page availability at app boot)
 
@@ -77,12 +83,16 @@ Derived from `MINECRAFT_ROOT_DIR`:
 - crash reports directory (`<MINECRAFT_ROOT_DIR>/crash-reports`)
 - minecraft logs directory (`<MINECRAFT_ROOT_DIR>/logs`)
 
-Hardcoded relative to `<mcweb.py folder>` (not env-configurable):
+Hardcoded relative to the project root (same folder as `mcweb.py`, not env-configurable):
 - backup script: `./scripts/backup.sh`
 - app logs directory: `./logs`
 - app data directory: `./data`
 - docs directory: `./doc`
 - backup state file: `./data/state.txt`
+
+Notes:
+- the active runtime data directory is the root `data/` folder
+- `app/data` is not used for live runtime state
 
 SQLite state database path is fixed (not env-configurable):
 - `/opt/Minecraft/webserverbyjp/data/app_state.sqlite3` (or `<mcweb.py folder>/data/app_state.sqlite3`)
@@ -141,12 +151,12 @@ Execution path:
 
 Debug boot handling for `server.properties`:
 - when `DEBUG=true`:
-  - active `server.properties` is snapshotted to `<mcweb.py folder>/data/properties/server.properties.<timestamp>.bak`
+  - active `server.properties` is snapshotted to `<project root>/data/properties/server.properties.<timestamp>.bak`
   - forced values are applied:
     - `level-name=debug_world`
     - `motd=debugging in progress`
 - when `DEBUG=false` and active file is debug-provisioned:
-  - active file is restored from `data/properties/debug_properties.state` (`last_backup`) or latest `server.properties.*.bak`
+  - active file is restored from `<project root>/data/properties/debug_properties.state` (`last_backup`) or latest `server.properties.*.bak`
 
 Debug action authentication:
 - debug `server.properties` Apply requires admin password validation
@@ -179,7 +189,12 @@ python3 -m pip install flask
 From the project folder:
 `python3 mcweb.py`
 
-Bind address and port come from `mcweb.env` (`WEB_HOST`, `WEB_PORT`).
+Equivalent entrypoint:
+`python -m app.main`
+
+Bind behavior:
+- host is fixed to `0.0.0.0`
+- port comes from `mcweb.env` via `PORT`
 
 Process role:
 - `MCWEB_PROCESS_ROLE=all|web|worker` (default `all`)
@@ -309,7 +324,7 @@ Maintenance is scope-based and keeps separate rule/schedule/history metadata per
 - `backups`
 - `stale_worlds`
 
-Maintenance data in `<mcweb.py folder>/data`:
+Maintenance data in the project-root `data/` directory:
 - `app_state.sqlite3` (structured records: users, device map, cleanup config/history)
 - `cleanup_non_normal.txt` (missed-run tracking)
 - `logs/cleanup.log` (maintenance action logs)
@@ -339,6 +354,7 @@ History and audit UI:
 
 16. Quality gates and review contract
 
+- High-level product requirements: `doc/project requirements.txt`
 - Architecture contract: `ARCHITECTURE.md`
 - CI gate order and commands: `doc/CI_QUALITY_GATES.md`
 - PR acceptance checklist (priority-ordered): `doc/PR_ACCEPTANCE_CHECKLIST.md`

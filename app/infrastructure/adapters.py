@@ -27,6 +27,12 @@ class PlatformServiceControlAdapter:
     def default_backup_dir(self, *, user_name: str = "") -> str:
         return str(self._paths.default_backup_dir(user_name=user_name))
 
+    def resolve_backup_script_path(self, app_dir: Path | str) -> Path:
+        return Path(self._paths.resolve_backup_script_path(app_dir))
+
+    def apply_process_timezone(self, tz_name: str) -> None:
+        self._calls.apply_process_timezone(tz_name)
+
     def is_valid_env_path(self, path_text: str) -> bool:
         return bool(self._paths.is_valid_env_path(path_text))
 

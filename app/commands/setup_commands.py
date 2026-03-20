@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from werkzeug.security import generate_password_hash
 
 _REQUIRED_MESSAGE = "Please fill in all required fields."
 
 
-def _to_bool(value):
+def _to_bool(value: object) -> bool:
     """Parse common truthy string variants from form payload values."""
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _submit_payload(form, defaults):
+def _submit_payload(form: Any, defaults: object) -> dict[str, object]:
     """Normalize incoming setup form data into a canonical submitted dict."""
     fallback = defaults if isinstance(defaults, dict) else {}
     return {
@@ -24,14 +26,20 @@ def _submit_payload(form, defaults):
     }
 
 
-def _required_submit_errors(submitted, *, is_paths_only, password, password_confirm):
+def _required_submit_errors(
+    submitted: Mapping[str, object],
+    *,
+    is_paths_only: bool,
+    password: str,
+    password_confirm: str,
+) -> dict[str, str]:
     """Return field errors for required setup inputs based on active setup mode."""
     required_keys = (
         ("MINECRAFT_ROOT_DIR", "BACKUP_DIR")
         if is_paths_only
         else ("DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR")
     )
-    errors = {}
+    errors: dict[str, str] = {}
     for key in required_keys:
         if not submitted.get(key):
             errors[key] = "This field is required."
@@ -43,7 +51,7 @@ def _required_submit_errors(submitted, *, is_paths_only, password, password_conf
     return errors
 
 
-def _password_errors(password, password_confirm):
+def _password_errors(password: str, password_confirm: str) -> tuple[dict[str, str], str]:
     """Return password validation errors and a message when invalid."""
     if len(password) < 8:
         return {"ADMIN_PASSWORD": "Password must be at least 8 characters."}, "Password must be at least 8 characters."
@@ -55,7 +63,13 @@ def _password_errors(password, password_confirm):
     return {}, ""
 
 
-def _setup_values(submitted, existing_defaults, *, is_paths_only, password):
+def _setup_values(
+    submitted: Mapping[str, object],
+    existing_defaults: object,
+    *,
+    is_paths_only: bool,
+    password: str,
+) -> dict[str, object]:
     """Build persisted setup values including hashed password and secret reuse."""
     defaults = existing_defaults if isinstance(existing_defaults, dict) else {}
     return {
@@ -74,7 +88,13 @@ def _setup_values(submitted, existing_defaults, *, is_paths_only, password):
     }
 
 
-def handle_setup_submit(form, defaults, *, is_paths_only, save_setup_values):
+def handle_setup_submit(
+    form: Any,
+    defaults: object,
+    *,
+    is_paths_only: bool,
+    save_setup_values: Any,
+) -> dict[str, object]:
     """Validate setup form inputs, persist values, and return response payload."""
     submitted = _submit_payload(form, defaults)
     password = str(form.get("admin_password", "")).strip() if not is_paths_only else ""

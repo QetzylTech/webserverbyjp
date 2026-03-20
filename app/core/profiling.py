@@ -11,6 +11,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator, Sequence
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -23,11 +24,11 @@ _MAX_SAMPLES = int(max(100, int(os.getenv("MCWEB_PROFILE_MAX_SAMPLES", "4000")))
 _PROFILE_OUT = str(os.getenv("MCWEB_PROFILE_OUT", "") or "").strip()
 
 _lock = threading.Lock()
-_durations = defaultdict(list)
-_counts = defaultdict(int)
-_errors = defaultdict(int)
-_gauges = {}
-_op_checkpoints = {}
+_durations: defaultdict[str, list[float]] = defaultdict(list)
+_counts: defaultdict[str, int] = defaultdict(int)
+_errors: defaultdict[str, int] = defaultdict(int)
+_gauges: dict[str, object] = {}
+_op_checkpoints: dict[str, tuple[str, float]] = {}
 
 
 def _append_sample(name: str, seconds: float) -> None:
@@ -45,7 +46,7 @@ def incr_error(name: str, delta: int = 1) -> None:
         _errors[name] += int(max(1, delta))
 
 
-def set_gauge(name: str, value) -> None:
+def set_gauge(name: str, value: object) -> None:
     if not ENABLED:
         return
     with _lock:
@@ -60,7 +61,7 @@ def record_duration(name: str, seconds: float) -> None:
 
 
 @contextmanager
-def timed(name: str):
+def timed(name: str) -> Iterator[None]:
     if not ENABLED:
         yield
         return
@@ -74,7 +75,7 @@ def timed(name: str):
         record_duration(name, time.perf_counter() - started)
 
 
-def _percentile(sorted_values, pct: float):
+def _percentile(sorted_values: Sequence[float], pct: float) -> float:
     if not sorted_values:
         return 0.0
     if len(sorted_values) == 1:
@@ -104,12 +105,12 @@ def mark_operation_checkpoint(op_id: str, checkpoint: str) -> None:
         _append_sample(f"operation.checkpoint.{prev_cp}->{cp}", duration)
 
 
-def record_operation_transition(op_type: str, item: dict) -> None:
+def record_operation_transition(op_type: str, item: dict[str, object]) -> None:
     if not ENABLED or not isinstance(item, dict):
         return
     op_kind = str(op_type or item.get("op_type", "") or "unknown").strip().lower()
 
-    def _iso_to_epoch(raw):
+    def _iso_to_epoch(raw: object) -> float | None:
         text = str(raw or "").strip()
         if not text:
             return None
@@ -132,14 +133,14 @@ def record_operation_transition(op_type: str, item: dict) -> None:
             _append_sample(f"operation.{op_kind}.intent_to_terminal", max(0.0, finished_at - intent_at))
 
 
-def summary() -> dict:
+def summary() -> dict[str, object]:
     with _lock:
-        duration_copy = {key: list(values) for key, values in _durations.items()}
-        counts = dict(_counts)
-        errors = dict(_errors)
-        gauges = dict(_gauges)
+        duration_copy: dict[str, list[float]] = {key: list(values) for key, values in _durations.items()}
+        counts: dict[str, int] = dict(_counts)
+        errors: dict[str, int] = dict(_errors)
+        gauges: dict[str, object] = dict(_gauges)
 
-    metrics = {}
+    metrics: dict[str, dict[str, float | int]] = {}
     for key, values in duration_copy.items():
         ordered = sorted(values)
         total = float(sum(ordered))

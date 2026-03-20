@@ -4,6 +4,7 @@ from collections import deque
 import re
 import threading
 
+from app.ports import ports
 from app.state import BackupState, SessionState
 from app.services.storage_guard import StorageGuard
 
@@ -11,7 +12,7 @@ FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft
 
 
 def build_state(app_config, *, app_dir, display_tz):
-    backup_script = app_dir / "scripts" / "backup.sh"
+    backup_script = ports.service_control.resolve_backup_script_path(app_dir)
     backup_dir = app_config.backup_dir
     minecraft_root_dir = app_config.minecraft_root_dir
     require_sudo_password = bool(getattr(app_config, "require_password", True))

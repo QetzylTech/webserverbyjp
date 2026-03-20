@@ -1,10 +1,12 @@
 """User login registry helpers."""
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
 
 from app.core import state_store as state_store_service
 
 
-def get_client_ip(request):
+def get_client_ip(request: Any) -> str:
     """Resolve best client IP from proxy headers or remote address."""
     forwarded = (request.headers.get("X-Forwarded-For", "") or "").strip()
     if forwarded:
@@ -15,12 +17,12 @@ def get_client_ip(request):
 
 
 def record_successful_password_ip(
-    request,
-    display_tz,
-    device_name_lookup,
-    app_state_db_path,
-    client_ip=None,
-):
+    request: Any,
+    display_tz: Any,
+    device_name_lookup: Callable[[], dict[str, str] | None],
+    app_state_db_path: str | Path,
+    client_ip: str | None = None,
+) -> bool:
     # Track unique validated client IP with latest timestamp and device name.
     ip = (client_ip or get_client_ip(request)).strip() or "unknown"
     timestamp = datetime.now(tz=display_tz).strftime("%Y-%m-%d %H:%M:%S %Z")

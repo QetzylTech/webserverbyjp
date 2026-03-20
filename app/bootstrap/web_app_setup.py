@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 import time
+from pathlib import Path
+from typing import Any, Callable
 
 from flask import abort, redirect, request
 
@@ -16,24 +18,24 @@ from app.services.worker_scheduler import start_detached
 
 
 def configure_setup(
-    app,
+    app: Any,
     *,
-    web_conf_path,
-    web_cfg_values,
-    setup_required_state,
-    data_dir,
-    app_state_db_path,
-    log_mcweb_log,
-    log_mcweb_exception,
-):
-    def _setup_required():
+    web_conf_path: str | Path,
+    web_cfg_values: dict[str, object],
+    setup_required_state: dict[str, object],
+    data_dir: str | Path,
+    app_state_db_path: str | Path,
+    log_mcweb_log: Callable[..., object],
+    log_mcweb_exception: Callable[..., object],
+) -> tuple[Callable[[], bool], Callable[[], str]]:
+    def _setup_required() -> bool:
         return bool(setup_required_state.get("required"))
 
-    def _setup_mode():
+    def _setup_mode() -> str:
         return str(setup_required_state.get("mode", "full") or "full")
 
-    def _trigger_process_reload():
-        def _reload():
+    def _trigger_process_reload() -> None:
+        def _reload() -> None:
             time.sleep(0.35)
             try:
                 os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -42,10 +44,10 @@ def configure_setup(
 
         start_detached(target=_reload, daemon=True)
 
-    def _setup_defaults():
+    def _setup_defaults() -> dict[str, object]:
         return setup_service.setup_form_defaults(web_cfg_values)
 
-    def _save_setup_values(values):
+    def _save_setup_values(values: dict[str, object]) -> tuple[bool, str, dict[str, str]]:
         return setup_orchestration_service.save_setup_values(
             values,
             setup_service=setup_service,
@@ -67,8 +69,7 @@ def configure_setup(
         save_setup_values=_save_setup_values,
     )
 
-    @app.before_request
-    def _setup_route_guard():
+    def _setup_route_guard() -> Any:
         setup_mode = _setup_required()
         path = request.path or ""
         if setup_mode:
@@ -79,5 +80,8 @@ def configure_setup(
             return redirect("/setup")
         if path == "/setup" or path.startswith("/setup"):
             return None
+        return None
+
+    app.before_request(_setup_route_guard)
 
     return _setup_required, _setup_mode

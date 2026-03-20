@@ -2,23 +2,64 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.core.state_store_core import _connect, _create_tables
 from app.core import profiling
 
 
-def replace_file_records_snapshot(db_path, *, source_key, items):
+DbPath = str | Path
+FileRecord = dict[str, object]
+NormalizedFileRow = tuple[str, float, int, str, str]
+
+
+def _coerce_file_record(raw: object) -> FileRecord | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(key): value for key, value in raw.items()}
+
+
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            return int(value)
+    except Exception:
+        pass
+    return default
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            return float(value)
+    except Exception:
+        pass
+    return default
+
+
+def replace_file_records_snapshot(db_path: DbPath, *, source_key: object, items: object) -> None:
     """Replace mutable file records and append immutable change history."""
     with profiling.timed("sqlite.file_records.replace_snapshot"):
         return _replace_file_records_snapshot_impl(db_path, source_key=source_key, items=items)
 
 
-def load_file_records_snapshot(db_path, *, source_key):
+def load_file_records_snapshot(db_path: DbPath, *, source_key: object) -> list[FileRecord]:
     """Load the latest persisted file-record snapshot for one source key."""
     with profiling.timed("sqlite.file_records.load_snapshot"):
         return _load_file_records_snapshot_impl(db_path, source_key=source_key)
 
 
-def _load_file_records_snapshot_impl(db_path, *, source_key):
+def _load_file_records_snapshot_impl(db_path: DbPath, *, source_key: object) -> list[FileRecord]:
     """Load the latest persisted file-record snapshot for one source key."""
     source = str(source_key or "").strip()
     if not source:
@@ -34,7 +75,7 @@ def _load_file_records_snapshot_impl(db_path, *, source_key):
             """,
             (source,),
         ).fetchall()
-    items = []
+    items: list[FileRecord] = []
     for row in rows:
         items.append(
             {
@@ -48,27 +89,28 @@ def _load_file_records_snapshot_impl(db_path, *, source_key):
     return items
 
 
-def _replace_file_records_snapshot_impl(db_path, *, source_key, items):
+def _replace_file_records_snapshot_impl(db_path: DbPath, *, source_key: object, items: object) -> None:
     """Replace mutable file records and append immutable change history."""
     source = str(source_key or "").strip()
     if not source:
         return
 
-    normalized = []
+    normalized: list[NormalizedFileRow] = []
     if isinstance(items, list):
         for item in items:
-            if not isinstance(item, dict):
+            record = _coerce_file_record(item)
+            if record is None:
                 continue
-            name = str(item.get("name", "") or "").strip()
+            name = str(record.get("name", "") or "").strip()
             if not name:
                 continue
             normalized.append(
                 (
                     name,
-                    float(item.get("mtime", 0) or 0),
-                    int(item.get("size_bytes", 0) or 0),
-                    str(item.get("modified", "") or ""),
-                    str(item.get("size_text", "") or ""),
+                    _to_float(record.get("mtime", 0) or 0),
+                    _to_int(record.get("size_bytes", 0) or 0),
+                    str(record.get("modified", "") or ""),
+                    str(record.get("size_text", "") or ""),
                 )
             )
 
@@ -94,7 +136,7 @@ def _replace_file_records_snapshot_impl(db_path, *, source_key, items):
         current_names = {row[0] for row in normalized}
         removed_names = [name for name in previous.keys() if name not in current_names]
 
-        history_events = []
+        history_events: list[tuple[str, str, float, int, str, str]] = []
         for row in normalized:
             name, mtime, size_bytes, modified_text, size_text = row
             prev = previous.get(name)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import shutil
@@ -80,6 +81,10 @@ def run_elevated(cmd, *, timeout=None):
 
 def default_web_port():
     return 80
+
+
+def apply_process_timezone(tz_name):
+    os.environ["TZ"] = str(tz_name or "").strip()
 
 
 def _latest_log_file(logs_dir):

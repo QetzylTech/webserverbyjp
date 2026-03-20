@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import TypedDict, cast
 
 from app.core.state_store_core import _connect, _create_tables
 from app.core import profiling
@@ -13,20 +16,52 @@ from app.core import profiling
 _OPERATIONS_WRITE_LOCK = threading.Lock()
 _LATEST_OPERATION_CACHE_LOCK = threading.Lock()
 _LATEST_OPERATION_CACHE_TTL_SECONDS = 1.0
-_LATEST_OPERATION_CACHE = {}
 
 
-def _now_iso():
+DbPath = str | Path
+JsonDict = dict[str, object]
+UpdateEntry = dict[str, object]
+CacheKey = tuple[str, str]
+
+
+class LatestOperationCacheEntry(TypedDict):
+    expires_at: float
+    item: JsonDict | None
+
+
+_LATEST_OPERATION_CACHE: dict[CacheKey, LatestOperationCacheEntry] = {}
+
+
+def _coerce_dict(raw: object) -> JsonDict | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(key): value for key, value in raw.items()}
+
+
+def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_operation_payload(row):
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            return int(value)
+    except Exception:
+        pass
+    return default
+
+
+def _row_to_operation_payload(row: sqlite3.Row | None) -> JsonDict | None:
     if row is None:
         return None
     try:
-        data = json.loads(str(row["data_json"] or "{}"))
-        if not isinstance(data, dict):
-            data = {}
+        data = _coerce_dict(json.loads(str(row["data_json"] or "{}"))) or {}
     except Exception:
         data = {}
     return {
@@ -46,8 +81,8 @@ def _row_to_operation_payload(row):
     }
 
 
-def _fetch_operation_row(conn, op_id):
-    return conn.execute(
+def _fetch_operation_row(conn: sqlite3.Connection, op_id: object) -> sqlite3.Row | None:
+    row = conn.execute(
         """
         SELECT
             op_id,
@@ -69,58 +104,59 @@ def _fetch_operation_row(conn, op_id):
         """,
         (str(op_id or ""),),
     ).fetchone()
+    return cast(sqlite3.Row | None, row)
 
 
-def _latest_cache_key(db_path, op_type):
+def _latest_cache_key(db_path: DbPath, op_type: object) -> CacheKey:
     return (str(db_path), str(op_type))
 
 
-def _latest_cache_get(db_path, op_type):
+def _latest_cache_get(db_path: DbPath, op_type: object) -> JsonDict | None:
     now = time.time()
     key = _latest_cache_key(db_path, op_type)
     with _LATEST_OPERATION_CACHE_LOCK:
         cached = _LATEST_OPERATION_CACHE.get(key)
-        if not isinstance(cached, dict):
+        if cached is None:
             return None
-        if float(cached.get("expires_at", 0.0)) < now:
+        if cached["expires_at"] < now:
             _LATEST_OPERATION_CACHE.pop(key, None)
             return None
-        item = cached.get("item")
-        return dict(item) if isinstance(item, dict) else None
+        item = cached["item"]
+        return dict(item) if item is not None else None
 
 
-def _latest_cache_set(db_path, op_type, item):
+def _latest_cache_set(db_path: DbPath, op_type: object, item: JsonDict | None) -> None:
     key = _latest_cache_key(db_path, op_type)
     with _LATEST_OPERATION_CACHE_LOCK:
         _LATEST_OPERATION_CACHE[key] = {
             "expires_at": time.time() + _LATEST_OPERATION_CACHE_TTL_SECONDS,
-            "item": dict(item) if isinstance(item, dict) else None,
+            "item": dict(item) if item is not None else None,
         }
 
 
-def _latest_cache_invalidate(db_path, op_type):
+def _latest_cache_invalidate(db_path: DbPath, op_type: object) -> None:
     key = _latest_cache_key(db_path, op_type)
     with _LATEST_OPERATION_CACHE_LOCK:
         _LATEST_OPERATION_CACHE.pop(key, None)
 
 
-def _serialize_payload(payload):
+def _serialize_payload(payload: JsonDict) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
 
 
 def _build_operation_update_fields(
     *,
-    status=None,
-    error_code=None,
-    message=None,
-    started=False,
-    finished=False,
-    checkpoint=None,
-    increment_attempt=False,
-    payload=None,
-):
-    fields = []
-    values = []
+    status: object = None,
+    error_code: object = None,
+    message: object = None,
+    started: bool = False,
+    finished: bool = False,
+    checkpoint: object = None,
+    increment_attempt: bool = False,
+    payload: object = None,
+) -> tuple[list[str], list[object]]:
+    fields: list[str] = []
+    values: list[object] = []
     if status is not None:
         fields.append("status = ?")
         values.append(str(status))
@@ -141,18 +177,26 @@ def _build_operation_update_fields(
         values.append(str(checkpoint))
     if increment_attempt:
         fields.append("attempt = attempt + 1")
-    if isinstance(payload, dict):
+    payload_dict = _coerce_dict(payload)
+    if payload_dict is not None:
         fields.append("data_json = ?")
-        values.append(_serialize_payload(payload))
+        values.append(_serialize_payload(payload_dict))
     return fields, values
 
 
-def _record_operation_update(db_path, item, *, checkpoint=None, previous=None, fallback_op_id=""):
-    if isinstance(item, dict):
+def _record_operation_update(
+    db_path: DbPath,
+    item: JsonDict | None,
+    *,
+    checkpoint: object = None,
+    previous: JsonDict | None = None,
+    fallback_op_id: str = "",
+) -> None:
+    if item is not None:
         _latest_cache_invalidate(db_path, str(item.get("op_type", "") or ""))
         profiling.record_operation_transition(str(item.get("op_type", "")), item)
         checkpoint_name = checkpoint
-        if checkpoint_name is None and isinstance(previous, dict):
+        if checkpoint_name is None and previous is not None:
             checkpoint_name = str(item.get("checkpoint", "") or "")
         if checkpoint_name:
             profiling.mark_operation_checkpoint(str(item.get("op_id", "") or fallback_op_id), str(checkpoint_name))
@@ -161,16 +205,16 @@ def _record_operation_update(db_path, item, *, checkpoint=None, previous=None, f
 
 
 def create_operation(
-    db_path,
+    db_path: DbPath,
     *,
-    op_id,
-    op_type,
-    target="",
-    idempotency_key="",
-    status="intent",
-    checkpoint="",
-    payload=None,
-):
+    op_id: object,
+    op_type: object,
+    target: object = "",
+    idempotency_key: object = "",
+    status: object = "intent",
+    checkpoint: object = "",
+    payload: object = None,
+) -> JsonDict | None:
     """Insert one operation row and return its persisted payload."""
     with profiling.timed("sqlite.operation.create"):
         return _create_operation_impl(
@@ -186,18 +230,18 @@ def create_operation(
 
 
 def _create_operation_impl(
-    db_path,
+    db_path: DbPath,
     *,
-    op_id,
-    op_type,
-    target="",
-    idempotency_key="",
-    status="intent",
-    checkpoint="",
-    payload=None,
-):
+    op_id: object,
+    op_type: object,
+    target: object = "",
+    idempotency_key: object = "",
+    status: object = "intent",
+    checkpoint: object = "",
+    payload: object = None,
+) -> JsonDict | None:
     """Insert one operation row and return its persisted payload."""
-    item = payload if isinstance(payload, dict) else {}
+    item = _coerce_dict(payload) or {}
     created_at = _now_iso()
     with _OPERATIONS_WRITE_LOCK:
         with _connect(db_path) as conn:
@@ -239,27 +283,30 @@ def _create_operation_impl(
             )
             conn.commit()
             row = _fetch_operation_row(conn, op_id)
-    item = _row_to_operation_payload(row)
+    saved_item = _row_to_operation_payload(row)
     _latest_cache_invalidate(db_path, str(op_type or ""))
-    if isinstance(item, dict):
-        profiling.record_operation_transition(str(item.get("op_type", "") or op_type), item)
-        profiling.mark_operation_checkpoint(str(item.get("op_id", "") or op_id), str(checkpoint or "intent_created"))
-    return item
+    if saved_item is not None:
+        profiling.record_operation_transition(str(saved_item.get("op_type", "") or op_type), saved_item)
+        profiling.mark_operation_checkpoint(
+            str(saved_item.get("op_id", "") or op_id),
+            str(checkpoint or "intent_created"),
+        )
+    return saved_item
 
 
 def update_operation(
-    db_path,
+    db_path: DbPath,
     *,
-    op_id,
-    status=None,
-    error_code=None,
-    message=None,
-    started=False,
-    finished=False,
-    checkpoint=None,
-    increment_attempt=False,
-    payload=None,
-):
+    op_id: object,
+    status: object = None,
+    error_code: object = None,
+    message: object = None,
+    started: bool = False,
+    finished: bool = False,
+    checkpoint: object = None,
+    increment_attempt: bool = False,
+    payload: object = None,
+) -> JsonDict | None:
     """Update operation state fields for one op_id and return latest row."""
     with profiling.timed("sqlite.operation.update"):
         return _update_operation_impl(
@@ -277,20 +324,20 @@ def update_operation(
 
 
 def _update_operation_impl(
-    db_path,
+    db_path: DbPath,
     *,
-    op_id,
-    status=None,
-    error_code=None,
-    message=None,
-    started=False,
-    finished=False,
-    checkpoint=None,
-    increment_attempt=False,
-    payload=None,
-):
+    op_id: object,
+    status: object = None,
+    error_code: object = None,
+    message: object = None,
+    started: bool = False,
+    finished: bool = False,
+    checkpoint: object = None,
+    increment_attempt: bool = False,
+    payload: object = None,
+) -> JsonDict | None:
     """Update operation state fields for one op_id and return latest row."""
-    previous = None
+    previous: JsonDict | None = None
     if profiling.ENABLED:
         previous = get_operation(db_path, op_id)
     fields, values = _build_operation_update_fields(
@@ -320,24 +367,29 @@ def _update_operation_impl(
     return item
 
 
-def update_operations_batch(db_path, *, updates):
+def update_operations_batch(db_path: DbPath, *, updates: object) -> list[JsonDict]:
     """Apply multiple operation updates in one sqlite transaction."""
-    entries = list(updates or [])
+    entries: list[UpdateEntry] = []
+    if isinstance(updates, list):
+        for item in updates:
+            entry = _coerce_dict(item)
+            if entry is not None:
+                entries.append(entry)
     if not entries:
         return []
-    previous_map = {}
+    previous_map: dict[str, JsonDict | None] = {}
     if profiling.ENABLED:
         for item in entries:
-            op_id = str((item or {}).get("op_id", "") or "").strip()
+            op_id = str(item.get("op_id", "") or "").strip()
             if op_id:
                 previous_map[op_id] = get_operation(db_path, op_id)
-    touched = []
+    touched: list[tuple[JsonDict, object, JsonDict | None]] = []
     with profiling.timed("sqlite.operation.update_batch"):
         with _OPERATIONS_WRITE_LOCK:
             with _connect(db_path) as conn:
                 _create_tables(conn)
                 for entry in entries:
-                    payload = entry if isinstance(entry, dict) else {}
+                    payload = entry
                     op_id = str(payload.get("op_id", "") or "").strip()
                     if not op_id:
                         continue
@@ -368,17 +420,17 @@ def update_operations_batch(db_path, *, updates):
                     )
                     row = _fetch_operation_row(conn, op_id)
                     item = _row_to_operation_payload(row)
-                    if isinstance(item, dict):
+                    if item is not None:
                         touched.append((item, checkpoint, previous_map.get(op_id)))
                 conn.commit()
-    out = []
+    out: list[JsonDict] = []
     for item, checkpoint, previous in touched:
         out.append(item)
         _record_operation_update(db_path, item, checkpoint=checkpoint, previous=previous)
     return out
 
 
-def get_operation(db_path, op_id):
+def get_operation(db_path: DbPath, op_id: object) -> JsonDict | None:
     """Return one operation row as dict or None when missing."""
     with profiling.timed("sqlite.operation.get"):
         with _connect(db_path) as conn:
@@ -387,7 +439,7 @@ def get_operation(db_path, op_id):
     return _row_to_operation_payload(row)
 
 
-def get_latest_operation_for_type(db_path, op_type):
+def get_latest_operation_for_type(db_path: DbPath, op_type: object) -> JsonDict | None:
     """Return most recently updated operation row for one operation type."""
     kind = str(op_type or "").strip()
     if not kind:
@@ -416,11 +468,14 @@ def get_latest_operation_for_type(db_path, op_type):
     return item
 
 
-def list_operations_by_status(db_path, *, statuses, limit=200):
+def list_operations_by_status(db_path: DbPath, *, statuses: object, limit: object = 200) -> list[JsonDict]:
     """Return latest operations filtered by status values."""
-    values = [str(item or "").strip() for item in (statuses or []) if str(item or "").strip()]
+    if not isinstance(statuses, (list, tuple, set)):
+        return []
+    values = [str(item or "").strip() for item in statuses if str(item or "").strip()]
     if not values:
         return []
+    max_rows = max(1, _to_int(limit, 200))
     placeholders = ",".join("?" for _ in values)
     with profiling.timed("sqlite.operation.list_by_status"):
         with _connect(db_path) as conn:
@@ -433,9 +488,9 @@ def list_operations_by_status(db_path, *, statuses, limit=200):
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                tuple(values + [int(max(1, limit))]),
+                tuple([*values, max_rows]),
             ).fetchall()
-    out = []
+    out: list[JsonDict] = []
     for row in rows:
         item = get_operation(db_path, str(row["op_id"] or ""))
         if item is not None:
@@ -443,7 +498,12 @@ def list_operations_by_status(db_path, *, statuses, limit=200):
     return out
 
 
-def get_operation_by_idempotency_key(db_path, *, op_type, idempotency_key):
+def get_operation_by_idempotency_key(
+    db_path: DbPath,
+    *,
+    op_type: object,
+    idempotency_key: object,
+) -> JsonDict | None:
     """Return latest operation by type and idempotency key."""
     kind = str(op_type or "").strip()
     key = str(idempotency_key or "").strip()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
+from typing import Callable
 from app.core import profiling
 
 
@@ -13,7 +14,7 @@ _SQLITE_CONNECT_TIMEOUT_SECONDS = 8.0
 _SQLITE_BUSY_TIMEOUT_MS = 8000
 
 
-def _connect(db_path):
+def _connect(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     started = 0.0
@@ -42,7 +43,7 @@ def _connect(db_path):
     return conn
 
 
-def _create_tables(conn):
+def _create_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -200,9 +201,9 @@ def _create_tables(conn):
 
 def initialize_state_db(
     *,
-    db_path,
-    log_exception=None,
-):
+    db_path: str | Path,
+    log_exception: Callable[[str, Exception], object] | None = None,
+) -> bool:
     """Create SQLite schema."""
     try:
         with _connect(db_path) as conn:

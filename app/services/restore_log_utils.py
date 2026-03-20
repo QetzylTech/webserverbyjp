@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -15,7 +15,7 @@ def _sanitize_backup_name(value: str) -> str:
     return text or "restore"
 
 
-def build_restore_log_filename(backup_filename: str, job_id: str, display_tz=None) -> str:
+def build_restore_log_filename(backup_filename: str, job_id: str, display_tz: tzinfo | None = None) -> str:
     safe = _sanitize_backup_name(backup_filename)
     now = datetime.now(tz=display_tz) if display_tz is not None else datetime.utcnow()
     stamp = now.strftime("%Y%m%d_%H%M%S")

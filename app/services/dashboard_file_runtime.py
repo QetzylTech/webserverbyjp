@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 import threading
 import time
+from typing import Any, TypedDict
 
 from app.core.filesystem_utils import format_file_size
 from app.core import state_store as state_store_service
@@ -11,18 +12,41 @@ from app.services import restore_log_utils as restore_log_utils
 from app.services.worker_scheduler import WorkerSpec, start_worker
 from app.services import client_registry as client_registry_service
 
+
+FilePageItem = dict[str, object]
+SortableKey = str | int | float
+
+
+class SnapshotDirSizeCacheEntry(TypedDict):
+    mtime_ns: int
+    size: int
+
+
 _SNAPSHOT_DIR_SIZE_CACHE_LOCK = threading.Lock()
-_SNAPSHOT_DIR_SIZE_CACHE = {}
+_SNAPSHOT_DIR_SIZE_CACHE: dict[str, SnapshotDirSizeCacheEntry] = {}
 
 
-def _safe_dir_mtime_ns(path):
+def _to_float(value: object, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            return float(value)
+    except Exception:
+        pass
+    return default
+
+
+def _safe_dir_mtime_ns(path: Path) -> int:
     try:
         return int(path.stat().st_mtime_ns)
     except OSError:
         return -1
 
 
-def _snapshot_dir_size_cached(path):
+def _snapshot_dir_size_cached(path: Path) -> int:
     """Return recursive directory size with mtime-based cache reuse."""
     key = str(path.resolve())
     mtime_ns = _safe_dir_mtime_ns(path)
@@ -47,7 +71,7 @@ def _snapshot_dir_size_cached(path):
     return int(total_size)
 
 
-def _previous_file_page_items(ctx, cache_key):
+def _previous_file_page_items(ctx: Any, cache_key: str) -> list[FilePageItem]:
     with ctx.file_page_cache_lock:
         entry = ctx.file_page_cache.get(cache_key) or {}
         items = entry.get("items") if isinstance(entry, dict) else []
@@ -60,19 +84,28 @@ def _previous_file_page_items(ctx, cache_key):
         return []
 
 
-def _list_download_files_sorted(ctx, base_dir, patterns):
+def _list_download_files_sorted(ctx: Any, base_dir: Path, patterns: tuple[str, ...]) -> list[FilePageItem]:
     """Return merged, newest-first file metadata for the given glob patterns."""
-    items = []
+    items: list[FilePageItem] = []
     for pattern in patterns:
         items.extend(ctx._list_download_files(base_dir, pattern, ctx.DISPLAY_TZ))
-    items.sort(key=lambda item: item["mtime"], reverse=True)
+    items.sort(key=_item_mtime_sort_key, reverse=True)
     return items
 
 
-def _build_restore_log_index(ctx):
+def _item_mtime_sort_key(item: FilePageItem) -> SortableKey:
+    value = item.get("mtime", 0.0)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int | float):
+        return float(value)
+    return 0.0
+
+
+def _build_restore_log_index(ctx: Any) -> dict[str, FilePageItem]:
     """Return latest restore log file per sanitized backup name."""
     log_dir = Path(getattr(ctx, "MCWEB_LOG_DIR", "") or Path(ctx.MCWEB_LOG_FILE).parent)
-    index = {}
+    index: dict[str, FilePageItem] = {}
     try:
         candidates = list(log_dir.glob("restore_*.log"))
     except OSError:
@@ -87,7 +120,7 @@ def _build_restore_log_index(ctx):
             continue
         ts = float(stat.st_mtime)
         current = index.get(safe_key)
-        if current and ts <= float(current.get("mtime", 0) or 0):
+        if current and ts <= _to_float(current.get("mtime", 0), 0.0):
             continue
         index[safe_key] = {
             "name": path.name,
@@ -97,7 +130,12 @@ def _build_restore_log_index(ctx):
     return index
 
 
-def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items=None):
+def _build_backup_page_items(
+    ctx: Any,
+    *,
+    compute_snapshot_sizes: bool = True,
+    previous_items: object = None,
+) -> list[FilePageItem]:
     """Build backup list items (zip backups + snapshot dirs) with mtime index cache."""
     backup_dir = Path(ctx.BACKUP_DIR)
     snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
@@ -111,7 +149,7 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
         old_worlds_root=old_worlds_root,
     )
 
-    previous_by_name = {}
+    previous_by_name: dict[str, FilePageItem] = {}
     if isinstance(previous_items, list):
         previous_by_name = {
             str(item.get("name", "") or ""): dict(item)
@@ -120,7 +158,7 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
         }
 
     restore_log_index = _build_restore_log_index(ctx)
-    items = []
+    items: list[FilePageItem] = []
     for path in inventory.get("backup_zip_paths", []):
         try:
             stat = path.stat()
@@ -181,11 +219,11 @@ def _build_backup_page_items(ctx, *, compute_snapshot_sizes=True, previous_items
                 "last_restore_at": restore_log.get("modified", ""),
             }
         )
-    items.sort(key=lambda item: item["mtime"], reverse=True)
+    items.sort(key=_item_mtime_sort_key, reverse=True)
     return items
 
 
-def mark_file_page_client_active(ctx, client_id=None):
+def mark_file_page_client_active(ctx: Any, client_id: str | None = None) -> None:
     """Record recent file-page activity and wake cadence workers."""
     if client_id:
         client_registry_service.touch_client(ctx, client_id, channel="file_heartbeat")
@@ -194,7 +232,7 @@ def mark_file_page_client_active(ctx, client_id=None):
         ctx.metrics_cache_cond.notify_all()
 
 
-def has_active_file_page_clients(ctx):
+def has_active_file_page_clients(ctx: Any) -> bool:
     """Return whether file-page activity is still within the active TTL."""
     with ctx.metrics_cache_cond:
         last_seen = float(getattr(ctx, "file_page_last_seen", 0.0) or 0.0)
@@ -202,7 +240,7 @@ def has_active_file_page_clients(ctx):
     return (time.time() - last_seen) <= ttl_seconds
 
 
-def set_file_page_items(ctx, cache_key, items):
+def set_file_page_items(ctx: Any, cache_key: str, items: list[FilePageItem]) -> None:
     """Replace cached file-list payload for one page section."""
     with ctx.file_page_cache_lock:
         ctx.file_page_cache[cache_key] = {
@@ -211,7 +249,7 @@ def set_file_page_items(ctx, cache_key, items):
         }
 
 
-def refresh_file_page_items(ctx, cache_key, *, compute_snapshot_sizes=True):
+def refresh_file_page_items(ctx: Any, cache_key: str, *, compute_snapshot_sizes: bool = True) -> list[FilePageItem]:
     """Refresh one file-list cache key from its backing directory."""
     if cache_key == "backups":
         items = _build_backup_page_items(
@@ -237,14 +275,16 @@ def refresh_file_page_items(ctx, cache_key, *, compute_snapshot_sizes=True):
     return items
 
 
-def get_cached_file_page_items(ctx, cache_key):
+def get_cached_file_page_items(ctx: Any, cache_key: str) -> list[FilePageItem]:
     """Return cached file-list items when fresh; otherwise load DB snapshot or refresh lazily."""
     with ctx.file_page_cache_lock:
         entry = ctx.file_page_cache.get(cache_key)
-        if entry:
-            age = time.time() - entry["updated_at"]
-            if entry["items"] and age <= ctx.FILE_PAGE_CACHE_REFRESH_SECONDS:
-                return [dict(item) for item in entry["items"]]
+        if isinstance(entry, dict):
+            updated_at = _to_float(entry.get("updated_at", 0.0))
+            items = entry.get("items")
+            age = time.time() - updated_at
+            if isinstance(items, list) and items and age <= float(ctx.FILE_PAGE_CACHE_REFRESH_SECONDS):
+                return [dict(item) for item in items if isinstance(item, dict)]
     # Cache miss: try the DB snapshot before scanning the filesystem.
     try:
         persisted = state_store_service.load_file_records_snapshot(Path(ctx.APP_STATE_DB_PATH), source_key=cache_key)
@@ -256,13 +296,13 @@ def get_cached_file_page_items(ctx, cache_key):
     return refresh_file_page_items(ctx, cache_key, compute_snapshot_sizes=False)
 
 
-def warm_file_page_caches(ctx):
+def warm_file_page_caches(ctx: Any) -> None:
     """Warm file-page caches at startup without blocking on snapshot size scans."""
     for cache_key in ("backups", "crash_logs", "minecraft_logs"):
         refresh_file_page_items(ctx, cache_key, compute_snapshot_sizes=False)
 
 
-def file_page_cache_refresher_loop(ctx):
+def file_page_cache_refresher_loop(ctx: Any) -> None:
     """Background refresher that updates file lists only when viewed."""
     while True:
         service_status = str(ctx.get_status() or "inactive").strip().lower()
@@ -287,7 +327,7 @@ def file_page_cache_refresher_loop(ctx):
             time.sleep(idle_sleep)
 
 
-def ensure_file_page_cache_refresher_started(ctx):
+def ensure_file_page_cache_refresher_started(ctx: Any) -> None:
     """Start file-page refresher daemon once."""
     if ctx.file_page_cache_refresher_started:
         return

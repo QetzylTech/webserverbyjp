@@ -1,21 +1,26 @@
 """Shared helpers for operation queue lookups."""
 
+from pathlib import Path
+from typing import Any
+
 from app.core import state_store as state_store_service
 
 
-def _extract_db_path(ctx_or_state):
+def _extract_db_path(ctx_or_state: Any) -> str | Path | None:
     if isinstance(ctx_or_state, dict):
-        return ctx_or_state.get("APP_STATE_DB_PATH")
+        db_path = ctx_or_state.get("APP_STATE_DB_PATH")
+        return db_path if isinstance(db_path, (str, Path)) else None
     db_path = getattr(ctx_or_state, "APP_STATE_DB_PATH", None)
-    if db_path is not None:
+    if isinstance(db_path, (str, Path)):
         return db_path
     state = getattr(ctx_or_state, "state", None)
     if isinstance(state, dict):
-        return state.get("APP_STATE_DB_PATH")
+        nested_db_path = state.get("APP_STATE_DB_PATH")
+        return nested_db_path if isinstance(nested_db_path, (str, Path)) else None
     return None
 
 
-def has_pending_operation(ctx_or_state, op_type):
+def has_pending_operation(ctx_or_state: Any, op_type: object) -> bool:
     db_path = _extract_db_path(ctx_or_state)
     if db_path is None:
         return False

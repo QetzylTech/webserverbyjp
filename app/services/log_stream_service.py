@@ -2,12 +2,17 @@
 
 from collections import deque
 import time
+from pathlib import Path
+from typing import Any
 
 from app.ports import ports
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
-def _file_source_settings(source, context, path, text_limit):
+LogSourceSettings = dict[str, object]
+
+
+def _file_source_settings(source: str, context: str, path: Path, text_limit: int) -> LogSourceSettings:
     return {
         "source": source,
         "type": "file",
@@ -17,8 +22,8 @@ def _file_source_settings(source, context, path, text_limit):
     }
 
 
-def is_rcon_noise_line(line):
-    lower = (line or "").lower()
+def is_rcon_noise_line(line: object) -> bool:
+    lower = str(line or "").lower()
     if "thread rcon client" in lower:
         return True
     if "minecraft/rconclient" in lower and "shutting down" in lower:
@@ -26,14 +31,14 @@ def is_rcon_noise_line(line):
     return False
 
 
-def normalize_log_source(ctx, source):
-    normalized = (source or "").strip().lower()
+def normalize_log_source(ctx: Any, source: object) -> str | None:
+    normalized = str(source or "").strip().lower()
     if normalized not in ctx.LOG_SOURCE_KEYS:
         return None
-    return normalized
+    return str(normalized)
 
 
-def log_source_settings(ctx, source):
+def log_source_settings(ctx: Any, source: object) -> LogSourceSettings | None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return None
@@ -63,11 +68,11 @@ def log_source_settings(ctx, source):
     return file_sources.get(normalized)
 
 
-def get_log_source_text(ctx, source):
+def get_log_source_text(ctx: Any, source: object) -> str | None:
     settings = log_source_settings(ctx, source)
     if settings is None:
         return None
-    normalized = settings["source"]
+    normalized = str(settings["source"])
     cached_getters = {
         "minecraft": ctx._get_cached_minecraft_log_text,
         "backup": ctx._get_cached_backup_log_text,
@@ -77,15 +82,15 @@ def get_log_source_text(ctx, source):
     if getter is not None:
         return getter()
     if normalized == "mcweb_log":
-        lines = ctx._read_recent_file_lines(settings["path"], settings["text_limit"])
+        lines = ctx._read_recent_file_lines(Path(settings["path"]), int(settings["text_limit"]))
         return "\n".join(lines).strip() or "(no logs)"
     if normalized == "restore":
-        lines = ctx._read_recent_file_lines(settings["path"], settings["text_limit"])
+        lines = ctx._read_recent_file_lines(Path(settings["path"]), int(settings["text_limit"]))
         return "\n".join(lines).strip() or "(no logs)"
     return None
 
 
-def drain_buffered_log_lines(ctx, source):
+def drain_buffered_log_lines(ctx: Any, source: object) -> list[str]:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return []
@@ -104,7 +109,7 @@ def drain_buffered_log_lines(ctx, source):
 
 
 
-def publish_log_stream_line(ctx, source, line):
+def publish_log_stream_line(ctx: Any, source: object, line: object) -> None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
@@ -151,18 +156,18 @@ def publish_log_stream_line(ctx, source, line):
         appender(line)
 
 
-def line_matches_crash_marker(ctx, line):
-    clean = (line or "").strip()
+def line_matches_crash_marker(ctx: Any, line: object) -> bool:
+    clean = str(line or "").strip()
     if not clean:
         return False
     return any(marker in clean for marker in ctx.CRASH_STOP_MARKERS)
 
 
-def crash_stop_after_grace(ctx, trigger_line):
+def crash_stop_after_grace(ctx: Any, trigger_line: object) -> None:
     try:
         time.sleep(ctx.CRASH_STOP_GRACE_SECONDS)
         if ctx.get_status() == "active":
-            stopped = ctx.stop_service_systemd()
+            stopped = ctx.stop_service_runtime()
             if stopped:
                 ctx.clear_session_start_time()
                 ctx.reset_backup_schedule_state()
@@ -171,14 +176,14 @@ def crash_stop_after_grace(ctx, trigger_line):
                 ctx.log_mcweb_action(
                     "auto-stop-crash",
                     command=f"marker={trigger_line} grace={ctx.CRASH_STOP_GRACE_SECONDS}s",
-                    rejection_message="systemd stop did not reach inactive/failed within timeout.",
+                    rejection_message="service stop did not reach inactive/failed within timeout.",
                 )
     finally:
         with ctx.crash_stop_lock:
             ctx.crash_stop_timer_active = False
 
 
-def schedule_crash_stop_if_needed(ctx, line):
+def schedule_crash_stop_if_needed(ctx: Any, line: object) -> None:
     if not line_matches_crash_marker(ctx, line):
         return
     ctx.set_service_status_intent("crashed")
@@ -199,16 +204,18 @@ def schedule_crash_stop_if_needed(ctx, line):
     )
 
 
-def log_source_fetcher_loop(ctx, source):
+def log_source_fetcher_loop(ctx: Any, source: object) -> None:
     settings = log_source_settings(ctx, source)
     if settings is None:
         return
-    normalized = settings["source"]
+    normalized = str(settings["source"])
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
     backup_status_cache_at = 0.0
     backup_status_cache_value = False
+    file_poll_offset = 0
+    follow_from_end_initialized = False
 
-    def _allow_background_minecraft_follow():
+    def _allow_background_minecraft_follow() -> bool:
         if normalized != "minecraft":
             return False
         intent = str(ctx.get_service_status_intent() or "").strip().lower()
@@ -217,7 +224,7 @@ def log_source_fetcher_loop(ctx, source):
         service_status = str(ctx.get_status() or "").strip().lower()
         return service_status not in off_states
 
-    def _allow_background_backup_follow():
+    def _allow_background_backup_follow() -> bool:
         nonlocal backup_status_cache_at, backup_status_cache_value
         if normalized != "backup":
             return False
@@ -234,14 +241,14 @@ def log_source_fetcher_loop(ctx, source):
         backup_status_cache_value = active
         return active
 
-    def _allow_background_follow():
+    def _allow_background_follow() -> bool:
         if _allow_background_minecraft_follow():
             return True
         if _allow_background_backup_follow():
             return True
         return False
 
-    def _refresh_idle_log_cache():
+    def _refresh_idle_log_cache() -> None:
         if normalized == "minecraft":
             loader = getattr(ctx, "_load_minecraft_log_cache_from_journal", None)
             if callable(loader):
@@ -252,16 +259,16 @@ def log_source_fetcher_loop(ctx, source):
                 loader()
         # Control panel logs are only updated when a client is connected.
 
-    def _load_offset_state(stream_state):
+    def _load_offset_state(stream_state: dict[str, Any]) -> tuple[int, bool]:
         with stream_state["lifecycle_lock"]:
             return int(stream_state.get("file_offset", 0) or 0), bool(stream_state.get("follow_initialized", False))
 
-    def _store_offset_state(stream_state, offset, initialized):
+    def _store_offset_state(stream_state: dict[str, Any], offset: int, initialized: bool) -> None:
         with stream_state["lifecycle_lock"]:
             stream_state["file_offset"] = int(offset)
             stream_state["follow_initialized"] = bool(initialized)
 
-    def _read_file_updates(stream_state, path, *, allow_break_on_no_clients):
+    def _read_file_updates(stream_state: dict[str, Any], path: Path, *, allow_break_on_no_clients: bool) -> None:
         nonlocal file_poll_offset, follow_from_end_initialized
         if not path.exists():
             file_poll_offset = 0
@@ -316,7 +323,7 @@ def log_source_fetcher_loop(ctx, source):
                     if service_status in off_states:
                         time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
                         continue
-                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=False)
+                _read_file_updates(stream_state, Path(settings["path"]), allow_break_on_no_clients=False)
                 time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
                 continue
             if _allow_background_follow():
@@ -333,12 +340,12 @@ def log_source_fetcher_loop(ctx, source):
                 time.sleep(1)
                 continue
             if settings["type"] == "journal":
-                proc = ports.log.minecraft_open_follow_logs_process(settings["unit"], ctx.MINECRAFT_LOGS_DIR)
+                proc = ports.log.minecraft_open_follow_logs_process(str(settings["unit"]), ctx.MINECRAFT_LOGS_DIR)
                 if not proc:
                     time.sleep(1)
                     continue
             else:
-                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=True)
+                _read_file_updates(stream_state, Path(settings["path"]), allow_break_on_no_clients=True)
                 time.sleep(1)
                 continue
 
@@ -365,7 +372,7 @@ def log_source_fetcher_loop(ctx, source):
         time.sleep(1)
 
 
-def ensure_log_stream_fetcher_started(ctx, source):
+def ensure_log_stream_fetcher_started(ctx: Any, source: object) -> None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
@@ -389,7 +396,7 @@ def ensure_log_stream_fetcher_started(ctx, source):
         state["started"] = True
 
 
-def increment_log_stream_clients(ctx, source):
+def increment_log_stream_clients(ctx: Any, source: object) -> None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
@@ -400,7 +407,7 @@ def increment_log_stream_clients(ctx, source):
         stream_state["clients"] += 1
 
 
-def decrement_log_stream_clients(ctx, source):
+def decrement_log_stream_clients(ctx: Any, source: object) -> None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return

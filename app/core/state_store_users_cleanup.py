@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Mapping
 
 from app.core.state_store_core import _CLEANUP_CONFIG_KEY, _connect, _create_tables
 from app.core import profiling
 
 
-def upsert_user_record(db_path, *, ip, timestamp, device_name):
+DbPath = str | Path
+JsonDict = dict[str, object]
+
+
+def _coerce_dict(raw: object) -> JsonDict | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(key): value for key, value in raw.items()}
+
+
+def upsert_user_record(db_path: DbPath, *, ip: object, timestamp: object, device_name: object) -> None:
     """Create or update one user-login registry row."""
     with profiling.timed("sqlite.users.upsert"):
         with _connect(db_path) as conn:
@@ -31,7 +43,7 @@ def upsert_user_record(db_path, *, ip, timestamp, device_name):
             conn.commit()
 
 
-def load_fallmap(db_path):
+def load_fallmap(db_path: DbPath) -> dict[str, str]:
     """Return IP -> device name mapping from SQLite."""
     with profiling.timed("sqlite.fallmap.load"):
         with _connect(db_path) as conn:
@@ -39,7 +51,7 @@ def load_fallmap(db_path):
             rows = conn.execute(
                 "SELECT ip, device_name FROM device_fallmap ORDER BY ip ASC"
             ).fetchall()
-    mapping = {}
+    mapping: dict[str, str] = {}
     for row in rows:
         ip = str(row["ip"] or "").strip()
         name = str(row["device_name"] or "").strip()
@@ -48,7 +60,7 @@ def load_fallmap(db_path):
     return mapping
 
 
-def replace_fallmap(db_path, mapping):
+def replace_fallmap(db_path: DbPath, mapping: Mapping[object, object]) -> None:
     """Replace the device_fallmap table with the provided IP -> device name mapping."""
     with profiling.timed("sqlite.fallmap.replace"):
         with _connect(db_path) as conn:
@@ -69,7 +81,7 @@ def replace_fallmap(db_path, mapping):
             conn.commit()
 
 
-def load_cleanup_config(db_path):
+def load_cleanup_config(db_path: DbPath) -> JsonDict | None:
     """Load cleanup config document from SQLite."""
     with profiling.timed("sqlite.cleanup.load_config"):
         with _connect(db_path) as conn:
@@ -81,13 +93,13 @@ def load_cleanup_config(db_path):
     if row is None:
         return None
     try:
-        payload = json.loads(row["json_text"])
+        payload = _coerce_dict(json.loads(row["json_text"]))
     except Exception:
         return None
-    return payload if isinstance(payload, dict) else None
+    return payload
 
 
-def save_cleanup_config(db_path, payload):
+def save_cleanup_config(db_path: DbPath, payload: Mapping[str, object]) -> None:
     """Persist cleanup config document into SQLite."""
     text = json.dumps(payload if isinstance(payload, dict) else {}, ensure_ascii=True, sort_keys=True)
     with profiling.timed("sqlite.cleanup.save_config"):
@@ -106,7 +118,7 @@ def save_cleanup_config(db_path, payload):
             conn.commit()
 
 
-def load_cleanup_history_runs(db_path, *, limit=500):
+def load_cleanup_history_runs(db_path: DbPath, *, limit: int = 500) -> list[JsonDict]:
     """Load cleanup history runs (oldest -> newest) with bounded length."""
     max_rows = max(1, int(limit))
     with profiling.timed("sqlite.cleanup.load_history"):
@@ -124,20 +136,20 @@ def load_cleanup_history_runs(db_path, *, limit=500):
                 """,
                 (max_rows,),
             ).fetchall()
-    runs = []
+    runs: list[JsonDict] = []
     for row in rows:
         try:
-            item = json.loads(row["run_json"])
+            item = _coerce_dict(json.loads(row["run_json"]))
         except Exception:
             continue
-        if isinstance(item, dict):
+        if item is not None:
             runs.append(item)
     return runs
 
 
-def append_cleanup_history_run(db_path, run_payload, *, max_rows=500):
+def append_cleanup_history_run(db_path: DbPath, run_payload: Mapping[str, object], *, max_rows: int = 500) -> None:
     """Append one cleanup history run and trim older rows."""
-    payload = run_payload if isinstance(run_payload, dict) else {}
+    payload = dict(run_payload)
     with profiling.timed("sqlite.cleanup.append_history"):
         with _connect(db_path) as conn:
             _create_tables(conn)
@@ -167,13 +179,14 @@ def append_cleanup_history_run(db_path, run_payload, *, max_rows=500):
             conn.commit()
 
 
-def save_cleanup_history_runs(db_path, runs, *, max_rows=500):
+def save_cleanup_history_runs(db_path: DbPath, runs: object, *, max_rows: int = 500) -> None:
     """Replace full cleanup history set with bounded normalized rows."""
-    normalized = []
+    normalized: list[JsonDict] = []
     if isinstance(runs, list):
         for item in runs:
-            if isinstance(item, dict):
-                normalized.append(item)
+            coerced = _coerce_dict(item)
+            if coerced is not None:
+                normalized.append(coerced)
     normalized = normalized[-max(1, int(max_rows)) :]
     with profiling.timed("sqlite.cleanup.save_history"):
         with _connect(db_path) as conn:

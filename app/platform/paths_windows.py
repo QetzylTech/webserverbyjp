@@ -23,6 +23,16 @@ def default_backup_dir(user_name=None):
     return r"C:\webserverbyjp\backups"
 
 
+def resolve_backup_script_path(app_dir):
+    root = Path(str(app_dir))
+    scripts_dir = root / "scripts"
+    for name in ("backup.bat", "backup.cmd", "backup.ps1", "backup.sh"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return str(candidate)
+    return str(scripts_dir / "backup.sh")
+
+
 def is_valid_env_path(path_text):
     text = str(path_text or "").strip()
     if not text:

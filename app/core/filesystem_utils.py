@@ -1,9 +1,13 @@
 """Filesystem helpers for file listings, safe paths, and lightweight reads."""
-from datetime import datetime
+
+from __future__ import annotations
+
+from datetime import datetime, tzinfo
 from pathlib import Path
+from typing import Any
 
 
-def format_file_size(num_bytes):
+def format_file_size(num_bytes: int | float | None) -> str:
     """Format bytes into a human-readable string (B/KB/MB/GB/TB)."""
     value = float(max(0, num_bytes or 0))
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -16,9 +20,9 @@ def format_file_size(num_bytes):
     return f"{value:.1f} {units[idx]}"
 
 
-def list_download_files(base_dir, pattern, display_tz):
+def list_download_files(base_dir: Path, pattern: str, display_tz: tzinfo | None) -> list[dict[str, Any]]:
     """Return file metadata sorted newest-first for download listings."""
-    items = []
+    items: list[dict[str, Any]] = []
     if not base_dir.exists() or not base_dir.is_dir():
         return items
 
@@ -42,7 +46,7 @@ def list_download_files(base_dir, pattern, display_tz):
     return items
 
 
-def read_recent_file_lines(path, limit):
+def read_recent_file_lines(path: Path, limit: int) -> list[str]:
     """Read and return the last ``limit`` lines from a text file."""
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -54,7 +58,7 @@ def read_recent_file_lines(path, limit):
     return lines
 
 
-def safe_file_mtime_ns(path):
+def safe_file_mtime_ns(path: Path) -> int | None:
     """Return file ``mtime_ns`` or ``None`` when unavailable."""
     try:
         return path.stat().st_mtime_ns
@@ -62,7 +66,7 @@ def safe_file_mtime_ns(path):
         return None
 
 
-def safe_filename_in_dir(base_dir, filename):
+def safe_filename_in_dir(base_dir: Path, filename: str | None) -> str | None:
     """Validate and return a direct-child filename within ``base_dir``."""
     if not filename:
         return None

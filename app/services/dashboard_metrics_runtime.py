@@ -2,6 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 import time
+from typing import Any
 
 from app.core import state_store as state_store_service
 from app.services import client_registry as client_registry_service
@@ -12,7 +13,7 @@ from app.services.dashboard_state_runtime import get_backups_status, get_observe
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
-def mark_home_page_client_active(ctx, client_id=None):
+def mark_home_page_client_active(ctx: Any, client_id: str | None = None) -> None:
     """Record recent home-page activity and wake cadence workers."""
     if client_id:
         client_registry_service.touch_client(ctx, client_id, channel="home_heartbeat")
@@ -21,7 +22,7 @@ def mark_home_page_client_active(ctx, client_id=None):
         ctx.metrics_cache_cond.notify_all()
 
 
-def has_active_home_page_clients(ctx):
+def has_active_home_page_clients(ctx: Any) -> bool:
     """Return whether home-page activity is still within the active TTL."""
     with ctx.metrics_cache_cond:
         last_seen = float(getattr(ctx, "home_page_last_seen", 0.0) or 0.0)
@@ -29,7 +30,7 @@ def has_active_home_page_clients(ctx):
     return (time.time() - last_seen) <= ttl_seconds
 
 
-def has_active_flask_app_clients(ctx):
+def has_active_flask_app_clients(ctx: Any) -> bool:
     """Return whether any shell page or SSE stream is actively consuming data."""
     now = time.time()
     with ctx.metrics_cache_cond:
@@ -45,7 +46,7 @@ def has_active_flask_app_clients(ctx):
     )
 
 
-def _maybe_refresh_idle_storage_cache(ctx):
+def _maybe_refresh_idle_storage_cache(ctx: Any) -> bool:
     """Refresh storage-related cache when server is on but no clients are active."""
     try:
         service_status = ctx.get_status()
@@ -64,7 +65,7 @@ def _maybe_refresh_idle_storage_cache(ctx):
         backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
         cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
         cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
-        cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
+        cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")  # type: ignore[no-untyped-call]
     except Exception as exc:
         ctx.log_mcweb_exception("idle_storage_refresh", exc)
         ctx.idle_storage_last_at = now
@@ -114,7 +115,7 @@ def _maybe_refresh_idle_storage_cache(ctx):
     return True
 
 
-def class_from_percent(value):
+def class_from_percent(value: float) -> str:
     """Map a numeric percent to dashboard severity class."""
     if value < 60:
         return "stat-green"
@@ -125,7 +126,7 @@ def class_from_percent(value):
     return "stat-red"
 
 
-def extract_percent(ctx, usage_text):
+def extract_percent(ctx: Any, usage_text: object) -> float | None:
     """Extract numeric percentage from human-readable usage text."""
     match = ctx.re.search(r"\(([\d.]+)%\)", usage_text or "")
     if not match:
@@ -136,7 +137,7 @@ def extract_percent(ctx, usage_text):
         return None
 
 
-def usage_class_from_text(ctx, usage_text):
+def usage_class_from_text(ctx: Any, usage_text: object) -> str:
     """Map usage text with percentage into dashboard severity class."""
     percent = extract_percent(ctx, usage_text)
     if percent is None:
@@ -144,44 +145,44 @@ def usage_class_from_text(ctx, usage_text):
     return class_from_percent(percent)
 
 
-def get_cpu_per_core_items(ctx, cpu_per_core):
+def get_cpu_per_core_items(ctx: Any, cpu_per_core: list[object]) -> list[dict[str, object]]:
     """Build per-core UI payload with normalized values/classes."""
-    items = []
+    items: list[dict[str, object]] = []
     for i, raw in enumerate(cpu_per_core):
         try:
             val = float(raw)
-        except ValueError:
+        except (TypeError, ValueError):
             items.append({"index": i, "value": raw, "class": "stat-red"})
             continue
         items.append({"index": i, "value": f"{val:.1f}", "class": class_from_percent(val)})
     return items
 
 
-def get_ram_usage_class(ctx, ram_usage):
+def get_ram_usage_class(ctx: Any, ram_usage: object) -> str:
     """Classify RAM usage text."""
     return usage_class_from_text(ctx, ram_usage)
 
 
-def get_storage_usage_class(ctx, storage_usage):
+def get_storage_usage_class(ctx: Any, storage_usage: object) -> str:
     """Classify storage usage text."""
     return usage_class_from_text(ctx, storage_usage)
 
 
-def get_cpu_frequency_class(ctx, cpu_frequency):
+def get_cpu_frequency_class(ctx: Any, cpu_frequency: object) -> str:
     """Classify CPU frequency availability."""
     return "stat-red" if cpu_frequency == "unknown" else "stat-green"
 
 
-def _players_is_int(players_online):
+def _players_is_int(players_online: object) -> bool:
     return str(players_online or "").strip().isdigit()
 
 
-def _players_display(players_online):
+def _players_display(players_online: object) -> str:
     value = str(players_online or "").strip()
     return value if value.isdigit() else "-"
 
 
-def _tick_display(tick_rate):
+def _tick_display(tick_rate: object) -> str:
     value = str(tick_rate or "").strip()
     if not value:
         return "-"
@@ -202,7 +203,7 @@ def _tick_display(tick_rate):
         return "-"
 
 
-def _get_backup_and_stale_counts(ctx):
+def _get_backup_and_stale_counts(ctx: Any) -> tuple[int, int, str]:
     backup_count = 0
     stale_worlds_count = 0
     try:
@@ -227,7 +228,13 @@ def _get_backup_and_stale_counts(ctx):
     return backup_count, stale_worlds_count, str(backup_dir)
 
 
-def _resolve_service_status_display(ctx, service_status, players_online, tick_rate, observed_display):
+def _resolve_service_status_display(
+    ctx: Any,
+    service_status: object,
+    players_online: object,
+    tick_rate: object,
+    observed_display: object,
+) -> str:
     raw = str(service_status or "").strip().lower()
     intent = ""
     try:
@@ -256,7 +263,7 @@ def _resolve_service_status_display(ctx, service_status, players_online, tick_ra
     return "Starting"
 
 
-def slow_metrics_ttl_seconds(ctx, service_status, *, active_clients=False):
+def slow_metrics_ttl_seconds(ctx: Any, service_status: object, *, active_clients: bool = False) -> float:
     """Return slow-metric cache TTL for current service state."""
     if active_clients:
         try:
@@ -269,11 +276,11 @@ def slow_metrics_ttl_seconds(ctx, service_status, *, active_clients=False):
             configured = collect_interval
         return min(collect_interval, configured)
     if service_status == "active":
-        return ctx.SLOW_METRICS_INTERVAL_ACTIVE_SECONDS
-    return ctx.SLOW_METRICS_INTERVAL_OFF_SECONDS
+        return float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", 5.0) or 5.0)
+    return float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", 15.0) or 15.0)
 
 
-def get_slow_metrics(ctx, service_status, *, active_clients=False):
+def get_slow_metrics(ctx: Any, service_status: object, *, active_clients: bool = False) -> dict[str, Any]:
     """Return cached slow metrics or refresh when TTL expires."""
     now = time.time()
     ttl = slow_metrics_ttl_seconds(ctx, service_status, active_clients=active_clients)
@@ -285,7 +292,7 @@ def get_slow_metrics(ctx, service_status, *, active_clients=False):
         ):
             return dict(ctx.slow_metrics_cache)
 
-    snapshot = {
+    snapshot: dict[str, Any] = {
         "cpu_per_core": ctx.get_cpu_usage_per_core(),
         "ram_usage": ctx.get_ram_usage(),
         "cpu_frequency": ctx.get_cpu_frequency(),
@@ -299,7 +306,7 @@ def get_slow_metrics(ctx, service_status, *, active_clients=False):
     return snapshot
 
 
-def collect_dashboard_metrics(ctx):
+def collect_dashboard_metrics(ctx: Any) -> dict[str, Any]:
     """Collect one full dashboard metrics snapshot."""
     active_clients = has_active_flask_app_clients(ctx)
     observed = get_observed_state(ctx)
@@ -346,7 +353,7 @@ def collect_dashboard_metrics(ctx):
     backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
     cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
     cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
-    cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
+    cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")  # type: ignore[no-untyped-call]
 
     is_running_display = str(service_status_display or "").strip().lower() == "running"
     idle_countdown = "--:--"
@@ -424,7 +431,7 @@ def collect_dashboard_metrics(ctx):
     }
 
 
-def publish_metrics_snapshot(ctx, snapshot):
+def publish_metrics_snapshot(ctx: Any, snapshot: dict[str, Any] | None) -> None:
     """Publish latest metrics snapshot to all stream listeners."""
     event_id = 0
     db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
@@ -446,16 +453,30 @@ def publish_metrics_snapshot(ctx, snapshot):
         ctx.metrics_cache_cond.notify_all()
 
 
-def _metrics_interval_seconds(ctx, snapshot):
+def _metrics_interval_seconds(ctx: Any, snapshot: dict[str, Any] | None) -> float:
     if has_active_flask_app_clients(ctx):
-        return ctx.METRICS_COLLECT_INTERVAL_SECONDS
+        return float(getattr(ctx, "METRICS_COLLECT_INTERVAL_SECONDS", 1.0) or 1.0)
     service_status = str((snapshot or {}).get("service_running_status", "") or "").strip().lower()
     if service_status == "active":
-        return getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", ctx.METRICS_COLLECT_INTERVAL_SECONDS)
-    return getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", ctx.METRICS_COLLECT_INTERVAL_OFF_SECONDS)
+        return float(
+            getattr(
+                ctx,
+                "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS",
+                getattr(ctx, "METRICS_COLLECT_INTERVAL_SECONDS", 1.0),
+            )
+            or 1.0
+        )
+    return float(
+        getattr(
+            ctx,
+            "SLOW_METRICS_INTERVAL_OFF_SECONDS",
+            getattr(ctx, "METRICS_COLLECT_INTERVAL_OFF_SECONDS", 15.0),
+        )
+        or 15.0
+    )
 
 
-def collect_and_publish_metrics(ctx):
+def collect_and_publish_metrics(ctx: Any) -> dict[str, Any] | None:
     """Collect dashboard metrics and publish them to cache/streams."""
     try:
         snapshot = collect_dashboard_metrics(ctx)
@@ -466,7 +487,7 @@ def collect_and_publish_metrics(ctx):
     return snapshot
 
 
-def metrics_collector_loop(ctx):
+def metrics_collector_loop(ctx: Any) -> None:
     """Background metrics loop that idles when there are no consumers."""
     process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
     always_collect = process_role == "worker"
@@ -489,7 +510,7 @@ def metrics_collector_loop(ctx):
                 ctx.metrics_cache_cond.wait(timeout=interval)
 
 
-def ensure_metrics_collector_started(ctx):
+def ensure_metrics_collector_started(ctx: Any) -> None:
     """Start metrics collector daemon once."""
     if ctx.metrics_collector_started:
         return
@@ -510,7 +531,7 @@ def ensure_metrics_collector_started(ctx):
         ctx.metrics_collector_started = True
 
 
-def get_cached_dashboard_metrics(ctx):
+def get_cached_dashboard_metrics(ctx: Any) -> dict[str, Any]:
     """Return last metrics snapshot, or a safe default payload."""
     with ctx.metrics_cache_cond:
         if ctx.metrics_cache_payload:

@@ -1,12 +1,13 @@
 """Session lifecycle and background watcher services."""
 import time
+from typing import Any
 
 from app.services import backup_scheduler_state as backup_scheduler_state_service
 from app.services import notification_service as notification_service
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
-def format_countdown(seconds):
+def format_countdown(seconds: float) -> str:
     """Format remaining seconds as ``MM:SS`` with floor at zero."""
     if seconds <= 0:
         return "00:00"
@@ -15,7 +16,11 @@ def format_countdown(seconds):
     return f"{mins:02d}:{secs:02d}"
 
 
-def get_idle_countdown(ctx, service_status=None, players_online=None):
+def get_idle_countdown(
+    ctx: Any,
+    service_status: str | None = None,
+    players_online: str | None = None,
+) -> str:
     """Return idle auto-stop countdown when server is active with zero players."""
     if service_status is None:
         service_status = ctx.get_status()
@@ -31,7 +36,7 @@ def get_idle_countdown(ctx, service_status=None, players_online=None):
     return format_countdown(remaining)
 
 
-def idle_player_watcher(ctx):
+def idle_player_watcher(ctx: Any) -> None:
     """Background loop that triggers auto-stop after sustained zero players."""
     while True:
         should_auto_stop = False
@@ -68,7 +73,7 @@ def idle_player_watcher(ctx):
         time.sleep(interval)
 
 
-def start_idle_player_watcher(ctx):
+def start_idle_player_watcher(ctx: Any) -> None:
     """Start the idle watcher daemon thread once per process."""
     start_worker(
         ctx,
@@ -83,7 +88,7 @@ def start_idle_player_watcher(ctx):
     )
 
 
-def backup_session_watcher(ctx):
+def backup_session_watcher(ctx: Any) -> None:
     """Background loop that triggers periodic and session-end backups."""
     while True:
         try:
@@ -170,7 +175,7 @@ def backup_session_watcher(ctx):
         time.sleep(interval)
 
 
-def start_backup_session_watcher(ctx):
+def start_backup_session_watcher(ctx: Any) -> None:
     """Start the backup session watcher daemon thread."""
     start_worker(
         ctx,
@@ -185,7 +190,7 @@ def start_backup_session_watcher(ctx):
     )
 
 
-def _run_low_storage_emergency_shutdown(ctx):
+def _run_low_storage_emergency_shutdown(ctx: Any) -> None:
     """Warn players via RCON, wait 30s, then force an emergency shutdown backup."""
     try:
         warning = (
@@ -212,7 +217,7 @@ def _run_low_storage_emergency_shutdown(ctx):
             ctx.storage_emergency_active = False
 
 
-def storage_safety_watcher(ctx):
+def storage_safety_watcher(ctx: Any) -> None:
     """Trigger emergency shutdown workflow when storage stays below safe threshold."""
     while True:
         try:
@@ -267,7 +272,7 @@ def storage_safety_watcher(ctx):
         time.sleep(interval)
 
 
-def start_storage_safety_watcher(ctx):
+def start_storage_safety_watcher(ctx: Any) -> None:
     """Start the low-storage safety watcher daemon thread."""
     start_worker(
         ctx,
@@ -282,7 +287,7 @@ def start_storage_safety_watcher(ctx):
     )
 
 
-def initialize_session_tracking(ctx):
+def initialize_session_tracking(ctx: Any) -> None:
     """Initialize session file and periodic backup counters on process startup."""
     ctx.ensure_session_file()
     backup_state = ctx.backup_state
@@ -303,7 +308,7 @@ def initialize_session_tracking(ctx):
         backup_state.periodic_runs = int(max(0, time.time() - session_start) // ctx.BACKUP_INTERVAL_SECONDS)
 
 
-def status_state_note(ctx):
+def status_state_note(ctx: Any) -> str:
     """Return compact status note for session-state related error responses."""
     try:
         service_status = ctx.get_status()

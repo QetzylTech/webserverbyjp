@@ -1,11 +1,15 @@
 """Service status projection use cases."""
 
+from __future__ import annotations
 
-def _players_known(players_online):
+from typing import Any
+
+
+def _players_known(players_online: Any) -> bool:
     return isinstance(players_online, str) and players_online.isdigit()
 
 
-def _startup_ready(ctx, raw_status, players_online):
+def _startup_ready(ctx: Any, raw_status: str, players_online: Any) -> bool:
     if raw_status != "active" or not _players_known(players_online):
         return False
     try:
@@ -14,7 +18,7 @@ def _startup_ready(ctx, raw_status, players_online):
         return False
 
 
-def get_service_status_display(ctx, service_status, players_online):
+def get_service_status_display(ctx: Any, service_status: Any, players_online: Any) -> str:
     intent = str(ctx.get_service_status_intent() or "").strip().lower()
     raw = str(service_status or "").strip().lower()
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
@@ -40,7 +44,7 @@ def get_service_status_display(ctx, service_status, players_online):
     return "Off"
 
 
-def get_service_status_class(service_status_display):
+def get_service_status_class(service_status_display: str) -> str:
     if service_status_display == "Running":
         return "stat-green"
     if service_status_display == "Starting":

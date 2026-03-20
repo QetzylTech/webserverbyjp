@@ -1,9 +1,19 @@
 """Device name mapping helpers."""
 
+from pathlib import Path
+from typing import Any, Callable, MutableMapping
+
 from app.core import state_store as state_store_service
 
 
-def get_device_name_map(csv_path, cache_lock, cache, cache_mtime_ns, log_exception, app_state_db_path=None):
+def get_device_name_map(
+    csv_path: object,
+    cache_lock: Any,
+    cache: MutableMapping[str, str],
+    cache_mtime_ns: list[object],
+    log_exception: Callable[..., object],
+    app_state_db_path: Path | None = None,
+) -> dict[str, str]:
     """Return cached IP -> device-name map from SQLite."""
     try:
         db_mtime_ns = app_state_db_path.stat().st_mtime_ns if app_state_db_path else None
@@ -14,8 +24,8 @@ def get_device_name_map(csv_path, cache_lock, cache, cache_mtime_ns, log_excepti
         if cache_mtime_ns[0] == cache_token:
             return dict(cache)
 
-    mapping = {}
-    fallmap = {}
+    mapping: dict[str, str] = {}
+    fallmap: dict[str, str] = {}
     if app_state_db_path:
         try:
             fallmap = state_store_service.load_fallmap(app_state_db_path)

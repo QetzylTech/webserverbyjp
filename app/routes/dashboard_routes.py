@@ -1,6 +1,8 @@
 """Route registration for the shell-first MC web dashboard."""
+# mypy: disable-error-code=untyped-decorator
 import threading
 import time
+from typing import Any
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
 from app.core import profiling
@@ -17,7 +19,7 @@ from app.routes.shell_page import render_shell_page as render_shell_page_helper
 from app.services import maintenance_state_store as maintenance_state_store_service
 
 
-def register_routes(app, state):
+def register_routes(app: Any, state: dict[str, Any]) -> None:
     """Register top-level dashboard routes and wire the supporting route modules."""
     restore_pane_alert_lock = threading.Lock()
     restore_pane_alert_until_ref = [0.0]
@@ -25,7 +27,7 @@ def register_routes(app, state):
     restore_pane_alert_ip_ref = [""]
     restore_pane_alert_client_id_ref = [""]
 
-    def _normalized_ip(value):
+    def _normalized_ip(value: object) -> str:
         raw = str(value or "").strip()
         if not raw:
             return ""
@@ -33,7 +35,7 @@ def register_routes(app, state):
             raw = raw.split(",", 1)[0].strip()
         return raw
 
-    def _current_request_ip():
+    def _current_request_ip() -> str:
         current_ip = ""
         try:
             current_ip = _normalized_ip(state["_get_client_ip"]())
@@ -45,10 +47,10 @@ def register_routes(app, state):
             current_ip = _normalized_ip(request.remote_addr)
         return current_ip
 
-    def _current_request_client_id():
+    def _current_request_client_id() -> str:
         return str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
 
-    def _build_nav_alert_state(current_ip="", current_client_id=""):
+    def _build_nav_alert_state(current_ip: str = "", current_client_id: str = "") -> dict[str, object]:
         now = time.time()
         with restore_pane_alert_lock:
             active = now <= restore_pane_alert_until_ref[0]
@@ -78,7 +80,7 @@ def register_routes(app, state):
             "cleanup_missed_runs": cleanup_missed_runs,
         }
 
-    def _get_nav_alert_state_from_request():
+    def _get_nav_alert_state_from_request() -> dict[str, object]:
         return _build_nav_alert_state(
             current_ip=_current_request_ip(),
             current_client_id=_current_request_client_id(),
@@ -86,7 +88,7 @@ def register_routes(app, state):
 
 
     @app.route("/")
-    def index():
+    def index() -> Any:
         """Render the persistent dashboard shell or the home fragment payload."""
         home = dashboard_queries_service.get_dashboard_shell_model(state, request.args.get("msg", ""))
         return render_shell_page_helper(app, state, render_template, 
@@ -101,7 +103,7 @@ def register_routes(app, state):
         )
 
     @app.route("/home-heartbeat", methods=["POST"])
-    def home_heartbeat():
+    def home_heartbeat() -> tuple[str, int]:
         """Refresh the short-lived activity marker used by the home-page worker."""
         client_id = _current_request_client_id()
         marker = state["_mark_home_page_client_active"]
@@ -112,7 +114,7 @@ def register_routes(app, state):
         return ("", 204)
 
     @app.route("/ui-error-log", methods=["POST"])
-    def ui_error_log():
+    def ui_error_log() -> tuple[str, int]:
         """Capture client-side modal failures in the server log."""
         payload = request.get_json(silent=True) or {}
         error_code = str(payload.get("error_code", "") or "").strip()
@@ -128,12 +130,12 @@ def register_routes(app, state):
         return ("", 204)
 
     @app.route("/favicon.ico")
-    def favicon():
+    def favicon() -> Any:
         """Redirect the browser to the configured favicon asset."""
         return redirect(state["FAVICON_URL"])
 
     @app.route("/sw.js")
-    def service_worker():
+    def service_worker() -> Any:
         """Serve root-scoped service worker for offline shell/recovery."""
         response = send_from_directory(str(app.static_folder), "service_worker.js")
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -142,7 +144,7 @@ def register_routes(app, state):
         return response
 
     @app.route("/readme")
-    def readme_page():
+    def readme_page() -> Any:
         """Render the documentation shell page or its client-side fragment."""
         return render_shell_page_helper(app, state, render_template, 
             "fragments/documentation_fragment.html",
@@ -151,22 +153,22 @@ def register_routes(app, state):
         )
 
     @app.route("/doc/server_setup_doc.md")
-    def readme_markdown():
+    def readme_markdown() -> Any:
         """Serve the markdown source used by the documentation page."""
         return send_from_directory(str(state["DOCS_DIR"]), "server_setup_doc.md")
 
     @app.route("/doc/readme-url")
-    def readme_url_config():
+    def readme_url_config() -> Any:
         """Return the configured readme URL used by the documentation shell."""
         return jsonify({"url": state["DOC_README_URL"]})
 
     @app.route("/observed-state")
-    def observed_state():
+    def observed_state() -> Any:
         """Return observed runtime state derived from service/filesystem probes."""
         return jsonify(dashboard_queries_service.get_observed_state_model(state))
 
     @app.route("/consistency-check")
-    def consistency_check():
+    def consistency_check() -> Any:
         """Return runtime consistency/invariant report for diagnostics/admin checks."""
         auto_repair_raw = str(request.args.get("auto_repair", "") or "").strip().lower()
         auto_repair = auto_repair_raw in {"1", "true", "yes", "on"}
@@ -178,7 +180,7 @@ def register_routes(app, state):
         return jsonify(dashboard_queries_service.get_consistency_report_model(state, auto_repair=auto_repair))
 
     @app.route("/profiling-summary")
-    def profiling_summary():
+    def profiling_summary() -> Any:
         """Return in-process profiling summary when MCWEB_PROFILE is enabled."""
         if not profiling.ENABLED:
             return jsonify({"ok": False, "error": "profiling_disabled", "message": "Profiling is disabled."}), 404
@@ -189,12 +191,12 @@ def register_routes(app, state):
         return jsonify({"ok": True, "profiling": profiling.summary()})
 
     @app.route("/device-name-map")
-    def device_name_map():
+    def device_name_map() -> Any:
         """Return the current IP-to-device-name mapping for client-side rendering."""
         return jsonify({"map": state["get_device_name_map"]()})
 
     @app.route("/maintenance/nav-alert/restore-pane-open", methods=["POST"])
-    def maintenance_nav_alert_restore_pane_open():
+    def maintenance_nav_alert_restore_pane_open() -> tuple[str, int]:
         """Record a short-lived restore-pane activity signal for cross-client nav attention."""
         payload = request.get_json(silent=True) or {}
         filename = str(payload.get("filename", "") or "").strip()
@@ -212,20 +214,20 @@ def register_routes(app, state):
         return ("", 204)
 
     @app.route("/maintenance/nav-alert/state")
-    def maintenance_nav_alert_state():
+    def maintenance_nav_alert_state() -> Any:
         """Return nav attention state for the current request identity."""
         return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
-    register_file_routes(app, state)
-    register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
-    register_notification_routes(app, state)
-    register_maintenance_routes(app, state)
-    register_panel_settings_routes(app, state)
+    register_file_routes(app, state)  # type: ignore[no-untyped-call]
+    register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)  # type: ignore[no-untyped-call]
+    register_notification_routes(app, state)  # type: ignore[no-untyped-call]
+    register_maintenance_routes(app, state)  # type: ignore[no-untyped-call]
+    register_panel_settings_routes(app, state)  # type: ignore[no-untyped-call]
     register_control_routes(
         app,
         state,
         run_cleanup_event_if_enabled=run_cleanup_event_if_enabled,
-    )
+    )  # type: ignore[no-untyped-call]
 
 
 

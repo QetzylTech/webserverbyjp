@@ -1,23 +1,29 @@
 """Shared helper functions for restore workflow operations."""
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 import os
 import re
 import secrets
 import time
+from typing import Any
 import uuid
 
 from app.core import state_store as state_store_service
 from app.ports import ports
 
-def run_sudo(ctx, cmd):
-    """Run command via non-interactive sudo."""
-    return ports.service_control.run_elevated(cmd)
+
+JsonDict = dict[str, object]
 
 
-def stop_service_systemd(ctx):
-    """Stop the systemd service and wait briefly for an off-state."""
+def run_elevated_command(ctx: Any, cmd: list[str] | tuple[str, ...]) -> Any:
+    """Run a privileged command through the platform service adapter."""
+    return ports.service_control.run_elevated(list(cmd))
+
+
+def stop_service_runtime(ctx: Any) -> bool:
+    """Stop the configured runtime service and wait briefly for an off-state."""
     try:
         ports.service_control.service_stop(
             ctx.SERVICE,
@@ -26,7 +32,7 @@ def stop_service_systemd(ctx):
         )
         ctx.invalidate_status_cache()
     except Exception as exc:
-        ctx.log_mcweb_exception("stop_service_systemd", exc)
+        ctx.log_mcweb_exception("stop_service_runtime", exc)
 
     wait_seconds = float(getattr(ctx, "OPERATION_STOP_TIMEOUT_SECONDS", 30.0) or 30.0)
     wait_seconds = max(10.0, min(wait_seconds, 120.0))
@@ -38,7 +44,7 @@ def stop_service_systemd(ctx):
     return ctx.get_status() in ctx.OFF_STATES
 
 
-def start_service(ctx):
+def start_service(ctx: Any) -> Any:
     """Start the configured service and return command result object."""
     return ports.service_control.service_start(
         ctx.SERVICE,
@@ -47,7 +53,7 @@ def start_service(ctx):
     )
 
 
-def ensure_session_file(ctx):
+def ensure_session_file(ctx: Any) -> bool:
     """Ensure the session tracking file exists and is writable."""
     try:
         session_file = ctx.session_state.session_file
@@ -58,11 +64,21 @@ def ensure_session_file(ctx):
         return False
 
 
-def write_session_start_time(ctx, timestamp=None):
+def write_session_start_time(ctx: Any, timestamp: object = None) -> float | None:
     """Write session start epoch seconds and return the stored value."""
     if not ensure_session_file(ctx):
         return None
-    ts = time.time() if timestamp is None else float(timestamp)
+    if timestamp is None:
+        ts = time.time()
+    elif isinstance(timestamp, int | float):
+        ts = float(timestamp)
+    elif isinstance(timestamp, str):
+        try:
+            ts = float(timestamp)
+        except ValueError:
+            return None
+    else:
+        return None
     try:
         ports.filesystem.write_text(ctx.session_state.session_file, f"{ts:.6f}\n", encoding="utf-8")
     except OSError:
@@ -70,7 +86,7 @@ def write_session_start_time(ctx, timestamp=None):
     return ts
 
 
-def clear_session_start_time(ctx):
+def clear_session_start_time(ctx: Any) -> bool:
     """Clear the session tracking file."""
     if not ensure_session_file(ctx):
         return False
@@ -81,13 +97,13 @@ def clear_session_start_time(ctx):
     return True
 
 
-def reset_backup_schedule_state(ctx):
+def reset_backup_schedule_state(ctx: Any) -> None:
     """Reset periodic backup run counter for current session."""
     with ctx.backup_state.lock:
         ctx.backup_state.periodic_runs = 0
 
 
-def is_backup_running(ctx, include_run_lock=True):
+def is_backup_running(ctx: Any, include_run_lock: bool = True) -> bool:
     """Return whether backup script reports active run via state file."""
     if include_run_lock:
         backup_state = getattr(ctx, "backup_state", None)
@@ -126,12 +142,12 @@ def is_backup_running(ctx, include_run_lock=True):
             pass
     return True
 
-def _restore_failed(message, error="restore_failed"):
+def _restore_failed(message: object, error: str = "restore_failed") -> JsonDict:
     """Return normalized restore failure payload."""
     return {"ok": False, "error": error, "message": message}
 
 
-def _detect_server_properties_path(ctx):
+def _detect_server_properties_path(ctx: Any) -> Path | None:
     """Return first server.properties path candidate that exists."""
     for path in ctx.SERVER_PROPERTIES_CANDIDATES:
         candidate = Path(path)
@@ -140,7 +156,7 @@ def _detect_server_properties_path(ctx):
     return None
 
 
-def _parse_server_properties_kv(text):
+def _parse_server_properties_kv(text: str) -> dict[str, str]:
     """Parse KEY=VALUE lines from server.properties style content."""
     kv = {}
     for raw in text.splitlines():
@@ -152,7 +168,7 @@ def _parse_server_properties_kv(text):
     return kv
 
 
-def _update_property_text(original_text, key, value):
+def _update_property_text(original_text: str, key: str, value: str) -> str:
     """Replace/add one server.properties key assignment in text."""
     lines = original_text.splitlines()
     target = f"{key}="
@@ -169,7 +185,7 @@ def _update_property_text(original_text, key, value):
     return "\n".join(out) + "\n"
 
 
-def ensure_startup_rcon_settings(ctx):
+def ensure_startup_rcon_settings(ctx: Any) -> JsonDict:
     """Ensure startup RCON settings are present and rotate password each start."""
     props_path = _detect_server_properties_path(ctx)
     if props_path is None:
@@ -203,7 +219,13 @@ def ensure_startup_rcon_settings(ctx):
     return {"ok": True, "path": str(props_path), "rcon_port": port_value}
 
 
-def _record_restore_history(ctx, backup_name, old_world_dir, archived_old_world_dir, new_world_dir):
+def _record_restore_history(
+    ctx: Any,
+    backup_name: object,
+    old_world_dir: object,
+    archived_old_world_dir: object,
+    new_world_dir: object,
+) -> bool:
     """Append restore world switch reference to data/restore.history."""
     try:
         data_dir = Path(ctx.session_state.session_file).parent
@@ -221,7 +243,7 @@ def _record_restore_history(ctx, backup_name, old_world_dir, archived_old_world_
         return False
 
 
-def _sanitize_backup_name_component(value):
+def _sanitize_backup_name_component(value: object) -> str:
     """Sanitize filename component for backup/pre-restore artifact names."""
     safe = re.sub(r"[^A-Za-z0-9(). _-]+", "_", str(value or "")).strip()
     return safe or "world"
@@ -232,7 +254,7 @@ _RESTORE_ID_BODY_LEN = 5
 _RESTORE_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
-def _normalize_world_base_name(value):
+def _normalize_world_base_name(value: object) -> str:
     """Normalize a world-name base by collapsing separators."""
     text = str(value or "").strip()
     if not text:
@@ -242,7 +264,7 @@ def _normalize_world_base_name(value):
     return text or "World"
 
 
-def _derive_restore_base_name(backup_filename, restore_source):
+def _derive_restore_base_name(backup_filename: object, restore_source: object) -> str:
     """Derive a readable base name from selected backup filename and extracted source."""
     stem = Path(str(backup_filename or "")).stem.strip()
     stem = re.sub(
@@ -261,7 +283,7 @@ def _derive_restore_base_name(backup_filename, restore_source):
     return normalized
 
 
-def _compose_restore_world_name(base_name, prefix, code):
+def _compose_restore_world_name(base_name: object, prefix: str, code: str) -> str:
     """Build a level-name suffixing with (Gx<id>) or (Rx<id>) and enforce 32-char max."""
     normalized = _normalize_world_base_name(base_name)
     suffix = f" ({prefix}{code})"
@@ -272,7 +294,7 @@ def _compose_restore_world_name(base_name, prefix, code):
     return f"{trimmed}{suffix}"
 
 
-def _new_restore_code(ctx):
+def _new_restore_code(ctx: Any) -> str:
     """Generate a unique 5-char alphanumeric restore code tracked in SQLite."""
     db_path = Path(ctx.APP_STATE_DB_PATH)
     for _ in range(128):
@@ -282,7 +304,13 @@ def _new_restore_code(ctx):
     return uuid.uuid4().hex[:_RESTORE_ID_BODY_LEN]
 
 
-def _archive_old_world_dir(ctx, old_world_dir, archived_world_name, *, progress=None):
+def _archive_old_world_dir(
+    ctx: Any,
+    old_world_dir: Path,
+    archived_world_name: object,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[Path | None, str]:
     """Move previous world directory to data/old_worlds and return destination."""
     data_dir = Path(ctx.session_state.session_file).parent
     old_worlds_dir = data_dir / "old_worlds"
@@ -298,7 +326,7 @@ def _archive_old_world_dir(ctx, old_world_dir, archived_world_name, *, progress=
         archived_old_world_dir = old_worlds_dir / f"{base_name}_{suffix}"
         suffix += 1
 
-    def emit(message):
+    def emit(message: str) -> None:
         if not progress:
             return
         try:
@@ -327,12 +355,12 @@ def _archive_old_world_dir(ctx, old_world_dir, archived_world_name, *, progress=
     return archived_old_world_dir, ""
 
 
-def _restore_source_from_extraction(ctx, extract_root):
+def _restore_source_from_extraction(ctx: Any, extract_root: Path) -> Path | None:
     """Resolve the extracted world root directory from a backup zip."""
     expected_abs = str(ctx.WORLD_DIR).lstrip("/\\")
     candidates = [
         extract_root / expected_abs,
-        extract_root / ctx.WORLD_DIR.name,
+        extract_root / str(ctx.WORLD_DIR.name),
     ]
     for candidate in candidates:
         if candidate.exists() and candidate.is_dir():
@@ -343,6 +371,7 @@ def _restore_source_from_extraction(ctx, extract_root):
 
     children = [p for p in extract_root.iterdir() if p.is_dir()]
     if len(children) == 1:
-        return children[0]
+        first_child = children[0]
+        return first_child if isinstance(first_child, Path) else None
     return None
 

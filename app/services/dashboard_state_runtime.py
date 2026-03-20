@@ -3,12 +3,30 @@ import copy
 from pathlib import Path
 import threading
 import time
+from typing import Any, TypedDict
 
 from app.core import profiling
 from app.core import state_store as state_store_service
 
+
+JsonDict = dict[str, object]
+
+
+class _ObservedOpsCache(TypedDict):
+    db_path: str
+    cached_at: float
+    latest_start: JsonDict | None
+    latest_stop: JsonDict | None
+    latest_restore: JsonDict | None
+
+
+class _ObservedStateCache(TypedDict):
+    cached_at: float
+    payload: JsonDict | None
+
+
 _OBSERVED_OPS_CACHE_LOCK = threading.Lock()
-_OBSERVED_OPS_CACHE = {
+_OBSERVED_OPS_CACHE: _ObservedOpsCache = {
     "db_path": "",
     "cached_at": 0.0,
     "latest_start": None,
@@ -18,13 +36,13 @@ _OBSERVED_OPS_CACHE = {
 _OBSERVED_OPS_CACHE_TTL_SECONDS = 1.5
 _OBSERVED_STATE_CACHE_LOCK = threading.Lock()
 _OBSERVED_STATE_CACHE_TTL_SECONDS = 1.25
-_OBSERVED_STATE_CACHE = {
+_OBSERVED_STATE_CACHE: _ObservedStateCache = {
     "cached_at": 0.0,
     "payload": None,
 }
 
 
-def _get_cached_latest_operations(db_path):
+def _get_cached_latest_operations(db_path: str | Path) -> tuple[JsonDict | None, JsonDict | None, JsonDict | None]:
     """Return cached latest operation rows for start/stop/restore within a short TTL."""
     now = time.time()
     key = str(db_path)
@@ -49,14 +67,14 @@ def _get_cached_latest_operations(db_path):
     return latest_start, latest_stop, latest_restore
 
 
-def invalidate_observed_state_cache(ctx=None):
+def invalidate_observed_state_cache(ctx: object = None) -> None:
     """Invalidate observed-state cache after mutating operations."""
     with _OBSERVED_STATE_CACHE_LOCK:
         _OBSERVED_STATE_CACHE["cached_at"] = 0.0
         _OBSERVED_STATE_CACHE["payload"] = None
 
 
-def get_backups_status(ctx):
+def get_backups_status(ctx: Any) -> str:
     """Return backup directory health and current zip count summary."""
     if not ctx.BACKUP_DIR.exists() or not ctx.BACKUP_DIR.is_dir():
         return "missing"
@@ -64,13 +82,13 @@ def get_backups_status(ctx):
     return f"ready ({zip_count} zip files)"
 
 
-def _active_operation(op):
+def _active_operation(op: object) -> bool:
     if not isinstance(op, dict):
         return False
     return str(op.get("status", "") or "").strip().lower() in {"intent", "in_progress"}
 
 
-def _transition_intent(ctx):
+def _transition_intent(ctx: Any) -> str:
     getter = getattr(ctx, "get_service_status_intent", None)
     if not callable(getter):
         return ""
@@ -80,7 +98,14 @@ def _transition_intent(ctx):
         return ""
 
 
-def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, latest_stop, latest_restore):
+def _resolve_observed_service_status(
+    ctx: Any,
+    service_status_raw: object,
+    *,
+    latest_start: JsonDict | None,
+    latest_stop: JsonDict | None,
+    latest_restore: JsonDict | None,
+) -> str:
     raw = str(service_status_raw or "inactive").strip().lower()
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
     if raw in off_states:
@@ -101,7 +126,7 @@ def _resolve_observed_service_status(ctx, service_status_raw, *, latest_start, l
     return raw
 
 
-def get_observed_state(ctx):
+def get_observed_state(ctx: Any) -> JsonDict:
     """Return runtime-observed snapshot from service/filesystem and latest operations.
 
     This read path is intentionally cached. That reduces repeated DB and probe work, but it
@@ -122,9 +147,9 @@ def get_observed_state(ctx):
             world_dir = Path(getattr(ctx, "WORLD_DIR", ""))
             backup_dir = Path(getattr(ctx, "BACKUP_DIR", ""))
             snapshot_dir = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
-        latest_start = None
-        latest_stop = None
-        latest_restore = None
+        latest_start: JsonDict | None = None
+        latest_stop: JsonDict | None = None
+        latest_restore: JsonDict | None = None
         try:
             db_path = Path(ctx.APP_STATE_DB_PATH)
             latest_start, latest_stop, latest_restore = _get_cached_latest_operations(db_path)
@@ -146,7 +171,7 @@ def get_observed_state(ctx):
     )
     players_online = ctx.get_players_online()
     service_status_display = ctx.get_service_status_display(service_status_raw, players_online)
-    observed_payload = {
+    observed_payload: JsonDict = {
         "service_status_raw": service_status_raw,
         "service_status_display": service_status_display,
         "service_status_class": ctx.get_service_status_class(service_status_display),

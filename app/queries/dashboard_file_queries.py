@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from collections import deque
+from datetime import tzinfo
 import gzip
 from pathlib import Path
+from typing import Any
 
 
-def read_view_file_content(file_path, safe_name, *, max_bytes=2_000_000):
+def read_view_file_content(file_path: Path, safe_name: str, *, max_bytes: int = 2_000_000) -> tuple[str | None, str | None]:
     """Read text content from a log/file path with size and gzip handling."""
     try:
         if safe_name.lower().endswith(".gz"):
-            tail_chunks = deque()
+            tail_chunks: deque[str] = deque()
             tail_len = 0
             truncated = False
             with gzip.open(file_path, "rt", encoding="utf-8", errors="ignore") as f:
@@ -47,12 +49,12 @@ def read_view_file_content(file_path, safe_name, *, max_bytes=2_000_000):
         return None, "Unable to read file."
 
 
-def snapshot_root_dir(state):
+def snapshot_root_dir(state: Any) -> Path:
     """Return the snapshot root directory for the current runtime."""
     return Path(getattr(state, "AUTO_SNAPSHOT_DIR", "") or (state["BACKUP_DIR"] / "snapshots"))
 
 
-def resolve_snapshot_dir(state, snapshot_name):
+def resolve_snapshot_dir(state: Any, snapshot_name: str) -> tuple[Path | None, str]:
     """Validate and resolve a snapshot directory request."""
     if not snapshot_name:
         return None, ""
@@ -72,7 +74,7 @@ def resolve_snapshot_dir(state, snapshot_name):
     return candidate_resolved, safe_name
 
 
-def log_file_source_spec(state, source):
+def log_file_source_spec(state: Any, source: str) -> dict[str, Any] | None:
     """Return the configured log-file source spec for a requested key."""
     normalized = str(source or "").strip().lower()
     log_dir = state["MCWEB_LOG_FILE"].parent
@@ -127,11 +129,11 @@ def log_file_source_spec(state, source):
     return None
 
 
-def log_file_items_from_spec(state, spec):
+def log_file_items_from_spec(state: Any, spec: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Return merged file items for a log source spec."""
     if not spec:
         return []
-    merged_by_name = {}
+    merged_by_name: dict[str, dict[str, Any]] = {}
     for pattern in spec["patterns"]:
         for item in state["_list_download_files"](spec["base_dir"], pattern, state["DISPLAY_TZ"]):
             merged_by_name[item["name"]] = dict(item)
@@ -140,7 +142,7 @@ def log_file_items_from_spec(state, spec):
     return items
 
 
-def resolve_log_file(state, source, filename):
+def resolve_log_file(state: Any, source: str, filename: str) -> tuple[dict[str, Any] | None, str | None]:
     """Validate a log-file request and return the spec + safe filename."""
     spec = log_file_source_spec(state, source)
     if spec is None:

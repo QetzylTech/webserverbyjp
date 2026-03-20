@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 from app.core import state_store as state_store_service
 
@@ -22,11 +23,11 @@ _REQUIRED_DB_TABLES = {
 }
 
 
-def _utc_stamp():
+def _utc_stamp() -> str:
     return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
 
-def _archive_incompatible(path, *, data_dir, old_dir):
+def _archive_incompatible(path: Path, *, data_dir: Path, old_dir: Path) -> Path:
     rel = path.relative_to(data_dir)
     destination = old_dir / rel.parent / f"{rel.name}.{_utc_stamp()}"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -34,11 +35,19 @@ def _archive_incompatible(path, *, data_dir, old_dir):
     return destination
 
 
-def _ensure_parent(path):
+def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _ensure_text_file(path, default_text, validator, *, data_dir, old_dir, log):
+def _ensure_text_file(
+    path: Path,
+    default_text: str,
+    validator: Callable[[str], bool],
+    *,
+    data_dir: Path,
+    old_dir: Path,
+    log: Callable[[str, str], object],
+) -> None:
     _ensure_parent(path)
     if not path.exists():
         path.write_text(default_text, encoding="utf-8")
@@ -59,7 +68,7 @@ def _ensure_text_file(path, default_text, validator, *, data_dir, old_dir, log):
     path.write_text(default_text, encoding="utf-8")
 
 
-def _is_session_text_valid(text):
+def _is_session_text_valid(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
         return True
@@ -69,11 +78,11 @@ def _is_session_text_valid(text):
         return False
 
 
-def _is_backup_state_text_valid(text):
+def _is_backup_state_text_valid(text: str) -> bool:
     return str(text or "").strip().lower() in {"", "true", "false"}
 
 
-def _is_cleanup_non_normal_valid(text):
+def _is_cleanup_non_normal_valid(text: str) -> bool:
     try:
         payload = json.loads(text or "{}")
     except Exception:
@@ -89,7 +98,7 @@ def _is_cleanup_non_normal_valid(text):
     return True
 
 
-def _is_json_dict_valid(text):
+def _is_json_dict_valid(text: str) -> bool:
     raw = str(text or "").strip()
     if not raw:
         return True
@@ -100,7 +109,7 @@ def _is_json_dict_valid(text):
     return isinstance(payload, dict)
 
 
-def _is_db_compatible(db_path):
+def _is_db_compatible(db_path: Path) -> bool:
     if not db_path.exists():
         return False
     if db_path.is_dir():
@@ -125,7 +134,13 @@ def _is_db_compatible(db_path):
     return _REQUIRED_DB_TABLES.issubset(tables)
 
 
-def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcweb_exception):
+def ensure_data_bootstrap(
+    *,
+    data_dir: str | Path,
+    app_state_db_path: str | Path,
+    log_mcweb_log: Callable[..., object],
+    log_mcweb_exception: Callable[..., object],
+) -> None:
     """Ensure required data files exist and are compatible with current app schema."""
     data_dir = Path(data_dir)
     db_path = Path(app_state_db_path)
@@ -133,7 +148,7 @@ def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcw
     data_dir.mkdir(parents=True, exist_ok=True)
     old_dir.mkdir(parents=True, exist_ok=True)
 
-    def _log(event, message):
+    def _log(event: str, message: object) -> None:
         try:
             log_mcweb_log(event, command="data-bootstrap", rejection_message=str(message)[:700])
         except Exception:
@@ -192,7 +207,7 @@ def ensure_data_bootstrap(*, data_dir, app_state_db_path, log_mcweb_log, log_mcw
             statuses=("intent", "in_progress"),
             limit=200,
         )
-        restore_updates = []
+        restore_updates: list[dict[str, object]] = []
         for op in active_ops:
             if not isinstance(op, dict):
                 continue

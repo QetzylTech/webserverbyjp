@@ -1,15 +1,26 @@
 """Shared shell/fragment rendering helpers for dashboard routes."""
 
+from typing import Any, Callable
+
 from flask import request
 from markupsafe import Markup
 
 
-def fragment_response_requested():
+def fragment_response_requested() -> bool:
     """Return whether the caller requested a fragment-only response."""
     return str(request.headers.get("X-MCWEB-Fragment", "") or "").strip() == "1"
 
 
-def render_shell_page(app, state, render_template_fn, fragment_template, *, current_page, page_title, **context):
+def render_shell_page(
+    app: Any,
+    state: Any,
+    render_template_fn: Callable[..., Any],
+    fragment_template: str,
+    *,
+    current_page: str,
+    page_title: str,
+    **context: Any,
+) -> Any:
     """Render a live fragment payload or wrap it in the persistent app shell."""
     fragment_html = render_template_fn(fragment_template, current_page=current_page, **context)
     if fragment_response_requested():

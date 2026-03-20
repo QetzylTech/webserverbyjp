@@ -1,7 +1,10 @@
 """Build runtime delegates from explicit service method maps."""
 
+from __future__ import annotations
+
 import re
 import time
+from typing import Any, Callable
 
 _DASHBOARD_FILE_METHODS = (
     "_mark_file_page_client_active",
@@ -13,8 +16,8 @@ _DASHBOARD_FILE_METHODS = (
 _CONTROL_METHODS = (
     "set_service_status_intent",
     "get_service_status_intent",
-    "stop_service_systemd",
-    "run_sudo",
+    "stop_service_runtime",
+    "run_elevated_command",
     "validate_sudo_password",
     "validate_admin_password",
     "graceful_stop_minecraft",
@@ -97,54 +100,49 @@ _SESSION_WATCHER_PLAIN_METHODS = ("format_countdown",)
 
 
 def build_runtime_bindings(
-    namespace,
+    namespace: dict[str, Any],
     *,
-    dashboard_file_runtime_service,
-    dashboard_state_runtime_service,
-    dashboard_metrics_runtime_service,
-    dashboard_operations_runtime_service,
-    control_plane_service,
-    session_store_service,
-    minecraft_runtime_service,
-    session_watchers_service,
-):
+    dashboard_file_runtime_service: Any,
+    dashboard_state_runtime_service: Any,
+    dashboard_metrics_runtime_service: Any,
+    dashboard_operations_runtime_service: Any,
+    control_plane_service: Any,
+    minecraft_runtime_service: Any,
+    session_watchers_service: Any,
+) -> dict[str, Callable[..., Any] | Any]:
     """Return namespace-aware delegates for runtime state and services."""
     ns = namespace
 
-    def _state():
+    def _state() -> Any:
         return ns["STATE"].ctx
 
-    def _ctx_delegate(service, method_name):
+    def _ctx_delegate(service: Any, method_name: str) -> Callable[..., Any]:
         method = getattr(service, method_name)
 
-        def bound(*args, **kwargs):
+        def bound(*args: Any, **kwargs: Any) -> Any:
             return method(_state(), *args, **kwargs)
 
         return bound
 
-    def _session_delegate(method_name):
-        method = getattr(session_store_service, method_name)
-
-        def bound(*args, **kwargs):
-            return method(control_plane_service, _state(), *args, **kwargs)
-
-        return bound
-
-    def _plain_delegate(service, method_name):
+    def _plain_delegate(service: Any, method_name: str) -> Callable[..., Any]:
         method = getattr(service, method_name)
 
-        def bound(*args, **kwargs):
+        def bound(*args: Any, **kwargs: Any) -> Any:
             return method(*args, **kwargs)
 
         return bound
 
-    def _bind_methods(service, method_names, binder):
+    def _bind_methods(
+        service: Any,
+        method_names: tuple[str, ...],
+        binder: Callable[[Any, str], Callable[..., Any]],
+    ) -> dict[str, Callable[..., Any]]:
         return {name: binder(service, name.lstrip("_")) for name in method_names}
 
-    bindings = {}
+    bindings: dict[str, Callable[..., Any] | Any] = {}
     bindings.update(_bind_methods(dashboard_file_runtime_service, _DASHBOARD_FILE_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(control_plane_service, _CONTROL_METHODS, _ctx_delegate))
-    bindings.update({name: _session_delegate(name) for name in _SESSION_METHODS})
+    bindings.update(_bind_methods(control_plane_service, _SESSION_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(minecraft_runtime_service, _MINECRAFT_CTX_METHODS, _ctx_delegate))
     bindings.update(_bind_methods(minecraft_runtime_service, _MINECRAFT_PLAIN_METHODS, _plain_delegate))
     bindings.update(_bind_methods(dashboard_state_runtime_service, _DASHBOARD_STATE_METHODS, _ctx_delegate))
@@ -154,11 +152,11 @@ def build_runtime_bindings(
     bindings.update(_bind_methods(session_watchers_service, _SESSION_WATCHER_PLAIN_METHODS, _plain_delegate))
 
 
-    def _get_storage_guard():
+    def _get_storage_guard() -> Any:
         guard = ns.get("storage_guard")
         return guard
 
-    def get_storage_used_percent(storage_usage_text=None):
+    def get_storage_used_percent(storage_usage_text: str | None = None) -> float | None:
         usage_text = storage_usage_text if storage_usage_text is not None else ns["get_storage_usage"]()
         match = re.search(r"\(([\d.]+)%\)", usage_text or "")
         if not match:
@@ -168,13 +166,13 @@ def build_runtime_bindings(
         except ValueError:
             return None
 
-    def get_storage_available_percent(storage_usage_text=None):
+    def get_storage_available_percent(storage_usage_text: str | None = None) -> float | None:
         used = get_storage_used_percent(storage_usage_text)
         if used is None:
             return None
         return max(0.0, 100.0 - used)
 
-    def is_storage_low(storage_usage_text=None):
+    def is_storage_low(storage_usage_text: str | None = None) -> bool:
         guard = _get_storage_guard()
         if guard is not None and storage_usage_text is None:
             try:
@@ -184,9 +182,10 @@ def build_runtime_bindings(
         available = get_storage_available_percent(storage_usage_text)
         if available is None:
             return False
-        return available < ns["LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT"]
+        threshold = float(ns["LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT"])
+        return available < threshold
 
-    def low_storage_error_message(storage_usage_text=None):
+    def low_storage_error_message(storage_usage_text: str | None = None) -> str:
         guard = _get_storage_guard()
         if guard is not None and storage_usage_text is None:
             try:
@@ -203,14 +202,14 @@ def build_runtime_bindings(
             f"Starting is blocked below {ns['LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT']:.0f}% free."
         )
 
-    def set_backup_warning(message):
+    def set_backup_warning(message: Any) -> None:
         msg = str(message or "").strip()
         with ns["backup_warning_lock"]:
             ns["backup_warning_seq"] += 1
             ns["backup_warning_message"] = msg
             ns["backup_warning_at"] = time.time()
 
-    def get_backup_warning_state(ttl_seconds=None):
+    def get_backup_warning_state(ttl_seconds: float | None = None) -> dict[str, Any]:
         ttl = ns["BACKUP_WARNING_TTL_SECONDS"] if ttl_seconds is None else float(ttl_seconds)
         with ns["backup_warning_lock"]:
             seq = int(ns["backup_warning_seq"])

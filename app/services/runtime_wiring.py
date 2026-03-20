@@ -26,7 +26,6 @@ class RuntimeServices:
     request_bindings_service: Any
     state_builder_service: Any
     app_lifecycle_service: Any
-    session_store_service: Any
     minecraft_runtime_service: Any
     session_watchers_service: Any
     control_plane_service: Any
@@ -151,7 +150,6 @@ def create_runtime(
                 dashboard_metrics_runtime_service=services.dashboard_metrics_runtime_service,
                 dashboard_operations_runtime_service=services.dashboard_operations_runtime_service,
                 control_plane_service=services.control_plane_service,
-                session_store_service=services.session_store_service,
                 minecraft_runtime_service=services.minecraft_runtime_service,
                 session_watchers_service=services.session_watchers_service,
             ),
@@ -164,7 +162,6 @@ def create_runtime(
         _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_stage_values)
 
     request_bindings = services.request_bindings_service.build_request_bindings(
-        session_store_service=services.session_store_service,
         session_state=namespace["session_state"],
         initialize_session_tracking=binding_stage_values["initialize_session_tracking"],
         status_state_note=binding_stage_values["_status_state_note"],

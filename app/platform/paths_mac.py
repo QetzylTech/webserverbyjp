@@ -15,5 +15,9 @@ def default_backup_dir(user_name=None):
     return _posix.default_backup_dir(user_name=user_name, users_root="/Users")
 
 
+def resolve_backup_script_path(app_dir):
+    return _posix.resolve_backup_script_path(app_dir)
+
+
 def is_valid_env_path(path_text):
     return _posix.is_valid_env_path(path_text)

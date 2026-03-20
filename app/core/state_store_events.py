@@ -3,17 +3,43 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.core.state_store_core import _connect, _create_tables
 from app.core import profiling
 
 
-def append_event(db_path, *, topic, payload=None):
+DbPath = str | Path
+JsonDict = dict[str, object]
+
+
+def _coerce_dict(raw: object) -> JsonDict | None:
+    if not isinstance(raw, dict):
+        return None
+    return {str(key): value for key, value in raw.items()}
+
+
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            return int(value)
+    except Exception:
+        pass
+    return default
+
+
+def append_event(db_path: DbPath, *, topic: object, payload: object = None) -> int:
     """Append one event row and return the inserted event id."""
     subject = str(topic or "").strip()
     if not subject:
         return 0
-    body = payload if isinstance(payload, dict) else {}
+    body = _coerce_dict(payload) or {}
     with profiling.timed("sqlite.events.append"):
         with _connect(db_path) as conn:
             _create_tables(conn)
@@ -34,13 +60,13 @@ def append_event(db_path, *, topic, payload=None):
                 return 0
 
 
-def list_events_since(db_path, *, topic, since_id=0, limit=200):
+def list_events_since(db_path: DbPath, *, topic: object, since_id: object = 0, limit: object = 200) -> list[JsonDict]:
     """Return ordered events for one topic after an event id."""
     subject = str(topic or "").strip()
     if not subject:
         return []
-    last_id = max(0, int(since_id or 0))
-    max_rows = max(1, min(1000, int(limit or 200)))
+    last_id = max(0, _to_int(since_id))
+    max_rows = max(1, min(1000, _to_int(limit, 200)))
     with profiling.timed("sqlite.events.list_since"):
         with _connect(db_path) as conn:
             _create_tables(conn)
@@ -54,12 +80,10 @@ def list_events_since(db_path, *, topic, since_id=0, limit=200):
                 """,
                 (subject, last_id, max_rows),
             ).fetchall()
-    out = []
+    out: list[JsonDict] = []
     for row in rows:
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = _coerce_dict(json.loads(str(row["payload_json"] or "{}"))) or {}
         except Exception:
             payload = {}
         out.append(
@@ -73,7 +97,7 @@ def list_events_since(db_path, *, topic, since_id=0, limit=200):
     return out
 
 
-def get_latest_event(db_path, *, topic):
+def get_latest_event(db_path: DbPath, *, topic: object) -> JsonDict | None:
     """Return latest event for one topic, or None."""
     subject = str(topic or "").strip()
     if not subject:
@@ -94,9 +118,7 @@ def get_latest_event(db_path, *, topic):
     if row is None:
         return None
     try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = _coerce_dict(json.loads(str(row["payload_json"] or "{}"))) or {}
     except Exception:
         payload = {}
     return {

@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 
-def _registry_state(ctx):
+def _registry_state(ctx: Any) -> tuple[dict[str, dict[str, Any]], Any | None]:
     registry = getattr(ctx, "client_registry", None)
     lock = getattr(ctx, "client_registry_lock", None)
-    if registry is None or lock is None:
+    if not isinstance(registry, dict) or lock is None:
         return {}, None
     return registry, lock
 
 
-def _client_ttl_seconds(ctx):
-    ttl_candidates = []
+def _client_ttl_seconds(ctx: Any) -> float:
+    ttl_candidates: list[float] = []
     try:
         ttl_candidates.append(float(getattr(ctx, "HOME_PAGE_ACTIVE_TTL_SECONDS", 0.0) or 0.0))
     except Exception:
@@ -31,13 +32,13 @@ def _client_ttl_seconds(ctx):
     return max(10.0, ttl)
 
 
-def _touch_entry(entry, now, channel):
+def _touch_entry(entry: dict[str, Any], now: float, channel: str) -> None:
     entry["last_seen"] = now
     if channel:
         entry.setdefault("channels", set()).add(channel)
 
 
-def register_client(ctx, client_id, *, channel=""):
+def register_client(ctx: Any, client_id: Any, *, channel: str = "") -> bool:
     """Register a client in the registry for the given channel."""
     client_id = str(client_id or "").strip()
     if not client_id:
@@ -55,12 +56,12 @@ def register_client(ctx, client_id, *, channel=""):
     return True
 
 
-def touch_client(ctx, client_id, *, channel=""):
+def touch_client(ctx: Any, client_id: Any, *, channel: str = "") -> bool:
     """Update the last-seen timestamp for a client."""
     return register_client(ctx, client_id, channel=channel)
 
 
-def unregister_client(ctx, client_id, *, channel=""):
+def unregister_client(ctx: Any, client_id: Any, *, channel: str = "") -> bool:
     """Remove a client or channel from the registry."""
     client_id = str(client_id or "").strip()
     if not client_id:
@@ -85,7 +86,7 @@ def unregister_client(ctx, client_id, *, channel=""):
     return True
 
 
-def prune_inactive_clients(ctx):
+def prune_inactive_clients(ctx: Any) -> int:
     """Remove clients that have not been seen within the TTL window."""
     registry, lock = _registry_state(ctx)
     if lock is None:
@@ -101,7 +102,7 @@ def prune_inactive_clients(ctx):
     return removed
 
 
-def active_client_count(ctx):
+def active_client_count(ctx: Any) -> int:
     """Return count of active clients after pruning stale entries."""
     registry, lock = _registry_state(ctx)
     if lock is None:

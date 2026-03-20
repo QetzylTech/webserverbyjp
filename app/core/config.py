@@ -1,8 +1,13 @@
 """Runtime configuration helpers for mcweb."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
 import os
+from typing import Any
 
 
-def resolve_secret_key(cfg_get_str, *env_names):
+def resolve_secret_key(cfg_get_str: Callable[[str, str], str], *env_names: str) -> str:
     """Resolve secret key from env/config."""
     for name in env_names:
         value = (os.environ.get(name) or "").strip()
@@ -14,7 +19,7 @@ def resolve_secret_key(cfg_get_str, *env_names):
     raise RuntimeError("Missing required MCWEB_SECRET_KEY configuration.")
 
 
-def apply_default_flask_config(app):
+def apply_default_flask_config(app: Any) -> None:
     """Apply baseline Flask runtime config values."""
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import shutil
+import time
 from pathlib import Path
 
 
@@ -16,6 +18,12 @@ def run_elevated(cmd, *, timeout=None):
 
 def default_web_port():
     return 8080
+
+
+def apply_process_timezone(tz_name):
+    os.environ["TZ"] = str(tz_name or "").strip()
+    if hasattr(time, "tzset"):
+        time.tzset()
 
 
 def minecraft_log_stream_mode():

@@ -1,9 +1,9 @@
-"""Web dashboard for controlling and monitoring a Minecraft systemd service.
+"""Web dashboard for controlling and monitoring a Minecraft server runtime.
 
 This app provides:
 - Service controls (start/stop/manual backup)
 - Live server and Minecraft stats
-- Systemd log viewer
+- Live control/log viewing
 - Automatic idle shutdown and session-based backup scheduling"""
 
 from flask import Flask
@@ -14,7 +14,7 @@ from app.bootstrap import web_app_config
 from app.bootstrap import web_app_runtime
 from app.bootstrap import web_app_setup
 from app.bootstrap import web_app_state
-from app.core.logging_setup import build_loggers
+from app.core.action_logging import make_log_action, make_log_exception
 from app.routes.dashboard_routes import register_routes
 from app.services import app_lifecycle as app_lifecycle_service
 from app.services import bootstrap as bootstrap_service
@@ -28,7 +28,6 @@ from app.services import minecraft_runtime as minecraft_runtime_service
 from app.services import request_bindings as request_bindings_service
 from app.services import runtime_bindings as runtime_bindings_service
 from app.services import runtime_wiring as runtime_wiring_service
-from app.services import session_store as session_store_service
 from app.services import session_watchers as session_watchers_service
 from app.services import service_ops as service_ops
 from app.services import state_builder as state_builder_service
@@ -70,12 +69,9 @@ SESSION_FILE = STATE_VARS["SESSION_FILE"]
 SERVER_PROPERTIES_CANDIDATES = STATE_VARS["SERVER_PROPERTIES_CANDIDATES"]
 backup_state = STATE_VARS["backup_state"]
 
-log_mcweb_action, log_mcweb_log, log_mcweb_exception = build_loggers(
-    DISPLAY_TZ,
-    MCWEB_LOG_DIR,
-    MCWEB_ACTION_LOG_FILE,
-    MCWEB_LOG_FILE,
-)
+log_mcweb_action = make_log_action(DISPLAY_TZ, MCWEB_LOG_DIR, MCWEB_ACTION_LOG_FILE)
+log_mcweb_log = make_log_action(DISPLAY_TZ, MCWEB_LOG_DIR, MCWEB_LOG_FILE)
+log_mcweb_exception = make_log_exception(log_mcweb_log)
 
 _runtime_namespace = {
     **STATE_VARS,
@@ -117,7 +113,6 @@ _runtime_bundle = runtime_wiring_service.create_runtime(
         request_bindings_service=request_bindings_service,
         state_builder_service=state_builder_service,
         app_lifecycle_service=app_lifecycle_service,
-        session_store_service=session_store_service,
         minecraft_runtime_service=minecraft_runtime_service,
         session_watchers_service=session_watchers_service,
         control_plane_service=service_ops,

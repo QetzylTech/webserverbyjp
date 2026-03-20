@@ -1,17 +1,21 @@
 """Dashboard log cache runtime helpers."""
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
 from app.ports import ports
 
 
 def _load_file_log_cache_from_disk(
-    ctx,
+    ctx: Any,
     *,
-    path,
-    limit,
-    lock,
-    lines_attr,
-    loaded_attr,
-    mtime_attr,
-):
+    path: Path,
+    limit: int,
+    lock: Lock,
+    lines_attr: str,
+    loaded_attr: str,
+    mtime_attr: str,
+) -> None:
     """Load a file-backed log cache into memory with its mtime marker."""
     lines = ctx._read_recent_file_lines(path, limit)
     mtime_ns = ctx._safe_file_mtime_ns(path)
@@ -23,15 +27,15 @@ def _load_file_log_cache_from_disk(
 
 
 def _append_file_log_cache_line(
-    ctx,
+    ctx: Any,
     *,
-    line,
-    path,
-    lock,
-    lines_attr,
-    loaded_attr,
-    mtime_attr,
-):
+    line: object,
+    path: Path,
+    lock: Lock,
+    lines_attr: str,
+    loaded_attr: str,
+    mtime_attr: str,
+) -> None:
     """Append one log line to a file-backed cache and refresh its mtime marker."""
     clean = (line or "").rstrip("\r\n")
     if not clean:
@@ -43,15 +47,15 @@ def _append_file_log_cache_line(
 
 
 def _get_cached_file_log_text(
-    ctx,
+    ctx: Any,
     *,
-    path,
-    limit,
-    lock,
-    lines_attr,
-    loaded_attr,
-    mtime_attr,
-):
+    path: Path,
+    limit: int,
+    lock: Lock,
+    lines_attr: str,
+    loaded_attr: str,
+    mtime_attr: str,
+) -> str:
     """Return cached log text, reloading only when on-disk mtime changes."""
     current_mtime_ns = ctx._safe_file_mtime_ns(path)
     with lock:
@@ -72,7 +76,7 @@ def _get_cached_file_log_text(
         return "\n".join(getattr(ctx, lines_attr)).strip() or "(no logs)"
 
 
-def _is_rcon_noise_line(line):
+def _is_rcon_noise_line(line: object) -> bool:
     """Return whether a minecraft log line is known RCON shutdown/startup noise."""
     lower = (line or "").lower()
     if "thread rcon client" in lower:
@@ -82,9 +86,9 @@ def _is_rcon_noise_line(line):
     return False
 
 
-def _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=500):
+def _minecraft_log_lines_from_latest_file(ctx: Any, max_visible_lines: int = 500) -> list[str]:
     """Return recent minecraft file log lines, preferring non-RCON-noise lines."""
-    lines = []
+    lines: list[str] = []
     latest_path = None
     try:
         candidates = [p for p in ctx.MINECRAFT_LOGS_DIR.glob("*.log") if p.is_file()]
@@ -103,7 +107,7 @@ def _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=500):
     return lines
 
 
-def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
+def _load_minecraft_log_cache_from_latest_file(ctx: Any, max_visible_lines: int = 500) -> list[str]:
     """Load recent minecraft file logs into cache."""
     lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=max_visible_lines)
     with ctx.minecraft_log_cache_lock:
@@ -113,7 +117,7 @@ def _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=500):
     return lines
 
 
-def load_backup_log_cache_from_disk(ctx):
+def load_backup_log_cache_from_disk(ctx: Any) -> None:
     """Reload backup log cache from disk into bounded in-memory storage."""
     _load_file_log_cache_from_disk(
         ctx,
@@ -126,7 +130,7 @@ def load_backup_log_cache_from_disk(ctx):
     )
 
 
-def append_backup_log_cache_line(ctx, line):
+def append_backup_log_cache_line(ctx: Any, line: object) -> None:
     """Append one backup log line into cache, updating file mtime hint."""
     _append_file_log_cache_line(
         ctx,
@@ -139,7 +143,7 @@ def append_backup_log_cache_line(ctx, line):
     )
 
 
-def get_cached_backup_log_text(ctx):
+def get_cached_backup_log_text(ctx: Any) -> str:
     """Return backup log text, reloading only when on-disk mtime changes."""
     return _get_cached_file_log_text(
         ctx,
@@ -152,7 +156,7 @@ def get_cached_backup_log_text(ctx):
     )
 
 
-def load_minecraft_log_cache_from_journal(ctx):
+def load_minecraft_log_cache_from_journal(ctx: Any) -> None:
     """Prime minecraft log cache from platform-selected runtime log source."""
     output = ""
     try:
@@ -198,7 +202,7 @@ def load_minecraft_log_cache_from_journal(ctx):
         ctx.minecraft_log_cache_loaded = True
 
 
-def append_minecraft_log_cache_line(ctx, line):
+def append_minecraft_log_cache_line(ctx: Any, line: object) -> None:
     """Append one minecraft journal line into cache."""
     clean = (line or "").rstrip("\r\n")
     if not clean:
@@ -209,7 +213,7 @@ def append_minecraft_log_cache_line(ctx, line):
         ctx.minecraft_log_cache_loaded = True
 
 
-def get_cached_minecraft_log_text(ctx):
+def get_cached_minecraft_log_text(ctx: Any) -> str:
     """Return minecraft log cache, loading initial snapshot on demand."""
     with ctx.minecraft_log_cache_lock:
         if ctx.minecraft_log_cache_loaded and len(ctx.minecraft_log_cache_lines) >= ctx.MINECRAFT_LOG_VISIBLE_LINES:
@@ -219,7 +223,7 @@ def get_cached_minecraft_log_text(ctx):
         return "\n".join(ctx.minecraft_log_cache_lines).strip() or "(no logs)"
 
 
-def load_mcweb_log_cache_from_disk(ctx):
+def load_mcweb_log_cache_from_disk(ctx: Any) -> None:
     """Reload mcweb action log cache from disk."""
     _load_file_log_cache_from_disk(
         ctx,
@@ -232,7 +236,7 @@ def load_mcweb_log_cache_from_disk(ctx):
     )
 
 
-def append_mcweb_log_cache_line(ctx, line):
+def append_mcweb_log_cache_line(ctx: Any, line: object) -> None:
     """Append one mcweb action log line into cache."""
     _append_file_log_cache_line(
         ctx,
@@ -245,7 +249,7 @@ def append_mcweb_log_cache_line(ctx, line):
     )
 
 
-def get_cached_mcweb_log_text(ctx):
+def get_cached_mcweb_log_text(ctx: Any) -> str:
     """Return mcweb action log text, refreshing if file changed."""
     return _get_cached_file_log_text(
         ctx,

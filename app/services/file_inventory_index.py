@@ -4,10 +4,31 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import TypedDict
+
+
+class _IndexCache(TypedDict):
+    backup_root: str
+    snapshot_root: str
+    old_worlds_root: str
+    backup_mtime_ns: int
+    snapshot_mtime_ns: int
+    old_worlds_mtime_ns: int
+    backup_zip_paths: list[str]
+    snapshot_dir_paths: list[str]
+    old_world_top_entries: list[str]
+    old_world_nested_zip_paths: list[str]
+
+
+class InventoryPaths(TypedDict):
+    backup_zip_paths: list[Path]
+    snapshot_dir_paths: list[Path]
+    old_world_top_entries: list[Path]
+    old_world_nested_zip_paths: list[Path]
 
 
 _INDEX_LOCK = threading.Lock()
-_INDEX_CACHE = {
+_INDEX_CACHE: _IndexCache = {
     "backup_root": "",
     "snapshot_root": "",
     "old_worlds_root": "",
@@ -21,28 +42,28 @@ _INDEX_CACHE = {
 }
 
 
-def _safe_dir_mtime_ns(path):
+def _safe_dir_mtime_ns(path: str | Path) -> int:
     try:
         return int(Path(path).stat().st_mtime_ns)
     except OSError:
         return -1
 
 
-def _refresh_index(backup_root, snapshot_root, old_worlds_root):
-    backup_paths = []
+def _refresh_index(backup_root: Path, snapshot_root: Path, old_worlds_root: Path) -> None:
+    backup_paths: list[str] = []
     if backup_root.exists() and backup_root.is_dir():
         for entry in backup_root.glob("*.zip"):
             if entry.is_file():
                 backup_paths.append(str(entry))
 
-    snapshot_paths = []
+    snapshot_paths: list[str] = []
     if snapshot_root.exists() and snapshot_root.is_dir():
         for entry in snapshot_root.iterdir():
             if entry.is_dir():
                 snapshot_paths.append(str(entry))
 
-    old_world_entries = []
-    old_world_nested_zips = []
+    old_world_entries: list[str] = []
+    old_world_nested_zips: list[str] = []
     if old_worlds_root.exists() and old_worlds_root.is_dir():
         for entry in old_worlds_root.iterdir():
             if entry.is_dir() or entry.is_file():
@@ -70,7 +91,7 @@ def _refresh_index(backup_root, snapshot_root, old_worlds_root):
     )
 
 
-def get_inventory(backup_root, snapshot_root, old_worlds_root):
+def get_inventory(backup_root: str | Path, snapshot_root: str | Path, old_worlds_root: str | Path) -> InventoryPaths:
     """Return indexed inventory paths for backup/snapshot/old-world artifacts."""
     backup_path = Path(backup_root)
     snapshot_path = Path(snapshot_root)

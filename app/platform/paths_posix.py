@@ -17,6 +17,16 @@ def default_backup_dir(*, user_name=None, users_root="/home"):
     return str(PurePosixPath(default_user_home(user_name=user_name, users_root=users_root)) / "backups")
 
 
+def resolve_backup_script_path(app_dir):
+    root = Path(str(app_dir))
+    scripts_dir = root / "scripts"
+    for name in ("backup.sh", "backup.command", "backup"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return str(candidate)
+    return str(scripts_dir / "backup.sh")
+
+
 def is_valid_env_path(path_text):
     text = str(path_text or "").strip()
     if not text:

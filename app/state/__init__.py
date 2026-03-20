@@ -252,7 +252,7 @@ _STATE_BINDING_KEYS = (
     "is_storage_low",
     "low_storage_error_message",
     "start_storage_safety_watcher",
-    "stop_service_systemd",
+    "stop_service_runtime",
     "validate_admin_password",
     "validate_sudo_password",
     "write_session_start_time",

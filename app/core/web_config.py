@@ -1,18 +1,26 @@
 """Minimal KEY=VALUE config loader with typed accessors."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 
 class WebConfig:
     """Read a dotenv-like config file and expose typed getters."""
-    def __init__(self, config_path, base_dir):
+
+    config_path: Path
+    base_dir: Path
+    values: dict[str, str]
+
+    def __init__(self, config_path: Path | str, base_dir: Path | str) -> None:
         """Dunder method __init__."""
         self.config_path = Path(config_path)
         self.base_dir = Path(base_dir)
         self.values = self._load()
 
-    def _load(self):
+    def _load(self) -> dict[str, str]:
         """Parse config lines and return a key/value mapping."""
-        values = {}
+        values: dict[str, str] = {}
         try:
             lines = self.config_path.read_text(encoding="utf-8").splitlines()
         except OSError:
@@ -31,7 +39,7 @@ class WebConfig:
             values[key] = value
         return values
 
-    def get_str(self, name, default):
+    def get_str(self, name: str, default: str) -> str:
         """Read a string setting and fall back when missing/blank."""
         value = self.values.get(name)
         if value is None:
@@ -39,7 +47,7 @@ class WebConfig:
         value = value.strip()
         return value if value else default
 
-    def get_int(self, name, default, minimum=None):
+    def get_int(self, name: str, default: int, minimum: int | None = None) -> int:
         """Read an integer setting with optional lower-bound clamping."""
         raw = self.values.get(name)
         if raw is None:
@@ -52,7 +60,7 @@ class WebConfig:
             return minimum
         return parsed
 
-    def get_float(self, name, default, minimum=None):
+    def get_float(self, name: str, default: float, minimum: float | None = None) -> float:
         """Read a float setting with optional lower-bound clamping."""
         raw = self.values.get(name)
         if raw is None:
@@ -65,7 +73,7 @@ class WebConfig:
             return minimum
         return parsed
 
-    def get_path(self, name, default):
+    def get_path(self, name: str, default: Path | str) -> Path:
         """Read a path setting and resolve relative values from ``base_dir``."""
         raw = self.values.get(name)
         if raw is None:

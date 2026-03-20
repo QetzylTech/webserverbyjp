@@ -1,11 +1,12 @@
 """Global UI notification helpers."""
 
 import time
+from typing import Any
 
 from app.core import state_store as state_store_service
 
 
-def publish_ui_notification(ctx, payload):
+def publish_ui_notification(ctx: Any, payload: object) -> int:
     db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
     if db_path is None:
         return 0

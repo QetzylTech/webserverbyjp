@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import platform as py_platform
 from importlib import import_module
+from types import ModuleType
 
-_CALLS = None
+_CALLS: ModuleType | None = None
 _PLATFORM_NAME = ""
-_PATHS = None
-_METRICS = None
+_PATHS: ModuleType | None = None
+_METRICS: ModuleType | None = None
 
 
-def _detect_module_name():
+def _detect_module_name() -> tuple[str, str]:
     system_name = (py_platform.system() or "").strip().lower()
     if system_name == "windows":
         return "app.platform.calls_windows", "windows"
@@ -18,7 +19,7 @@ def _detect_module_name():
     return "app.platform.calls_linux_deb", "linux"
 
 
-def _detect_paths_module_name():
+def _detect_paths_module_name() -> tuple[str, str]:
     system_name = (py_platform.system() or "").strip().lower()
     if system_name == "windows":
         return "app.platform.paths_windows", "windows"
@@ -27,7 +28,7 @@ def _detect_paths_module_name():
     return "app.platform.paths_linux", "linux"
 
 
-def _detect_metrics_module_name():
+def _detect_metrics_module_name() -> tuple[str, str]:
     system_name = (py_platform.system() or "").strip().lower()
     if system_name == "windows":
         return "app.platform.metrics_windows", "windows"
@@ -36,7 +37,7 @@ def _detect_metrics_module_name():
     return "app.platform.metrics_linux_deb", "linux"
 
 
-def get_calls():
+def get_calls() -> ModuleType:
     global _CALLS
     global _PLATFORM_NAME
     if _CALLS is not None:
@@ -47,7 +48,7 @@ def get_calls():
     return _CALLS
 
 
-def get_paths():
+def get_paths() -> ModuleType:
     global _PATHS
     global _PLATFORM_NAME
     if _PATHS is not None:
@@ -59,13 +60,13 @@ def get_paths():
     return _PATHS
 
 
-def get_platform_name():
+def get_platform_name() -> str:
     if not _PLATFORM_NAME:
         get_calls()
     return _PLATFORM_NAME
 
 
-def get_metrics():
+def get_metrics() -> ModuleType:
     global _METRICS
     global _PLATFORM_NAME
     if _METRICS is not None:

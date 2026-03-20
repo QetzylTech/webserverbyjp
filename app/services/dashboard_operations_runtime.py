@@ -2,13 +2,17 @@
 from datetime import datetime
 from pathlib import Path
 import time
+from typing import Any
 
 from app.core import profiling
 from app.core import state_store as state_store_service
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
-def _operation_age_seconds(op, now_epoch):
+JsonDict = dict[str, object]
+
+
+def _operation_age_seconds(op: object, now_epoch: float) -> float:
     if not isinstance(op, dict):
         return 0.0
     started = str(op.get("started_at", "") or "").strip()
@@ -23,11 +27,11 @@ def _operation_age_seconds(op, now_epoch):
     return max(0.0, now_epoch - ts)
 
 
-def get_consistency_report(ctx, *, auto_repair=False):
+def get_consistency_report(ctx: Any, *, auto_repair: bool = False) -> JsonDict:
     """Validate runtime invariants and optionally repair safe drift."""
     with profiling.timed("consistency.report"):
-        issues = []
-        repairs = []
+        issues: list[JsonDict] = []
+        repairs: list[JsonDict] = []
         service_status = str(ctx.get_status() or "").strip().lower()
         try:
             session_start = ctx.read_session_start_time()
@@ -35,12 +39,12 @@ def get_consistency_report(ctx, *, auto_repair=False):
             session_start = None
 
         if service_status not in ctx.OFF_STATES and session_start is None:
-            issue = {
+            missing_session_issue: JsonDict = {
                 "code": "active_missing_session_start",
                 "message": "Service is active but session start timestamp is missing.",
                 "severity": "warning",
             }
-            issues.append(issue)
+            issues.append(missing_session_issue)
             if auto_repair:
                 try:
                     repaired = ctx.write_session_start_time() is not None
@@ -53,12 +57,12 @@ def get_consistency_report(ctx, *, auto_repair=False):
                 })
 
         if service_status in ctx.OFF_STATES and session_start is not None:
-            issue = {
+            stale_session_issue: JsonDict = {
                 "code": "off_with_session_start",
                 "message": "Service is off but session start timestamp still exists.",
                 "severity": "warning",
             }
-            issues.append(issue)
+            issues.append(stale_session_issue)
             if auto_repair:
                 try:
                     ctx.clear_session_start_time()
@@ -80,7 +84,7 @@ def get_consistency_report(ctx, *, auto_repair=False):
         }
 
 
-def reconcile_operations_once(ctx):
+def reconcile_operations_once(ctx: Any) -> int:
     """Advance stale/finished async operations using observed runtime state."""
     with profiling.timed("reconciler.iteration"):
         db_path = Path(ctx.APP_STATE_DB_PATH)
@@ -101,12 +105,12 @@ def reconcile_operations_once(ctx):
         updated = 0
         now_epoch = time.time()
         service_status = str(ctx.get_status() or "").strip().lower()
-        pending_updates = []
+        pending_updates: list[JsonDict] = []
 
-        def _queue_update(op_id, **kwargs):
+        def _queue_update(op_id: object, **kwargs: object) -> None:
             if not str(op_id or "").strip():
                 return
-            payload = {"op_id": str(op_id)}
+            payload: JsonDict = {"op_id": str(op_id)}
             payload.update(kwargs)
             pending_updates.append(payload)
 
@@ -116,7 +120,8 @@ def reconcile_operations_once(ctx):
                 op_type = str(op.get("op_type", "") or "").strip().lower()
                 status = str(op.get("status", "") or "").strip().lower()
                 age = _operation_age_seconds(op, now_epoch)
-                data = op.get("data", {}) if isinstance(op.get("data"), dict) else {}
+                raw_data = op.get("data")
+                data: JsonDict = raw_data if isinstance(raw_data, dict) else {}
 
                 if op_type == "start":
                     if service_status == "active":
@@ -155,7 +160,8 @@ def reconcile_operations_once(ctx):
                     if restore_job_id:
                         payload = ctx.get_restore_status(since_seq=0, job_id=restore_job_id)
                         if isinstance(payload, dict) and not bool(payload.get("running")):
-                            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+                            raw_result = payload.get("result")
+                            result: JsonDict = raw_result if isinstance(raw_result, dict) else {}
                             if bool(result.get("ok")):
                                 _queue_update(
                                     op_id,
@@ -284,7 +290,18 @@ def reconcile_operations_once(ctx):
 
         for payload in pending_updates:
             try:
-                state_store_service.update_operation(db_path, **payload)
+                state_store_service.update_operation(
+                    db_path,
+                    op_id=payload.get("op_id", ""),
+                    status=payload.get("status"),
+                    error_code=payload.get("error_code"),
+                    message=payload.get("message"),
+                    started=bool(payload.get("started", False)),
+                    finished=bool(payload.get("finished", False)),
+                    checkpoint=payload.get("checkpoint"),
+                    increment_attempt=bool(payload.get("increment_attempt", False)),
+                    payload=payload.get("payload"),
+                )
             except Exception as exc:
                 ctx.log_mcweb_exception("reconcile_operation_update", exc)
 
@@ -302,7 +319,7 @@ def reconcile_operations_once(ctx):
         return updated
 
 
-def operation_reconciler_loop(ctx):
+def operation_reconciler_loop(ctx: Any) -> None:
     """Periodic reconciler to mark operations observed/stale."""
     while True:
         try:
@@ -312,7 +329,7 @@ def operation_reconciler_loop(ctx):
         time.sleep(float(ctx.OPERATION_RECONCILE_INTERVAL_SECONDS))
 
 
-def start_operation_reconciler(ctx):
+def start_operation_reconciler(ctx: Any) -> None:
     """Start the operation reconciler daemon once."""
     if ctx.operation_reconciler_started:
         return

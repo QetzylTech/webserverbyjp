@@ -25,7 +25,7 @@ from app.services.restore_workflow_helpers import (
     is_backup_running,
     reset_backup_schedule_state,
     start_service,
-    stop_service_systemd,
+    stop_service_runtime,
     write_session_start_time,
 )
 
@@ -344,7 +344,7 @@ def restore_world_backup(ctx, backup_filename, progress_callback=None):
             return fail(error_message)
 
         restore_state.was_active = ctx.get_status() == "active"
-        if restore_state.was_active and not stop_service_systemd(ctx):
+        if restore_state.was_active and not stop_service_runtime(ctx):
             return fail("Could not stop service for restore.")
         if restore_state.was_active:
             restore_state.service_stopped_for_restore = True

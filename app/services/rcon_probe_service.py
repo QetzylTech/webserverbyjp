@@ -2,11 +2,12 @@
 
 import re
 import time
+from typing import Any
 
 from app.ports import ports
 
 
-def is_rcon_startup_ready(ctx, service_status=None):
+def is_rcon_startup_ready(ctx: Any, service_status: str | None = None) -> bool:
     if service_status is None:
         service_status = ctx.get_status()
     if service_status != "active":
@@ -24,14 +25,14 @@ def is_rcon_startup_ready(ctx, service_status=None):
     return True
 
 
-def clean_rcon_output(text):
-    cleaned = text or ""
+def clean_rcon_output(text: object) -> str:
+    cleaned = str(text or "")
     cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", cleaned)
     cleaned = re.sub(r"\u00a7.", "", cleaned)
     return cleaned
 
 
-def refresh_rcon_config(ctx):
+def refresh_rcon_config(ctx: Any) -> tuple[str | None, int | None, bool]:
     now = time.time()
     with ctx.rcon_config_lock:
         if now - ctx.rcon_last_config_read_at < 60:
@@ -59,8 +60,9 @@ def refresh_rcon_config(ctx):
             if not candidate_password:
                 continue
             parsed_password = candidate_password
-            if kv.get("rcon.port", "").isdigit():
-                parsed_port = int(kv.get("rcon.port"))
+            port_text = str(kv.get("rcon.port", "") or "").strip()
+            if port_text.isdigit():
+                parsed_port = int(port_text)
             break
         if parsed_password:
             ctx.rcon_cached_password = parsed_password
@@ -73,23 +75,24 @@ def refresh_rcon_config(ctx):
         return ctx.rcon_cached_password, ctx.rcon_cached_port, ctx.rcon_cached_enabled
 
 
-def is_rcon_enabled(ctx):
+def is_rcon_enabled(ctx: Any) -> bool:
     _, _, enabled = refresh_rcon_config(ctx)
     return enabled
 
 
-def run_mcrcon(ctx, command, timeout=4):
+def run_mcrcon(ctx: Any, command: str, timeout: float = 4) -> Any:
     password, port, enabled = refresh_rcon_config(ctx)
     if not enabled or not password:
         raise RuntimeError("RCON is disabled: rcon.password not found in server.properties")
+    resolved_port = int(port or getattr(ctx, "RCON_PORT", 25575) or 25575)
     try:
-        return ports.service_control.run_mcrcon(ctx.RCON_HOST, port, password, command, timeout=timeout)
+        return ports.service_control.run_mcrcon(ctx.RCON_HOST, resolved_port, password, command, timeout=timeout)
     except Exception as exc:
         ctx.log_mcweb_exception("_run_mcrcon", exc)
         raise RuntimeError("mcrcon invocation failed") from exc
 
 
-def parse_players_online(output):
+def parse_players_online(output: object) -> str | None:
     text = clean_rcon_output(output).strip()
     if not text:
         return None
@@ -107,7 +110,7 @@ def parse_players_online(output):
     return None
 
 
-def probe_tick_rate(ctx):
+def probe_tick_rate(ctx: Any) -> str | None:
     try:
         result = run_mcrcon(ctx, "forge tps", timeout=8)
     except Exception as exc:
@@ -145,7 +148,7 @@ def probe_tick_rate(ctx):
     return None
 
 
-def probe_minecraft_runtime_metrics(ctx, force=False):
+def probe_minecraft_runtime_metrics(ctx: Any, force: bool = False) -> tuple[str, str]:
     service_status = ctx.get_status()
     if service_status != "active":
         with ctx.mc_query_lock:
@@ -200,11 +203,11 @@ def probe_minecraft_runtime_metrics(ctx, force=False):
         return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
 
 
-def get_players_online(ctx):
+def get_players_online(ctx: Any) -> str:
     players, _ = probe_minecraft_runtime_metrics(ctx)
     return players
 
 
-def get_tick_rate(ctx):
+def get_tick_rate(ctx: Any) -> str:
     _, tick = probe_minecraft_runtime_metrics(ctx)
     return tick

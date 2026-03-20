@@ -1,5 +1,12 @@
 """CSRF/session security helpers."""
-def ensure_csrf_token(session, token_factory):
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, MutableMapping
+from typing import Any
+
+
+def ensure_csrf_token(session: MutableMapping[str, str], token_factory: Callable[[], str]) -> str:
     """Return existing CSRF token from session or create one."""
     token = session.get("csrf_token")
     if not token:
@@ -8,7 +15,7 @@ def ensure_csrf_token(session, token_factory):
     return token
 
 
-def is_csrf_valid(request, session):
+def is_csrf_valid(request: Any, session: Mapping[str, str]) -> bool:
     """Validate CSRF token from header or form against session token."""
     expected = session.get("csrf_token")
     if not expected:

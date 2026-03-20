@@ -288,12 +288,12 @@ def stop_operation(ctx, *, idempotency_key, client_key, sudo_password):
             message="Stop operation in progress.",
         )
         result = state["graceful_stop_minecraft"]()
-        systemd_ok = bool((result or {}).get("systemd_ok")) if isinstance(result, dict) else bool(result)
+        service_stop_ok = bool((result or {}).get("service_stop_ok")) if isinstance(result, dict) else bool(result)
         backup_ok = bool((result or {}).get("backup_ok")) if isinstance(result, dict) else True
-        if not (systemd_ok and backup_ok):
+        if not (service_stop_ok and backup_ok):
             message = "Stop operation failed."
             if isinstance(result, dict):
-                if not systemd_ok:
+                if not service_stop_ok:
                     message = "Stop operation failed: service did not stop cleanly."
                 elif not backup_ok:
                     message = "Stop operation failed: backup pre-stop hook failed."

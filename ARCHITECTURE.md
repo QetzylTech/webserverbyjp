@@ -42,6 +42,7 @@ Disallowed:
 
 - Configuration is parsed and validated in bootstrap.
 - Runtime receives typed, validated config values.
+- Active runtime state files live under the project-root `data/` directory; `app/data` is not part of the live runtime contract.
 - Services should use explicit/typed dependencies or context objects, not generic mega mutable state dicts.
 
 ## Persistent Shell Guardrails

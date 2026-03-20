@@ -1,19 +1,21 @@
 """Action/error logging helpers with request-aware client identification."""
 from datetime import datetime
 import os
+from pathlib import Path
 import traceback
+from typing import Any, Callable
 from flask import request, has_request_context
 
 LOG_ROTATE_MAX_BYTES = 5 * 1024 * 1024
 LOG_ROTATE_BACKUP_COUNT = 5
 
 
-def sanitize_log_fragment(text):
+def sanitize_log_fragment(text: object) -> str:
     """Normalize user/system text into a single safe log line fragment."""
     return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split()).strip()
 
 
-def get_client_ip():
+def get_client_ip() -> str:
     """Resolve the best client IP from proxy headers or direct connection."""
     if not has_request_context():
         return "mcweb"
@@ -29,7 +31,11 @@ def get_client_ip():
     return direct or "mcweb"
 
 
-def _rotate_log_file(path, max_bytes=LOG_ROTATE_MAX_BYTES, backup_count=LOG_ROTATE_BACKUP_COUNT):
+def _rotate_log_file(
+    path: Path,
+    max_bytes: int = LOG_ROTATE_MAX_BYTES,
+    backup_count: int = LOG_ROTATE_BACKUP_COUNT,
+) -> None:
     """Rotate log file when size reaches threshold."""
     if max_bytes <= 0 or backup_count <= 0:
         return
@@ -50,9 +56,9 @@ def _rotate_log_file(path, max_bytes=LOG_ROTATE_MAX_BYTES, backup_count=LOG_ROTA
         pass
 
 
-def make_log_action(display_tz, log_dir, action_log_file):
+def make_log_action(display_tz: Any, log_dir: Path, action_log_file: Path) -> Callable[..., None]:
     """Build and return the structured action logger closure."""
-    def log_action(action, command=None, rejection_message=None):
+    def log_action(action: object, command: object = None, rejection_message: object = None) -> None:
         """Append one action event line; failures are intentionally swallowed."""
         timestamp = datetime.now(tz=display_tz).strftime("%b %d %H:%M:%S")
         client_ip = sanitize_log_fragment(get_client_ip()) or "unknown"
@@ -81,9 +87,9 @@ def make_log_action(display_tz, log_dir, action_log_file):
     return log_action
 
 
-def make_log_exception(log_action):
+def make_log_exception(log_action: Callable[..., None]) -> Callable[[object, BaseException | None], None]:
     """Build and return an exception logger that emits through log_action."""
-    def log_exception(context, exc):
+    def log_exception(context: object, exc: BaseException | None) -> None:
         """Log a compact exception summary with a truncated traceback."""
         exc_name = type(exc).__name__ if exc is not None else "Exception"
         exc_text = sanitize_log_fragment(str(exc) if exc is not None else "")

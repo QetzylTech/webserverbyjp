@@ -2,26 +2,27 @@ from __future__ import annotations
 
 from pathlib import Path
 import secrets
+from typing import Any, Callable, Mapping, MutableMapping
 from zoneinfo import ZoneInfo
 
 
-def _to_bool(value):
+def _to_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def save_setup_values(
-    values,
+    values: Mapping[str, object],
     *,
-    setup_service,
-    data_bootstrap_service,
-    web_conf_path,
-    data_dir,
-    app_state_db_path,
-    setup_required_state,
-    trigger_process_reload,
-    log_mcweb_log,
-    log_mcweb_exception,
-):
+    setup_service: Any,
+    data_bootstrap_service: Any,
+    web_conf_path: str | Path,
+    data_dir: str | Path,
+    app_state_db_path: str | Path,
+    setup_required_state: MutableMapping[str, object],
+    trigger_process_reload: Callable[[], object],
+    log_mcweb_log: Callable[..., object],
+    log_mcweb_exception: Callable[..., object],
+) -> tuple[bool, str, dict[str, str]]:
     for key in ("SERVICE", "DISPLAY_TZ", "MINECRAFT_ROOT_DIR", "BACKUP_DIR"):
         if not str(values.get(key, "")).strip():
             return False, f"{key} is required.", {key: "This field is required."}

@@ -9,11 +9,11 @@ import time
 class InMemoryRateLimiter:
     """Simple per-key fixed-window limiter suitable for single-process apps."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._buckets = {}
+        self._buckets: dict[str, dict[str, float | int]] = {}
 
-    def allow(self, key, *, limit, window_seconds):
+    def allow(self, key: object, *, limit: int, window_seconds: float) -> tuple[bool, int]:
         now = time.time()
         bucket_key = str(key or "")
         max_hits = max(1, int(limit))

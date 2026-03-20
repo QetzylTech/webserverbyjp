@@ -1,6 +1,7 @@
 """Compose control-plane operations from focused use-case modules."""
 
 from types import SimpleNamespace
+from typing import Any
 
 from app.services import backup_usecase as _backup
 from app.services import restore_execution as _restore_execution
@@ -12,9 +13,9 @@ from app.services import stop_usecase as _stop
 
 _DIRECT_EXPORTS = {
     "ensure_startup_rcon_settings": _restore_helpers.ensure_startup_rcon_settings,
-    "run_sudo": _restore_helpers.run_sudo,
+    "run_elevated_command": _restore_helpers.run_elevated_command,
     "write_session_start_time": _restore_helpers.write_session_start_time,
-    "stop_service_systemd": _restore_helpers.stop_service_systemd,
+    "stop_service_runtime": _restore_helpers.stop_service_runtime,
     "restore_world_backup": _restore_execution.restore_world_backup,
     "append_restore_event": _restore_status.append_restore_event,
     "start_restore_job": _restore_jobs.start_restore_job,
@@ -38,6 +39,15 @@ del _name
 del _target
 
 is_backup_running = _restore_helpers.is_backup_running
+graceful_stop_minecraft = _stop.graceful_stop_minecraft
+stop_server_automatically = _stop.stop_server_automatically
+get_backup_zip_snapshot = _backup.get_backup_zip_snapshot
+backup_snapshot_changed = _backup.backup_snapshot_changed
+format_backup_time = _backup.format_backup_time
+get_server_time_text = _backup.get_server_time_text
+get_latest_backup_zip_timestamp = _backup.get_latest_backup_zip_timestamp
+get_backup_schedule_times = _backup.get_backup_schedule_times
+get_backup_status = _backup.get_backup_status
 
 # Preserve the patch surface used by tests around process execution.
 _calls = SimpleNamespace(
@@ -46,57 +56,22 @@ _calls = SimpleNamespace(
 )
 
 
-def start_service_non_blocking(ctx, timeout=12):
+def start_service_non_blocking(ctx: Any, timeout: float = 12) -> Any:
     _start._calls.service_start_no_block = _calls.service_start_no_block
-    return _start.start_service_non_blocking(ctx, timeout=timeout)
+    return _start.start_service_non_blocking(ctx, timeout=timeout)  # type: ignore[no-untyped-call]
 
 
-def graceful_stop_minecraft(ctx, trigger="session_end"):
-    return _stop.graceful_stop_minecraft(ctx, trigger=trigger)
-
-
-def stop_server_automatically(ctx, trigger="session_end"):
-    return _stop.stop_server_automatically(ctx, trigger=trigger)
-
-
-def get_backup_zip_snapshot(ctx):
-    return _backup.get_backup_zip_snapshot(ctx)
-
-
-def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
-    return _backup.backup_snapshot_changed(ctx, before_snapshot, after_snapshot)
-
-
-def run_backup_script(ctx, count_skip_as_success=True, trigger="manual"):
+def run_backup_script(ctx: Any, count_skip_as_success: bool = True, trigger: str = "manual") -> bool:
     _backup._calls.run_backup_script = _calls.run_backup_script
-    _backup.is_backup_running = is_backup_running
-    return _backup.run_backup_script(
+    setattr(_backup, "is_backup_running", is_backup_running)
+    result = _backup.run_backup_script(  # type: ignore[no-untyped-call]
         ctx,
         count_skip_as_success=count_skip_as_success,
         trigger=trigger,
         snapshot_reader=get_backup_zip_snapshot,
         snapshot_changed_fn=backup_snapshot_changed,
     )
-
-
-def format_backup_time(ctx, timestamp):
-    return _backup.format_backup_time(ctx, timestamp)
-
-
-def get_server_time_text(ctx):
-    return _backup.get_server_time_text(ctx)
-
-
-def get_latest_backup_zip_timestamp(ctx):
-    return _backup.get_latest_backup_zip_timestamp(ctx)
-
-
-def get_backup_schedule_times(ctx, service_status=None):
-    return _backup.get_backup_schedule_times(ctx, service_status=service_status)
-
-
-def get_backup_status(ctx):
-    return _backup.get_backup_status(ctx)
+    return bool(result)
 
 
 __all__ = [

@@ -2,14 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-import os
 import secrets
-import time
 from zoneinfo import ZoneInfo
 
 from app.bootstrap.config_loader import load_web_config
 from app.core.config import apply_default_flask_config, resolve_secret_key
-from app.infrastructure.adapters import PlatformServiceControlAdapter
+from app.ports import ports
 from app.services import setup_service
 
 
@@ -25,11 +23,10 @@ class WebAppBootstrapConfig:
 
 def load_bootstrap_config():
     app_dir = Path(__file__).resolve().parent.parent.parent
-    platform_service_control = PlatformServiceControlAdapter()
     app_config = load_web_config(
         app_dir,
-        default_backup_dir=Path(platform_service_control.default_backup_dir()),
-        default_minecraft_root=Path(platform_service_control.default_minecraft_root()),
+        default_backup_dir=Path(ports.service_control.default_backup_dir()),
+        default_minecraft_root=Path(ports.service_control.default_minecraft_root()),
     )
     web_conf_path = app_config.web_conf_path
     raw_values = app_config.raw_values
@@ -49,12 +46,10 @@ def load_bootstrap_config():
         display_tz_name = "Asia/Manila"
         display_tz = ZoneInfo("Asia/Manila")
 
-    os.environ["TZ"] = display_tz_name
-    if hasattr(time, "tzset"):
-        try:
-            time.tzset()
-        except Exception:
-            pass
+    try:
+        ports.service_control.apply_process_timezone(display_tz_name)
+    except Exception:
+        pass
 
     return WebAppBootstrapConfig(
         app_dir=app_dir,

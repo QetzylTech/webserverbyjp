@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict
 
 from app.ports import ports
 
 
-def validate_runtime_locations(values, *, allow_create_backup_missing=False):
+class DirectoryState(TypedDict):
+    path: Path
+    exists_dir: bool
+    missing: bool
+    not_writable: bool
+
+
+class ValidationResult(TypedDict):
+    errors: list[str]
+    missing: bool
+
+
+def validate_runtime_locations(values: dict[str, object], *, allow_create_backup_missing: bool = False) -> dict[str, str]:
     """Validate setup runtime paths/service and return field-level errors."""
-    errors = {}
+    errors: dict[str, str] = {}
     service_name = str(values.get("SERVICE", "")).strip()
     mc_root_text = str(values.get("MINECRAFT_ROOT_DIR", "")).strip()
     backup_dir_text = str(values.get("BACKUP_DIR", "")).strip()
@@ -33,23 +46,23 @@ def validate_runtime_locations(values, *, allow_create_backup_missing=False):
     return errors
 
 
-def validate_service_name(service_name, minecraft_root=None):
+def validate_service_name(service_name: object, minecraft_root: object = None) -> str:
     """Return service validation error string or empty string."""
     name = str(service_name or "").strip()
     if not name:
         return "service not found."
-    if not _is_service_loadable(name, minecraft_root=minecraft_root):
+    if not _is_service_loadable(name, minecraft_root=str(minecraft_root or "").strip()):
         return "service not found."
     return ""
 
 
-def _is_service_loadable(service_name, *, minecraft_root=None):
+def _is_service_loadable(service_name: object, *, minecraft_root: object = None) -> bool:
     """Probe OS service manager and return whether the named service is loadable."""
     try:
         probe = ports.service_control.service_show_load_state(
-            service_name,
+            str(service_name or "").strip(),
             timeout=5,
-            minecraft_root=minecraft_root,
+            minecraft_root=str(minecraft_root or "").strip(),
         )
         load_state = str(probe.stdout or "").strip().lower()
         return probe.returncode == 0 and load_state not in {"", "not-found", "error"}
@@ -57,7 +70,7 @@ def _is_service_loadable(service_name, *, minecraft_root=None):
         return False
 
 
-def _existing_parent(path_obj):
+def _existing_parent(path_obj: str | Path) -> Path:
     """Walk up parents until an existing path is found."""
     current = Path(path_obj)
     while True:
@@ -68,13 +81,13 @@ def _existing_parent(path_obj):
         current = current.parent
 
 
-def _can_write_existing_dir(path_obj):
+def _can_write_existing_dir(path_obj: str | Path) -> bool:
     """Check effective write permission by creating a short-lived temp file."""
     probe_dir = Path(path_obj)
     return ports.filesystem.can_write_dir(probe_dir)
 
 
-def _directory_state(path_value):
+def _directory_state(path_value: object) -> DirectoryState:
     """Return existence/writability state for a target directory path."""
     path_obj = Path(str(path_value or "").strip())
     exists_dir = path_obj.exists() and path_obj.is_dir()
@@ -97,11 +110,12 @@ def _directory_state(path_value):
     }
 
 
-def validate_minecraft_root(path_value):
+def validate_minecraft_root(path_value: object) -> ValidationResult:
     """Return minecraft-root validation details."""
-    if not ports.service_control.is_valid_env_path(path_value):
+    path_text = str(path_value or "").strip()
+    if not ports.service_control.is_valid_env_path(path_text):
         return {"errors": ["invalid path for detected OS."], "missing": False}
-    state = _directory_state(path_value)
+    state = _directory_state(path_text)
     errors = []
     if state["missing"]:
         errors.append("location does not exist.")
@@ -114,11 +128,12 @@ def validate_minecraft_root(path_value):
     return {"errors": errors, "missing": state["missing"]}
 
 
-def validate_backup_location(path_value, allow_create_missing=False):
+def validate_backup_location(path_value: object, allow_create_missing: bool = False) -> ValidationResult:
     """Return backup-location validation details."""
-    if not ports.service_control.is_valid_env_path(path_value):
+    path_text = str(path_value or "").strip()
+    if not ports.service_control.is_valid_env_path(path_text):
         return {"errors": ["invalid path for detected OS."], "missing": False}
-    state = _directory_state(path_value)
+    state = _directory_state(path_text)
     errors = []
     if state["missing"]:
         if not allow_create_missing:

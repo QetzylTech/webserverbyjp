@@ -1,8 +1,21 @@
 """Build status/cache/device-map helper callables for main.py."""
-def build_system_bindings(namespace, *, status_cache_service, dashboard_log_runtime_service, device_name_map_lookup):
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def build_system_bindings(
+    namespace: dict[str, Any],
+    *,
+    status_cache_service: Any,
+    dashboard_log_runtime_service: Any,
+    device_name_map_lookup: Any,
+) -> dict[str, Any]:
     """Return system helpers bound to runtime namespace."""
     ns = namespace
-    def _value(key):
+
+    def _value(key: str) -> Any:
         if key in ns:
             return ns[key]
         state = ns.get("STATE")
@@ -13,7 +26,7 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_log_runt
                 pass
         raise KeyError(key)
 
-    def get_status():
+    def get_status() -> Any:
         return status_cache_service.get_status(
             cache_lock=_value("service_status_cache_lock"),
             cache_value_ref=_value("service_status_cache_value_ref"),
@@ -27,41 +40,41 @@ def build_system_bindings(namespace, *, status_cache_service, dashboard_log_runt
             log_exception=_value("log_mcweb_exception"),
         )
 
-    def invalidate_status_cache():
+    def invalidate_status_cache() -> None:
         status_cache_service.invalidate_status_cache(
             ns["service_status_cache_lock"],
             ns["service_status_cache_value_ref"],
             ns["service_status_cache_at_ref"],
         )
 
-    def _load_backup_log_cache_from_disk():
+    def _load_backup_log_cache_from_disk() -> Any:
         return dashboard_log_runtime_service.load_backup_log_cache_from_disk(ns["STATE"])
 
-    def _append_backup_log_cache_line(line):
+    def _append_backup_log_cache_line(line: Any) -> Any:
         return dashboard_log_runtime_service.append_backup_log_cache_line(ns["STATE"], line)
 
-    def _get_cached_backup_log_text():
+    def _get_cached_backup_log_text() -> Any:
         return dashboard_log_runtime_service.get_cached_backup_log_text(ns["STATE"])
 
-    def _load_minecraft_log_cache_from_journal():
+    def _load_minecraft_log_cache_from_journal() -> Any:
         return dashboard_log_runtime_service.load_minecraft_log_cache_from_journal(ns["STATE"])
 
-    def _append_minecraft_log_cache_line(line):
+    def _append_minecraft_log_cache_line(line: Any) -> Any:
         return dashboard_log_runtime_service.append_minecraft_log_cache_line(ns["STATE"], line)
 
-    def _get_cached_minecraft_log_text():
+    def _get_cached_minecraft_log_text() -> Any:
         return dashboard_log_runtime_service.get_cached_minecraft_log_text(ns["STATE"])
 
-    def _load_mcweb_log_cache_from_disk():
+    def _load_mcweb_log_cache_from_disk() -> Any:
         return dashboard_log_runtime_service.load_mcweb_log_cache_from_disk(ns["STATE"])
 
-    def _append_mcweb_log_cache_line(line):
+    def _append_mcweb_log_cache_line(line: Any) -> Any:
         return dashboard_log_runtime_service.append_mcweb_log_cache_line(ns["STATE"], line)
 
-    def _get_cached_mcweb_log_text():
+    def _get_cached_mcweb_log_text() -> Any:
         return dashboard_log_runtime_service.get_cached_mcweb_log_text(ns["STATE"])
 
-    def get_device_name_map():
+    def get_device_name_map() -> Any:
         return device_name_map_lookup(
             csv_path=_value("DEVICE_MAP_CSV_PATH"),
             cache_lock=_value("device_name_map_lock"),

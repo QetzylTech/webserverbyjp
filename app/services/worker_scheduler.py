@@ -77,7 +77,13 @@ def _resolve_stop_event(ctx: Any, spec: WorkerSpec) -> threading.Event | None:
     return event
 
 
-def start_worker(ctx: Any, spec: WorkerSpec, *, daemon: bool = True, threading_module=threading):
+def start_worker(
+    ctx: Any,
+    spec: WorkerSpec,
+    *,
+    daemon: bool = True,
+    threading_module: Any = threading,
+) -> Any:
     """Start one worker thread via the central scheduler."""
     marker = _health_name(spec)
     with _REGISTRY_LOCK:
@@ -88,7 +94,7 @@ def start_worker(ctx: Any, spec: WorkerSpec, *, daemon: bool = True, threading_m
 
     stop_event = _resolve_stop_event(ctx, spec)
 
-    def _runner():
+    def _runner() -> None:
         _set_health(
             ctx,
             spec,
@@ -118,7 +124,14 @@ def start_worker(ctx: Any, spec: WorkerSpec, *, daemon: bool = True, threading_m
     return thread
 
 
-def start_detached(*, target: Callable[..., Any], args: tuple[Any, ...] = (), kwargs: dict[str, Any] | None = None, daemon: bool = True, threading_module=threading):
+def start_detached(
+    *,
+    target: Callable[..., Any],
+    args: tuple[Any, ...] = (),
+    kwargs: dict[str, Any] | None = None,
+    daemon: bool = True,
+    threading_module: Any = threading,
+) -> Any:
     """Start a one-off detached thread via the scheduler module."""
     thread = threading_module.Thread(target=target, args=args, kwargs=dict(kwargs or {}), daemon=daemon)
     thread.start()

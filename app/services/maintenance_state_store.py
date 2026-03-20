@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import threading
 import time
+from typing import Any
 from zoneinfo import ZoneInfo
 from app.core import state_store as state_store_service
 from app.ports import ports
@@ -25,15 +26,16 @@ _CLEANUP_ERROR_MESSAGES = {
 }
 _CLEANUP_CONFIG_CACHE_TTL_SECONDS = 1.5
 _CLEANUP_CONFIG_CACHE_LOCK = threading.Lock()
-_CLEANUP_CONFIG_CACHE = {}
+JsonDict = dict[str, Any]
+_CLEANUP_CONFIG_CACHE: dict[str, JsonDict] = {}
 
 
 _SCHEDULER_STATE_LOCK = threading.Lock()
-_SCHEDULER_STATE = {"backups": {"last_tick": 0}, "stale_worlds": {"last_tick": 0}}
+_SCHEDULER_STATE: dict[str, dict[str, int]] = {"backups": {"last_tick": 0}, "stale_worlds": {"last_tick": 0}}
 
 
 
-def _safe_int(value, default_value, minimum=0, maximum=10_000):
+def _safe_int(value: object, default_value: int, minimum: int = 0, maximum: int = 10_000) -> int:
     """Parse an integer and clamp it to the configured bounds."""
     try:
         parsed = int(str(value).strip())
@@ -46,31 +48,31 @@ def _safe_int(value, default_value, minimum=0, maximum=10_000):
     return parsed
 
 
-def _cleanup_data_dir(ctx):
+def _cleanup_data_dir(ctx: Any) -> Path:
     """Return the app data directory used for maintenance state files."""
     ctx = as_ctx(ctx)
     return Path(ctx.session_state.session_file).parent
 
 
-def _cleanup_db_path(ctx):
+def _cleanup_db_path(ctx: Any) -> Path:
     """Return sqlite state-db path for structured maintenance records."""
     ctx = as_ctx(ctx)
     return Path(ctx.APP_STATE_DB_PATH)
 
 
-def _cleanup_non_normal_path(ctx):
+def _cleanup_non_normal_path(ctx: Any) -> Path:
     """Return the path used for non-normal cleanup run state."""
     ctx = as_ctx(ctx)
     return _cleanup_data_dir(ctx) / "cleanup_non_normal.txt"
 
 
-def _cleanup_log_path(ctx):
+def _cleanup_log_path(ctx: Any) -> Path:
     """Return the maintenance log file path."""
     ctx = as_ctx(ctx)
     return Path(ctx.MCWEB_LOG_FILE).parent / "cleanup.log"
 
 
-def _cleanup_now_iso(ctx):
+def _cleanup_now_iso(ctx: Any) -> str:
     """Return the current display-tz timestamp in ISO format."""
     ctx = as_ctx(ctx)
     try:
@@ -80,7 +82,7 @@ def _cleanup_now_iso(ctx):
     return datetime.now(tz).isoformat(timespec="seconds")
 
 
-def _cleanup_atomic_write_json(path, payload):
+def _cleanup_atomic_write_json(path: str | Path, payload: JsonDict) -> None:
     """Atomically write JSON maintenance state to disk."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +91,7 @@ def _cleanup_atomic_write_json(path, payload):
     temp.replace(path)
 
 
-def _cleanup_load_json_file(path, default):
+def _cleanup_load_json_file(path: str | Path, default: JsonDict) -> JsonDict:
     """Load JSON from disk, returning default when missing or malformed."""
     path = Path(path)
     if not path.exists():
@@ -101,7 +103,7 @@ def _cleanup_load_json_file(path, default):
     return loaded if isinstance(loaded, dict) else default
 
 
-def _cleanup_default_config():
+def _cleanup_default_config() -> JsonDict:
     """Return the default maintenance configuration payload."""
     return {
         "schema_version": _CLEANUP_SCHEMA_VERSION,
@@ -166,7 +168,7 @@ def _cleanup_default_config():
     }
 
 
-def _cleanup_normalize_scope(raw_scope):
+def _cleanup_normalize_scope(raw_scope: object) -> str:
     """Normalize requested maintenance scope."""
     value = str(raw_scope or "").strip().lower()
     if value in _CLEANUP_SCOPE_CHOICES:
@@ -174,7 +176,7 @@ def _cleanup_normalize_scope(raw_scope):
     return "backups"
 
 
-def _cleanup_apply_scope_categories(rules, scope):
+def _cleanup_apply_scope_categories(rules: JsonDict, scope: str) -> JsonDict:
     """Apply hard category split by scope."""
     categories = rules.setdefault("categories", {})
     if scope == "stale_worlds":
@@ -188,7 +190,7 @@ def _cleanup_apply_scope_categories(rules, scope):
     return rules
 
 
-def _cleanup_get_scope_view(cfg, scope):
+def _cleanup_get_scope_view(cfg: JsonDict, scope: object) -> JsonDict:
     """Get mutable per-scope view with rules/schedules/meta."""
     scope_key = _cleanup_normalize_scope(scope)
     scopes = cfg.setdefault("scopes", {})
@@ -206,7 +208,7 @@ def _cleanup_get_scope_view(cfg, scope):
     return profile
 
 
-def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
+def _cleanup_migrate_config_dict(ctx: Any, loaded: object, default_cfg: JsonDict) -> JsonDict:
     """Normalize cleanup config into the current schema."""
     ctx = as_ctx(ctx)
     cfg = default_cfg
@@ -286,17 +288,17 @@ def _cleanup_migrate_config_dict(ctx, loaded, default_cfg):
     return _cleanup_normalize_config_bounds(cfg)
 
 
-def _cleanup_default_non_normal():
+def _cleanup_default_non_normal() -> JsonDict:
     """Return the default non-normal cleanup run payload."""
     return {"missed_runs": [], "last_ack_at": "", "last_ack_by": ""}
 
 
-def _cleanup_default_history():
+def _cleanup_default_history() -> JsonDict:
     """Return the default cleanup history payload."""
     return {"runs": []}
 
 
-def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
+def _cleanup_apply_scope_from_state(ctx: Any, rules: JsonDict, scope: str = "") -> JsonDict:
     """Apply environment-defined safety/scope values onto rules."""
     ctx = as_ctx(ctx)
     categories = rules.setdefault("categories", {})
@@ -313,7 +315,7 @@ def _cleanup_apply_scope_from_state(ctx, rules, scope=""):
     return rules
 
 
-def _cleanup_normalize_rule_bounds(rules):
+def _cleanup_normalize_rule_bounds(rules: JsonDict) -> JsonDict:
     """Clamp rule values to their hard guard minimums."""
     age = rules.setdefault("age", {})
     age["days"] = _safe_int(age.get("days", 3), 3, minimum=3, maximum=3650)
@@ -337,7 +339,7 @@ def _cleanup_normalize_rule_bounds(rules):
     return rules
 
 
-def _cleanup_normalize_config_bounds(cfg):
+def _cleanup_normalize_config_bounds(cfg: JsonDict) -> JsonDict:
     cfg["rules"] = _cleanup_normalize_rule_bounds(cfg.get("rules", {}))
     for scope_name in _CLEANUP_SCOPE_CHOICES:
         scoped = _cleanup_get_scope_view(cfg, scope_name)
@@ -345,7 +347,7 @@ def _cleanup_normalize_config_bounds(cfg):
     return cfg
 
 
-def _cleanup_cached_config(cache_key, now):
+def _cleanup_cached_config(cache_key: str, now: float) -> JsonDict | None:
     with _CLEANUP_CONFIG_CACHE_LOCK:
         cached = _CLEANUP_CONFIG_CACHE.get(cache_key)
         if not isinstance(cached, dict):
@@ -359,7 +361,7 @@ def _cleanup_cached_config(cache_key, now):
         return copy.deepcopy(payload)
 
 
-def _cleanup_store_cached_config(cache_key, config, now):
+def _cleanup_store_cached_config(cache_key: str, config: JsonDict, now: float) -> None:
     with _CLEANUP_CONFIG_CACHE_LOCK:
         _CLEANUP_CONFIG_CACHE[cache_key] = {
             "expires_at": now + _CLEANUP_CONFIG_CACHE_TTL_SECONDS,
@@ -367,7 +369,7 @@ def _cleanup_store_cached_config(cache_key, config, now):
         }
 
 
-def _cleanup_apply_runtime_scope_overrides(ctx, cfg):
+def _cleanup_apply_runtime_scope_overrides(ctx: Any, cfg: JsonDict) -> JsonDict:
     cfg["rules"] = _cleanup_apply_scope_from_state(ctx, cfg.get("rules", {}))
     for scope_name in _CLEANUP_SCOPE_CHOICES:
         scoped = _cleanup_get_scope_view(cfg, scope_name)
@@ -376,7 +378,7 @@ def _cleanup_apply_runtime_scope_overrides(ctx, cfg):
     return cfg
 
 
-def _cleanup_load_config(ctx):
+def _cleanup_load_config(ctx: Any) -> JsonDict:
     """Load and cache the maintenance configuration from persistent storage."""
     ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
@@ -409,7 +411,7 @@ def _cleanup_load_config(ctx):
     return copy.deepcopy(cfg)
 
 
-def _cleanup_save_config(ctx, payload):
+def _cleanup_save_config(ctx: Any, payload: JsonDict) -> None:
     """Persist cleanup config to sqlite."""
     ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
@@ -419,7 +421,7 @@ def _cleanup_save_config(ctx, payload):
         _CLEANUP_CONFIG_CACHE.pop(cache_key, None)
 
 
-def _cleanup_load_non_normal(ctx):
+def _cleanup_load_non_normal(ctx: Any) -> JsonDict:
     """Load the non-normal cleanup run payload from disk."""
     ctx = as_ctx(ctx)
     path = _cleanup_non_normal_path(ctx)
@@ -434,7 +436,7 @@ def _cleanup_load_non_normal(ctx):
     return data
 
 
-def get_cleanup_meta(ctx, scope="backups"):
+def get_cleanup_meta(ctx: Any, scope: str = "backups") -> JsonDict:
     """Return cleanup meta fields for the requested scope."""
     cfg = _cleanup_load_config(ctx)
     scope_view = _cleanup_get_scope_view(cfg, scope)
@@ -449,7 +451,7 @@ def get_cleanup_meta(ctx, scope="backups"):
     }
 
 
-def get_cleanup_missed_run_count(ctx):
+def get_cleanup_missed_run_count(ctx: Any) -> int:
     """Return count of missed cleanup runs from non-normal tracking."""
     data = _cleanup_load_non_normal(ctx)
     missed = data.get("missed_runs") if isinstance(data, dict) else None
@@ -466,7 +468,7 @@ def get_cleanup_missed_run_count(ctx):
     return 0
 
 
-def _cleanup_get_client_ip(ctx):
+def _cleanup_get_client_ip(ctx: Any) -> str:
     """Resolve the client IP for maintenance actions."""
     ctx = as_ctx(ctx)
     getter = getattr(ctx, "_get_client_ip", None)
@@ -478,7 +480,15 @@ def _cleanup_get_client_ip(ctx):
     return ""
 
 
-def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
+def _cleanup_log(
+    ctx: Any,
+    *,
+    what: object,
+    why: object,
+    trigger: object,
+    result: object,
+    details: object = "",
+) -> None:
     """Append one maintenance log record to disk."""
     ctx = as_ctx(ctx)
     stamp = _cleanup_now_iso(ctx)
@@ -495,7 +505,7 @@ def _cleanup_log(ctx, *, what, why, trigger, result, details=""):
         pass
 
 
-def _cleanup_safe_used_percent(path):
+def _cleanup_safe_used_percent(path: str | Path) -> tuple[float | None, int | None, int | None]:
     """Return used-percent and capacity numbers for the backup filesystem."""
     try:
         total, _used, free = ports.filesystem.disk_usage(path)
@@ -509,20 +519,27 @@ def _cleanup_safe_used_percent(path):
     return (100.0 * used / total), total, free
 
 
-def _cleanup_record_scheduler_tick(ctx, scope, now_ts, *, max_gap_seconds=75):
+def _cleanup_record_scheduler_tick(
+    ctx: Any,
+    scope: object,
+    now_ts: object,
+    *,
+    max_gap_seconds: int = 75,
+) -> int:
     """Update scheduler tick state and mark missed runs on gaps."""
     scope_key = _cleanup_normalize_scope(scope) if scope else "backups"
     with _SCHEDULER_STATE_LOCK:
-        last_tick = int(_SCHEDULER_STATE.get(scope_key, {}).get("last_tick", 0) or 0)
+        last_tick = _safe_int(_SCHEDULER_STATE.get(scope_key, {}).get("last_tick", 0), 0, minimum=0, maximum=2_147_483_647)
         if scope_key not in _SCHEDULER_STATE:
             _SCHEDULER_STATE[scope_key] = {"last_tick": last_tick}
-        _SCHEDULER_STATE[scope_key]["last_tick"] = int(now_ts or 0)
-    if last_tick > 0 and int(now_ts or 0) - last_tick > int(max_gap_seconds or 0):
+        now_tick = _safe_int(now_ts, 0, minimum=0, maximum=2_147_483_647)
+        _SCHEDULER_STATE[scope_key]["last_tick"] = now_tick
+    if last_tick > 0 and now_tick - last_tick > _safe_int(max_gap_seconds, 0, minimum=0, maximum=2_147_483_647):
         _cleanup_mark_missed_run(ctx, "scheduler_gap", schedule_id=f"{scope_key}:scheduler", scope=scope_key)
     return last_tick
 
 
-def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):
+def _cleanup_mark_missed_run(ctx: Any, reason: object, schedule_id: object = "", scope: object = "") -> None:
     """Record a missed cleanup run for scheduler diagnostics."""
     ctx = as_ctx(ctx)
     data = _cleanup_load_non_normal(ctx)
@@ -537,7 +554,7 @@ def _cleanup_mark_missed_run(ctx, reason, schedule_id="", scope=""):
     _cleanup_atomic_write_json(_cleanup_non_normal_path(ctx), data)
 
 
-def _cleanup_load_history(ctx):
+def _cleanup_load_history(ctx: Any) -> JsonDict:
     """Load cleanup run history from persistent storage."""
     ctx = as_ctx(ctx)
     default = _cleanup_default_history()
@@ -549,7 +566,7 @@ def _cleanup_load_history(ctx):
         return default
 
 
-def _cleanup_save_history(ctx, payload):
+def _cleanup_save_history(ctx: Any, payload: JsonDict) -> None:
     """Persist cleanup history document to sqlite."""
     ctx = as_ctx(ctx)
     db_path = _cleanup_db_path(ctx)
@@ -558,19 +575,19 @@ def _cleanup_save_history(ctx, payload):
 
 
 def _cleanup_append_history(
-    ctx,
+    ctx: Any,
     *,
-    trigger,
-    mode,
-    dry_run,
-    deleted_count,
-    errors_count,
-    requested_count=0,
-    capped_count=0,
-    result="ok",
-    details="",
-    scope="",
-):
+    trigger: object,
+    mode: object,
+    dry_run: object,
+    deleted_count: object,
+    errors_count: object,
+    requested_count: object = 0,
+    capped_count: object = 0,
+    result: object = "ok",
+    details: object = "",
+    scope: object = "",
+) -> None:
     """Append cleanup run history entry."""
     ctx = as_ctx(ctx)
     item = {
@@ -578,10 +595,10 @@ def _cleanup_append_history(
         "trigger": str(trigger),
         "mode": str(mode),
         "dry_run": bool(dry_run),
-        "deleted_count": int(deleted_count or 0),
-        "errors_count": int(errors_count or 0),
-        "requested_count": int(requested_count or 0),
-        "capped_count": int(capped_count or 0),
+        "deleted_count": _safe_int(deleted_count, 0, minimum=0, maximum=2_147_483_647),
+        "errors_count": _safe_int(errors_count, 0, minimum=0, maximum=2_147_483_647),
+        "requested_count": _safe_int(requested_count, 0, minimum=0, maximum=2_147_483_647),
+        "capped_count": _safe_int(capped_count, 0, minimum=0, maximum=2_147_483_647),
         "result": str(result),
         "details": str(details or ""),
         "scope": _cleanup_normalize_scope(scope) if scope else "",
@@ -590,7 +607,7 @@ def _cleanup_append_history(
     state_store_service.append_cleanup_history_run(db_path, item, max_rows=500)
 
 
-def _cleanup_error(code, extra=None, status=400):
+def _cleanup_error(code: str, extra: object = None, status: int = 400) -> tuple[JsonDict, int]:
     """Build a consistent error response payload for maintenance endpoints."""
     payload = {"ok": False, "error_code": code, "message": _CLEANUP_ERROR_MESSAGES.get(code, "Cleanup operation failed.")}
     if extra is not None:
