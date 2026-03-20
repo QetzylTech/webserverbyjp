@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from zoneinfo import ZoneInfo, available_timezones
 
 from app.services import setup_service as setup_service_service
@@ -10,7 +11,7 @@ from app.services import setup_service as setup_service_service
 _REQUIRED_MESSAGE = "Please fill in all required fields."
 
 
-def _format_offset(total_minutes):
+def _format_offset(total_minutes: int) -> str:
     """Render timezone offset minutes as a stable UTC+HH:MM label."""
     sign = "+" if total_minutes >= 0 else "-"
     absolute = abs(int(total_minutes))
@@ -19,12 +20,12 @@ def _format_offset(total_minutes):
     return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
 
-def _to_bool(value):
+def _to_bool(value: object) -> bool:
     """Parse common truthy string variants from form payload values."""
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def build_timezone_options(default_tz):
+def build_timezone_options(default_tz: object) -> list[dict[str, object]]:
     """Build timezone dropdown options sorted by numeric UTC offset then name."""
     fallback = [
         "UTC",
@@ -42,7 +43,7 @@ def build_timezone_options(default_tz):
     selected = str(default_tz or "").strip()
     if selected and selected not in zones:
         zones.append(selected)
-    items = []
+    items: list[dict[str, object]] = []
     now_utc = datetime.now(timezone.utc)
     for tz_name in zones:
         try:
@@ -61,7 +62,7 @@ def build_timezone_options(default_tz):
     return items
 
 
-def _required_field_error(field_key):
+def _required_field_error(field_key: str) -> dict[str, Any]:
     return {
         "ok": False,
         "message": _REQUIRED_MESSAGE,
@@ -69,7 +70,7 @@ def _required_field_error(field_key):
     }
 
 
-def validate_setup_request(kind, values):
+def validate_setup_request(kind: object, values: object) -> dict[str, Any]:
     """Validate setup request payload and return an ok/err response payload."""
     kind = str(kind or "").strip().lower()
     values = values if isinstance(values, dict) else {}
@@ -98,7 +99,7 @@ def validate_setup_request(kind, values):
             minecraft_root=root,
         )
         root_result = setup_service_service.validate_minecraft_root(root)
-        messages = []
+        messages: list[str] = []
         if service_error:
             messages.append(service_error)
         messages.extend(root_result.get("errors", []))

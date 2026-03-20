@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any, Callable, cast
 
 from app.core import state_store as state_store_service
 from app.services import dashboard_file_runtime as dashboard_file_runtime_service
@@ -17,12 +18,23 @@ from app.services.maintenance_state_store import (
 )
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
+_state_store_service = cast(Any, state_store_service)
+_dashboard_file_runtime_service = cast(Any, dashboard_file_runtime_service)
+_file_inventory_index_service = cast(Any, file_inventory_index_service)
 
-def _update_operation(ctx, op_id, **updates):
-    state_store_service.update_operation(ctx.APP_STATE_DB_PATH, op_id=op_id, **updates)
+
+def _event_id(value: object, default: int = 0) -> int:
+    try:
+        return int(str(value or default))
+    except Exception:
+        return default
 
 
-def _mark_operation_started(ctx, op_id, message):
+def _update_operation(ctx: Any, op_id: str, **updates: Any) -> None:
+    _state_store_service.update_operation(ctx.APP_STATE_DB_PATH, op_id=op_id, **updates)
+
+
+def _mark_operation_started(ctx: Any, op_id: str, message: str) -> None:
     _update_operation(
         ctx,
         op_id,
@@ -33,7 +45,15 @@ def _mark_operation_started(ctx, op_id, message):
     )
 
 
-def _fail_operation(ctx, op_id, *, error_code, checkpoint, message, payload=None):
+def _fail_operation(
+    ctx: Any,
+    op_id: str,
+    *,
+    error_code: str,
+    checkpoint: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
     updates = {
         "status": "failed",
         "error_code": error_code,
@@ -46,7 +66,13 @@ def _fail_operation(ctx, op_id, *, error_code, checkpoint, message, payload=None
     _update_operation(ctx, op_id, **updates)
 
 
-def _complete_operation(ctx, op_id, *, message, payload=None):
+def _complete_operation(
+    ctx: Any,
+    op_id: str,
+    *,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
     updates = {
         "status": "observed",
         "checkpoint": "observed",
@@ -58,8 +84,8 @@ def _complete_operation(ctx, op_id, *, message, payload=None):
     _update_operation(ctx, op_id, **updates)
 
 
-def _dispatch_control_intent(ctx, op_type, op_id, target):
-    handlers = {
+def _dispatch_control_intent(ctx: Any, op_type: str, op_id: str, target: object) -> None:
+    handlers: dict[str, Callable[[], None]] = {
         "start": lambda: _execute_start(ctx, op_id),
         "stop": lambda: _execute_stop(ctx, op_id),
         "backup": lambda: _execute_backup(ctx, op_id),
@@ -71,7 +97,7 @@ def _dispatch_control_intent(ctx, op_type, op_id, target):
     handler()
 
 
-def _interval_seconds(ctx, name, default_value):
+def _interval_seconds(ctx: Any, name: str, default_value: float) -> float:
     try:
         value = float(getattr(ctx, name, default_value))
     except Exception:
@@ -79,7 +105,7 @@ def _interval_seconds(ctx, name, default_value):
     return max(1.0, value)
 
 
-def _maintenance_precompute_loop(ctx):
+def _maintenance_precompute_loop(ctx: Any) -> None:
     interval = _interval_seconds(ctx, "WORKER_MAINTENANCE_PRECOMPUTE_INTERVAL_SECONDS", 8.0)
     while True:
         try:
@@ -88,7 +114,7 @@ def _maintenance_precompute_loop(ctx):
                 cfg = _cleanup_get_scope_view(full_cfg, scope)
                 snapshot = _cleanup_state_snapshot(ctx, cfg)
                 preview = _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="worker_precompute")
-                state_store_service.append_event(
+                _state_store_service.append_event(
                     ctx.APP_STATE_DB_PATH,
                     topic=f"maintenance_state:{scope}",
                     payload={
@@ -102,7 +128,7 @@ def _maintenance_precompute_loop(ctx):
         time.sleep(interval)
 
 
-def _execute_start(ctx, op_id):
+def _execute_start(ctx: Any, op_id: str) -> None:
     _mark_operation_started(ctx, op_id, "Start operation in progress.")
     result = ctx.start_service_non_blocking(timeout=12)
     if not bool((result or {}).get("ok")):
@@ -139,7 +165,7 @@ def _execute_start(ctx, op_id):
     )
 
 
-def _execute_stop(ctx, op_id):
+def _execute_stop(ctx: Any, op_id: str) -> None:
     _mark_operation_started(ctx, op_id, "Stop operation in progress.")
     result = ctx.graceful_stop_minecraft()
     service_stop_ok = bool((result or {}).get("service_stop_ok")) if isinstance(result, dict) else bool(result)
@@ -166,7 +192,7 @@ def _execute_stop(ctx, op_id):
     _complete_operation(ctx, op_id, message="Service stop observed.")
 
 
-def _execute_backup(ctx, op_id):
+def _execute_backup(ctx: Any, op_id: str) -> None:
     _mark_operation_started(ctx, op_id, "Backup operation in progress.")
     ok = ctx.run_backup_script(trigger="manual")
     if not ok:
@@ -185,7 +211,7 @@ def _execute_backup(ctx, op_id):
     _complete_operation(ctx, op_id, message="Backup operation observed complete.")
 
 
-def _execute_restore(ctx, op_id, target):
+def _execute_restore(ctx: Any, op_id: str, target: object) -> None:
     _mark_operation_started(ctx, op_id, "Restore operation in progress.")
     filename = str(target or "").strip()
     result = ctx.start_restore_job(filename)
@@ -244,12 +270,12 @@ def _execute_restore(ctx, op_id, target):
     )
 
 
-def _control_intent_consumer_loop(ctx):
+def _control_intent_consumer_loop(ctx: Any) -> None:
     interval = _interval_seconds(ctx, "WORKER_CONTROL_INTENT_POLL_SECONDS", 0.75)
     last_id = 0
     while True:
         try:
-            rows = state_store_service.list_events_since(
+            rows = _state_store_service.list_events_since(
                 ctx.APP_STATE_DB_PATH,
                 topic="control_intent",
                 since_id=last_id,
@@ -259,7 +285,7 @@ def _control_intent_consumer_loop(ctx):
             ctx.log_mcweb_exception("worker_control_intent_list", exc)
             rows = []
         for row in rows:
-            event_id = int((row or {}).get("id", 0) or 0)
+            event_id = _event_id((row or {}).get("id", 0))
             if event_id > last_id:
                 last_id = event_id
             payload = row.get("payload", {}) if isinstance(row, dict) else {}
@@ -271,7 +297,7 @@ def _control_intent_consumer_loop(ctx):
             if not op_id or op_type not in {"start", "stop", "backup", "restore"}:
                 continue
             try:
-                item = state_store_service.get_operation(ctx.APP_STATE_DB_PATH, op_id)
+                item = _state_store_service.get_operation(ctx.APP_STATE_DB_PATH, op_id)
             except Exception:
                 item = None
             if not isinstance(item, dict):
@@ -296,25 +322,25 @@ def _control_intent_consumer_loop(ctx):
         time.sleep(interval)
 
 
-def _index_refresh_loop(ctx):
+def _index_refresh_loop(ctx: Any) -> None:
     interval = _interval_seconds(ctx, "WORKER_INDEX_REFRESH_INTERVAL_SECONDS", 6.0)
     while True:
         try:
             backup_dir = Path(ctx.BACKUP_DIR)
             snapshot_root = Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (backup_dir / "snapshots"))
             old_worlds_root = (_cleanup_data_dir(ctx) / "old_worlds").resolve()
-            file_inventory_index_service.get_inventory(
+            _file_inventory_index_service.get_inventory(
                 backup_root=backup_dir,
                 snapshot_root=snapshot_root,
                 old_worlds_root=old_worlds_root,
             )
-            dashboard_file_runtime_service.refresh_file_page_items(ctx, "backups")
+            _dashboard_file_runtime_service.refresh_file_page_items(ctx, "backups")
         except Exception as exc:
             ctx.log_mcweb_exception("worker_index_refresh_loop", exc)
         time.sleep(interval)
 
 
-def start_worker_loops(ctx):
+def start_worker_loops(ctx: Any) -> None:
     """Start worker-only loops: reconciler + maintenance precompute + index refresh."""
     try:
         ctx.start_operation_reconciler()

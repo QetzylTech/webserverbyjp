@@ -1,8 +1,16 @@
 """Application bootstrap/run helpers."""
+from typing import Any, Callable, Iterable
+
 from app.ports import ports
 
 
-def run_server(app, app_config, log_mcweb_log, log_mcweb_exception, boot_steps):
+def run_server(
+    app: Any,
+    app_config: Any,
+    log_mcweb_log: Callable[..., None],
+    log_mcweb_exception: Callable[[str, Exception], None],
+    boot_steps: Iterable[tuple[str, Callable[[], None]]],
+) -> None:
     """Run startup steps, then start Flask server."""
     host = "0.0.0.0"
     default_port = 8080

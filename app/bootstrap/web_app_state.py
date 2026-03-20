@@ -1,8 +1,11 @@
 """Runtime state construction for the web bootstrap."""
 
 from collections import deque
+from datetime import tzinfo
+from pathlib import Path
 import re
 import threading
+from typing import Any
 
 from app.ports import ports
 from app.state import BackupState, SessionState
@@ -11,7 +14,7 @@ from app.services.storage_guard import StorageGuard
 FAVICON_URL = "https://static.wikia.nocookie.net/logopedia/images/e/e3/Minecraft_Launcher.svg/revision/latest/scale-to-width-down/250?cb=20230616222246"
 
 
-def build_state(app_config, *, app_dir, display_tz):
+def build_state(app_config: Any, *, app_dir: Path, display_tz: tzinfo) -> dict[str, Any]:
     backup_script = ports.service_control.resolve_backup_script_path(app_dir)
     backup_dir = app_config.backup_dir
     minecraft_root_dir = app_config.minecraft_root_dir
@@ -140,25 +143,25 @@ def build_state(app_config, *, app_dir, display_tz):
     metrics_collector_start_lock = threading.Lock()
     metrics_cache_cond = threading.Condition()
     metrics_cache_seq = 0
-    metrics_cache_payload = {}
+    metrics_cache_payload: dict[str, Any] = {}
     metrics_stream_client_count = 0
     home_page_last_seen = 0.0
     service_status_cache_lock = threading.Lock()
     service_status_cache_value_ref = [""]
     service_status_cache_at_ref = [0.0]
     slow_metrics_lock = threading.Lock()
-    slow_metrics_cache = {}
+    slow_metrics_cache: dict[str, Any] = {}
     slow_metrics_cache_status = ""
     slow_metrics_cache_at = 0.0
     backup_log_cache_lock = threading.Lock()
-    backup_log_cache_lines = deque(maxlen=backup_log_text_limit)
+    backup_log_cache_lines: deque[str] = deque(maxlen=backup_log_text_limit)
     backup_log_cache_loaded = False
     backup_log_cache_mtime_ns = None
     minecraft_log_cache_lock = threading.Lock()
-    minecraft_log_cache_lines = deque(maxlen=minecraft_log_text_limit)
+    minecraft_log_cache_lines: deque[str] = deque(maxlen=minecraft_log_text_limit)
     minecraft_log_cache_loaded = False
     mcweb_log_cache_lock = threading.Lock()
-    mcweb_log_cache_lines = deque(maxlen=mcweb_action_log_text_limit)
+    mcweb_log_cache_lines: deque[str] = deque(maxlen=mcweb_action_log_text_limit)
     mcweb_log_cache_loaded = False
     mcweb_log_cache_mtime_ns = None
     file_page_last_seen = 0.0
@@ -190,14 +193,14 @@ def build_state(app_config, *, app_dir, display_tz):
     storage_emergency_active = False
     storage_guard = StorageGuard()
     client_registry_lock = threading.Lock()
-    client_registry = {}
+    client_registry: dict[str, dict[str, Any]] = {}
     device_name_map_lock = threading.Lock()
-    device_name_map_cache = {}
+    device_name_map_cache: dict[str, str] = {}
     device_name_map_mtime_ns_ref = [None]
     password_throttle_lock = threading.Lock()
-    password_throttle_state = {"by_ip": {}}
+    password_throttle_state: dict[str, dict[str, dict[str, Any]]] = {"by_ip": {}}
 
-    log_stream_states = {
+    log_stream_states: dict[str, dict[str, Any]] = {
         source: {
             "cond": threading.Condition(),
             "seq": 0,
@@ -371,3 +374,4 @@ def build_state(app_config, *, app_dir, display_tz):
         "APP_CONFIG": app_config,
         "re": re,
     }
+

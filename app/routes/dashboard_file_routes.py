@@ -1,5 +1,7 @@
 """File and log routes for the shell-first MC web dashboard."""
+# mypy: disable-error-code=untyped-decorator
 import time
+from typing import Any, Iterator, Mapping, cast
 
 from flask import Response, abort, after_this_request, jsonify, redirect, render_template, request, send_file, send_from_directory, stream_with_context, url_for
 from app.core import state_store as state_store_service
@@ -8,7 +10,18 @@ from app.commands import snapshot_commands
 from app.queries import dashboard_file_queries as file_queries
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 
-def _sse_response(generator):
+_state_store_service = cast(Any, state_store_service)
+_client_registry_service = cast(Any, client_registry_service)
+
+
+def _event_id(value: object, default: int = 0) -> int:
+    try:
+        return int(str(value or default))
+    except Exception:
+        return default
+
+
+def _sse_response(generator: Iterator[str]) -> Response:
     return Response(
         stream_with_context(generator),
         mimetype="text/event-stream",
@@ -19,12 +32,12 @@ def _sse_response(generator):
     )
 
 
-def register_file_routes(app, state):
+def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
     """Register file browsing and log streaming routes."""
 
     # Route: /backups
     @app.route("/backups")
-    def backups_page():
+    def backups_page() -> Any:
         """Render the backup page shell or backup fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
@@ -45,13 +58,13 @@ def register_file_routes(app, state):
 
     # Route: /crash-logs
     @app.route("/crash-logs")
-    def crash_logs_page():
+    def crash_logs_page() -> Any:
         """Redirect the retired crash-report page to the unified log browser."""
         return redirect(url_for("minecraft_logs_page", source="crash"))
 
     # Route: /minecraft-logs
     @app.route("/minecraft-logs")
-    def minecraft_logs_page():
+    def minecraft_logs_page() -> Any:
         """Render the unified log-browser shell or fragment payload."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
@@ -77,7 +90,7 @@ def register_file_routes(app, state):
 
     # Route: /file-page-heartbeat
     @app.route("/file-page-heartbeat", methods=["POST"])
-    def file_page_heartbeat():
+    def file_page_heartbeat() -> Any:
         """Refresh the activity marker used by the file-page cache worker."""
         state["ensure_file_page_cache_refresher_started"]()
         client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
@@ -90,7 +103,7 @@ def register_file_routes(app, state):
 
     # Route: /file-page-items/<page_name>
     @app.route("/file-page-items/<page_name>")
-    def file_page_items(page_name):
+    def file_page_items(page_name: str) -> Any:
         """Return one shell-hydration payload for backup or crash-log file pages."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
@@ -114,7 +127,7 @@ def register_file_routes(app, state):
 
     # Route: /download/backups/<path:filename>
     @app.route("/download/backups/<path:filename>", methods=["POST"])
-    def download_backup(filename):
+    def download_backup(filename: str) -> Any:
         """Runtime helper download_backup."""
         sudo_password = request.form.get("sudo_password", "")
         if not state["validate_sudo_password"](sudo_password):
@@ -130,7 +143,7 @@ def register_file_routes(app, state):
 
     # Route: /download/backups-snapshot/<path:snapshot_name>
     @app.route("/download/backups-snapshot/<path:snapshot_name>", methods=["POST"])
-    def download_snapshot(snapshot_name):
+    def download_snapshot(snapshot_name: str) -> Any:
         """Zip one snapshot directory and download it as an attachment."""
         sudo_password = request.form.get("sudo_password", "")
         if not state["validate_sudo_password"](sudo_password):
@@ -147,7 +160,7 @@ def register_file_routes(app, state):
             zip_path, tmp_root = snapshot_commands.build_snapshot_archive(snapshot_dir, safe_name)
 
             @after_this_request
-            def _cleanup_temp_zip(response):
+            def _cleanup_temp_zip(response: Response) -> Response:
                 snapshot_commands.cleanup_snapshot_archive(tmp_root)
                 return response
 
@@ -164,7 +177,7 @@ def register_file_routes(app, state):
 
     # Route: /download/crash-logs/<path:filename>
     @app.route("/download/crash-logs/<path:filename>")
-    def download_crash_log(filename):
+    def download_crash_log(filename: str) -> Any:
         """Runtime helper download_crash_log."""
         safe_name = state["_safe_filename_in_dir"](state["CRASH_REPORTS_DIR"], filename)
         if safe_name is None:
@@ -173,7 +186,7 @@ def register_file_routes(app, state):
 
     # Route: /download/minecraft-logs/<path:filename>
     @app.route("/download/minecraft-logs/<path:filename>")
-    def download_minecraft_log(filename):
+    def download_minecraft_log(filename: str) -> Any:
         """Runtime helper download_minecraft_log."""
         safe_name = state["_safe_filename_in_dir"](state["MINECRAFT_LOGS_DIR"], filename)
         if safe_name is None:
@@ -182,7 +195,7 @@ def register_file_routes(app, state):
 
     # Route: /download/log-files/<source>/<path:filename>
     @app.route("/download/log-files/<source>/<path:filename>")
-    def download_log_file(source, filename):
+    def download_log_file(source: str, filename: str) -> Any:
         """Download one non-minecraft log file by source key."""
         spec, safe_name = file_queries.resolve_log_file(state, source, filename)
         if spec is None or safe_name is None:
@@ -191,7 +204,7 @@ def register_file_routes(app, state):
 
     # Route: /log-files/<source>
     @app.route("/log-files/<source>")
-    def list_log_files(source):
+    def list_log_files(source: str) -> Any:
         """Return one log-file inventory payload for the shell-hydrated log browser."""
         state["ensure_file_page_cache_refresher_started"]()
         state["_mark_file_page_client_active"]()
@@ -216,7 +229,7 @@ def register_file_routes(app, state):
 
     # Route: /view-file/<source>/<path:filename>
     @app.route("/view-file/<source>/<path:filename>")
-    def view_file(source, filename):
+    def view_file(source: str, filename: str) -> Any:
         """Runtime helper view_file."""
         source_map = {
             "crash_logs": state["CRASH_REPORTS_DIR"],
@@ -239,7 +252,7 @@ def register_file_routes(app, state):
 
     # Route: /view-log-file/<source>/<path:filename>
     @app.route("/view-log-file/<source>/<path:filename>")
-    def view_log_file(source, filename):
+    def view_log_file(source: str, filename: str) -> Any:
         """View one non-minecraft log file by source key."""
         spec, safe_name = file_queries.resolve_log_file(state, source, filename)
         if spec is None:
@@ -256,7 +269,7 @@ def register_file_routes(app, state):
 
     # Route: /log-stream/<source>
     @app.route("/log-stream/<source>")
-    def log_stream(source):
+    def log_stream(source: str) -> Any:
         """Runtime helper log_stream."""
         settings = state["_log_source_settings"](source)
         if settings is None:
@@ -267,10 +280,10 @@ def register_file_routes(app, state):
         client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
         channel = f"log_stream:{source_key}"
 
-        def generate():
+        def generate() -> Iterator[str]:
             """Runtime helper generate."""
             if client_id:
-                client_registry_service.register_client(state, client_id, channel=channel)
+                _client_registry_service.register_client(state, client_id, channel=channel)
             state["_increment_log_stream_clients"](source_key)
             buffered_lines = state["_drain_buffered_log_lines"](source_key)
             for line in buffered_lines:
@@ -281,11 +294,11 @@ def register_file_routes(app, state):
             db_path = state.get("APP_STATE_DB_PATH")
             if db_path is not None:
                 try:
-                    latest_event = state_store_service.get_latest_event(db_path, topic=db_topic)
+                    latest_event = _state_store_service.get_latest_event(db_path, topic=db_topic)
                 except Exception:
                     latest_event = None
                 if isinstance(latest_event, dict):
-                    last_event_id = int(latest_event.get("id", 0) or 0)
+                    last_event_id = _event_id(latest_event.get("id", 0))
                     last_seq = last_event_id
             stream_state = state.get("log_stream_states", {}).get(source_key)
             heartbeat_seconds = float(state.get("LOG_STREAM_HEARTBEAT_SECONDS", 5) or 5)
@@ -309,7 +322,7 @@ def register_file_routes(app, state):
                     db_path = state.get("APP_STATE_DB_PATH")
                     if db_path is not None:
                         try:
-                            rows = state_store_service.list_events_since(
+                            rows = _state_store_service.list_events_since(
                                 db_path,
                                 topic=db_topic,
                                 since_id=last_event_id,
@@ -324,7 +337,7 @@ def register_file_routes(app, state):
                                 if line:
                                     delivered = True
                                     yield f"data: {line}\n\n"
-                                last_event_id = int(row.get("id", last_event_id) or last_event_id)
+                                last_event_id = _event_id(row.get("id", last_event_id), last_event_id)
                                 last_seq = max(last_seq, last_event_id)
                             continue
                     now = time.time()
@@ -340,14 +353,14 @@ def register_file_routes(app, state):
                         time.sleep(poll_interval)
             finally:
                 if client_id:
-                    client_registry_service.unregister_client(state, client_id, channel=channel)
+                    _client_registry_service.unregister_client(state, client_id, channel=channel)
                 state["_decrement_log_stream_clients"](source_key)
 
         return _sse_response(generate())
 
     # Route: /log-text/<source>
     @app.route("/log-text/<source>")
-    def log_text(source):
+    def log_text(source: str) -> Any:
         """Runtime helper log_text."""
         logs = state["get_log_source_text"](source)
         if logs is None:

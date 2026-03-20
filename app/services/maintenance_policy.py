@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from typing import Any, Mapping
 
 from app.services.maintenance_state_store import (
     _cleanup_default_config,
@@ -9,7 +10,7 @@ from app.services.maintenance_state_store import (
 )
 
 
-def _cleanup_validate_rules(raw_rules):
+def _cleanup_validate_rules(raw_rules: object) -> tuple[bool, str | dict[str, Any]]:
     """Validate and normalize a cleanup rules payload."""
     if not isinstance(raw_rules, dict):
         return False, "Rules payload must be an object."
@@ -113,7 +114,7 @@ def _cleanup_validate_rules(raw_rules):
     return True, rules
 
 
-def _cleanup_schedule_due_now(schedule, now_local):
+def _cleanup_schedule_due_now(schedule: Mapping[str, object], now_local: datetime) -> bool:
     """Return whether a time-based cleanup schedule is due at the given local time."""
     if not schedule.get("enabled", True):
         return False
@@ -129,13 +130,13 @@ def _cleanup_schedule_due_now(schedule, now_local):
     if interval == "daily":
         return True
     if interval == "weekly":
-        return now_local.weekday() == int(schedule.get("day_of_week", 0))
+        return now_local.weekday() == _safe_int(schedule.get("day_of_week", 0), 0, minimum=0, maximum=6)
     if interval == "monthly":
-        return now_local.day == int(schedule.get("day_of_month", 1))
+        return now_local.day == _safe_int(schedule.get("day_of_month", 1), 1, minimum=1, maximum=31)
     if interval == "weekdays":
         return now_local.weekday() in {0, 1, 2, 3, 4}
     if interval == "every_n_days":
-        every_n = max(1, int(schedule.get("every_n_days", 1)))
+        every_n = _safe_int(schedule.get("every_n_days", 1), 1, minimum=1, maximum=365)
         anchor_raw = str(schedule.get("anchor_date", now_local.date().isoformat()))
         try:
             anchor = datetime.fromisoformat(anchor_raw).date()

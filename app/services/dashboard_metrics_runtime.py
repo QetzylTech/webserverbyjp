@@ -65,7 +65,7 @@ def _maybe_refresh_idle_storage_cache(ctx: Any) -> bool:
         backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
         cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
         cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
-        cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")  # type: ignore[no-untyped-call]
+        cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
     except Exception as exc:
         ctx.log_mcweb_exception("idle_storage_refresh", exc)
         ctx.idle_storage_last_at = now
@@ -145,13 +145,25 @@ def usage_class_from_text(ctx: Any, usage_text: object) -> str:
     return class_from_percent(percent)
 
 
+def _coerce_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def get_cpu_per_core_items(ctx: Any, cpu_per_core: list[object]) -> list[dict[str, object]]:
     """Build per-core UI payload with normalized values/classes."""
     items: list[dict[str, object]] = []
     for i, raw in enumerate(cpu_per_core):
-        try:
-            val = float(raw)
-        except (TypeError, ValueError):
+        val = _coerce_float(raw)
+        if val is None:
             items.append({"index": i, "value": raw, "class": "stat-red"})
             continue
         items.append({"index": i, "value": f"{val:.1f}", "class": class_from_percent(val)})
@@ -353,7 +365,7 @@ def collect_dashboard_metrics(ctx: Any) -> dict[str, Any]:
     backup_count, stale_worlds_count, backup_folder = _get_backup_and_stale_counts(ctx)
     cleanup_meta = maintenance_state_store_service.get_cleanup_meta(ctx, scope="backups")
     cleanup_missed_runs = maintenance_state_store_service.get_cleanup_missed_run_count(ctx)
-    cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")  # type: ignore[no-untyped-call]
+    cleanup_next_run = maintenance_scheduler_service.get_next_cleanup_run_at(ctx, scope="backups")
 
     is_running_display = str(service_status_display or "").strip().lower() == "running"
     idle_countdown = "--:--"
@@ -598,3 +610,4 @@ def get_cached_dashboard_metrics(ctx: Any) -> dict[str, Any]:
         "world_name": ctx.get_world_name(),
         "rcon_enabled": ctx.is_rcon_enabled(),
     }
+

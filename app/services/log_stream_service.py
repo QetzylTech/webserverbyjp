@@ -12,6 +12,27 @@ from app.services.worker_scheduler import WorkerSpec, start_worker
 LogSourceSettings = dict[str, object]
 
 
+def _settings_path(value: object) -> Path:
+    if isinstance(value, Path):
+        return value
+    return Path(str(value or ""))
+
+
+def _settings_text_limit(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
 def _file_source_settings(source: str, context: str, path: Path, text_limit: int) -> LogSourceSettings:
     return {
         "source": source,
@@ -80,12 +101,19 @@ def get_log_source_text(ctx: Any, source: object) -> str | None:
     }
     getter = cached_getters.get(normalized)
     if getter is not None:
-        return getter()
+        result = getter()
+        return None if result is None else str(result)
     if normalized == "mcweb_log":
-        lines = ctx._read_recent_file_lines(Path(settings["path"]), int(settings["text_limit"]))
+        lines = ctx._read_recent_file_lines(
+            _settings_path(settings["path"]),
+            _settings_text_limit(settings["text_limit"]),
+        )
         return "\n".join(lines).strip() or "(no logs)"
     if normalized == "restore":
-        lines = ctx._read_recent_file_lines(Path(settings["path"]), int(settings["text_limit"]))
+        lines = ctx._read_recent_file_lines(
+            _settings_path(settings["path"]),
+            _settings_text_limit(settings["text_limit"]),
+        )
         return "\n".join(lines).strip() or "(no logs)"
     return None
 
@@ -323,7 +351,11 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                     if service_status in off_states:
                         time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
                         continue
-                _read_file_updates(stream_state, Path(settings["path"]), allow_break_on_no_clients=False)
+                _read_file_updates(
+                    stream_state,
+                    _settings_path(settings["path"]),
+                    allow_break_on_no_clients=False,
+                )
                 time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
                 continue
             if _allow_background_follow():
@@ -336,7 +368,11 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
         proc = None
         try:
             if settings["type"] == "file_poll":
-                _read_file_updates(stream_state, settings["path"], allow_break_on_no_clients=True)
+                _read_file_updates(
+                    stream_state,
+                    _settings_path(settings["path"]),
+                    allow_break_on_no_clients=True,
+                )
                 time.sleep(1)
                 continue
             if settings["type"] == "journal":
@@ -345,7 +381,11 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                     time.sleep(1)
                     continue
             else:
-                _read_file_updates(stream_state, Path(settings["path"]), allow_break_on_no_clients=True)
+                _read_file_updates(
+                    stream_state,
+                    _settings_path(settings["path"]),
+                    allow_break_on_no_clients=True,
+                )
                 time.sleep(1)
                 continue
 
@@ -418,3 +458,4 @@ def decrement_log_stream_clients(ctx: Any, source: object) -> None:
         stream_state["clients"] = max(0, stream_state["clients"] - 1)
         proc = stream_state["proc"]
     ports.log.terminate_process(proc)
+

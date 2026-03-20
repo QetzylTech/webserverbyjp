@@ -26,10 +26,10 @@ class Ports:
 
 
 ports = Ports(
-    service_control=PlatformServiceControlAdapter(),  # type: ignore[no-untyped-call]
-    metrics=PlatformMetricsAdapter(),  # type: ignore[no-untyped-call]
-    log=PlatformLogAdapter(),  # type: ignore[no-untyped-call]
-    backup=PlatformBackupAdapter(),  # type: ignore[no-untyped-call]
+    service_control=PlatformServiceControlAdapter(),
+    metrics=PlatformMetricsAdapter(),
+    log=PlatformLogAdapter(),
+    backup=PlatformBackupAdapter(),
     store=StateStoreAdapter(),
     filesystem=FilesystemAdapter(),
 )

@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-from app.services import snapshot_archive as snapshot_archive_service
+from app.services.snapshot_archive import build_snapshot_archive, cleanup_snapshot_archive
 
-
-def build_snapshot_archive(snapshot_dir, safe_name):
-    """Create a snapshot zip archive and return (zip_path, tmp_root)."""
-    return snapshot_archive_service.build_snapshot_archive(snapshot_dir, safe_name)
-
-
-def cleanup_snapshot_archive(tmp_root):
-    """Remove temporary snapshot archive directories."""
-    snapshot_archive_service.cleanup_snapshot_archive(tmp_root)
+__all__ = ["build_snapshot_archive", "cleanup_snapshot_archive"]

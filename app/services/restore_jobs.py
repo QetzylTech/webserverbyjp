@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import uuid
+from typing import Any, cast
 
 from app.core import state_store as state_store_service
 from app.services.restore_execution import SNAPSHOT_TOKEN_PREFIX, restore_world_backup
@@ -9,15 +10,18 @@ from app.services.restore_log_utils import build_restore_log_filename
 from app.services.restore_status import _ensure_restore_status_state, append_restore_event
 from app.services.worker_scheduler import start_detached
 
+_restore_world_backup = cast(Any, restore_world_backup)
 
-def _resolve_restore_log_dir(ctx):
+
+def _resolve_restore_log_dir(ctx: Any) -> Path:
     log_dir = getattr(ctx, "MCWEB_LOG_DIR", None)
     if log_dir:
-        return Path(log_dir)
-    return Path(getattr(ctx, "MCWEB_LOG_FILE")).parent
+        return log_dir if isinstance(log_dir, Path) else Path(str(log_dir))
+    log_file = getattr(ctx, "MCWEB_LOG_FILE")
+    return log_file.parent if isinstance(log_file, Path) else Path(str(log_file)).parent
 
 
-def _record_restore_run(ctx, job_id, backup_filename, result):
+def _record_restore_run(ctx: Any, job_id: object, backup_filename: object, result: object) -> None:
     if not isinstance(result, dict):
         return
     payload = {
@@ -57,7 +61,7 @@ def _record_restore_run(ctx, job_id, backup_filename, result):
                 log_exception("restore_backup_records_match", exc)
 
 
-def start_restore_job(ctx, backup_filename):
+def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
     state, lock = _ensure_restore_status_state(ctx)
     with lock:
         if bool(state.get("running")):
@@ -69,7 +73,11 @@ def start_restore_job(ctx, backup_filename):
             }
         job_id = uuid.uuid4().hex[:12]
         try:
-            log_name = build_restore_log_filename(backup_filename, job_id, getattr(ctx, "DISPLAY_TZ", None))
+            log_name = build_restore_log_filename(
+                str(backup_filename or ""),
+                job_id,
+                getattr(ctx, "DISPLAY_TZ", None),
+            )
             log_dir = _resolve_restore_log_dir(ctx)
             state["log_file"] = str(log_dir / log_name)
         except Exception:
@@ -80,10 +88,10 @@ def start_restore_job(ctx, backup_filename):
         state["events"] = []
     append_restore_event(ctx, f"Restore job queued: {str(backup_filename or '').strip()}")
 
-    def _worker():
-        result = None
+    def _worker() -> None:
+        result: dict[str, object] | None = None
         try:
-            result = restore_world_backup(
+            result = _restore_world_backup(
                 ctx,
                 backup_filename,
                 progress_callback=lambda message: append_restore_event(ctx, message),
@@ -118,6 +126,5 @@ def start_restore_job(ctx, backup_filename):
     return {"ok": True, "job_id": job_id}
 
 
-def start_restore_worker(ctx, backup_filename):
-    return start_restore_job(ctx, backup_filename)
+start_restore_worker = start_restore_job
 

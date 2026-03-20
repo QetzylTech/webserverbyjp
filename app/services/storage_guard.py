@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from app.core.filesystem_utils import format_file_size
 from app.ports import ports
@@ -21,7 +22,7 @@ class StorageSnapshot:
 class StorageGuard:
     """Centralized storage checks for backup/restore/start flows."""
 
-    def _disk_usage(self, ctx) -> StorageSnapshot:
+    def _disk_usage(self, ctx: Any) -> StorageSnapshot:
         try:
             total, _used, free = ports.filesystem.disk_usage(ctx.BACKUP_DIR)
         except OSError:
@@ -35,13 +36,13 @@ class StorageGuard:
         used_percent = (100.0 * used / total)
         return StorageSnapshot(total, free, free_percent, used_percent)
 
-    def _threshold_percent(self, ctx) -> float:
+    def _threshold_percent(self, ctx: Any) -> float:
         try:
             return float(getattr(ctx, "LOW_STORAGE_AVAILABLE_THRESHOLD_PERCENT", 10.0) or 10.0)
         except (TypeError, ValueError):
             return 10.0
 
-    def estimate_job_bytes(self, ctx, job_type, filename=None) -> int:
+    def estimate_job_bytes(self, ctx: Any, job_type: object, filename: object = None) -> int:
         job = str(job_type or "").strip().lower()
         if job in {"backup", "backup_manual", "backup_auto", "backup_session", "backup_periodic"}:
             world_dir = getattr(ctx, "WORLD_DIR", None)
@@ -64,14 +65,14 @@ class StorageGuard:
                 return 0
         return 0
 
-    def is_below_minimum(self, ctx) -> bool:
+    def is_below_minimum(self, ctx: Any) -> bool:
         snapshot = self._disk_usage(ctx)
         threshold = self._threshold_percent(ctx)
         if snapshot.free_percent is None:
             return False
         return snapshot.free_percent < threshold
 
-    def is_storage_sufficient(self, ctx, job_type, filename=None) -> bool:
+    def is_storage_sufficient(self, ctx: Any, job_type: object, filename: object = None) -> bool:
         snapshot = self._disk_usage(ctx)
         threshold = self._threshold_percent(ctx)
         if snapshot.free_percent is not None and snapshot.free_percent < threshold:
@@ -81,7 +82,7 @@ class StorageGuard:
             return False
         return True
 
-    def needs_emergency_shutdown(self, ctx) -> bool:
+    def needs_emergency_shutdown(self, ctx: Any) -> bool:
         snapshot = self._disk_usage(ctx)
         threshold = self._threshold_percent(ctx)
         if snapshot.free_percent is not None and snapshot.free_percent < threshold:
@@ -89,7 +90,7 @@ class StorageGuard:
         estimate = self.estimate_job_bytes(ctx, "backup")
         return estimate > 0 and snapshot.free_bytes > 0 and snapshot.free_bytes < estimate
 
-    def block_message(self, ctx, job_type, filename=None) -> str:
+    def block_message(self, ctx: Any, job_type: object, filename: object = None) -> str:
         snapshot = self._disk_usage(ctx)
         threshold = self._threshold_percent(ctx)
         usage_text = ""
@@ -119,7 +120,7 @@ class StorageGuard:
             )
         return "Low storage space: operation blocked by safety guard."
 
-    def emergency_message(self, ctx) -> str:
+    def emergency_message(self, ctx: Any) -> str:
         snapshot = self._disk_usage(ctx)
         threshold = self._threshold_percent(ctx)
         if snapshot.free_percent is not None and snapshot.free_percent < threshold:

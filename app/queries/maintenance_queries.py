@@ -6,6 +6,7 @@ import copy
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Any, Mapping, cast
 
 from app.core import state_store as state_store_service
 from app.services.maintenance_candidate_scan import _cleanup_active_world_path
@@ -21,11 +22,13 @@ from app.services.worker_scheduler import WorkerSpec, start_worker
 
 _MAINTENANCE_STATE_CACHE_TTL_SECONDS = 3.0
 _MAINTENANCE_STATE_CACHE_LOCK = threading.Lock()
-_MAINTENANCE_STATE_CACHE = {}
+MaintenancePayload = dict[str, Any]
+AsyncScopeItem = dict[str, Any]
+_MAINTENANCE_STATE_CACHE: dict[str, dict[str, Any]] = {}
 _MAINTENANCE_ASYNC_REFRESH_INTERVAL_SECONDS = 2.0
 _MAINTENANCE_ASYNC_SCOPE_IDLE_SECONDS = 45.0
 _MAINTENANCE_ASYNC_LOCK = threading.Lock()
-_MAINTENANCE_ASYNC_STATE = {
+_MAINTENANCE_ASYNC_STATE: dict[str, Any] = {
     "started": False,
     "state_ref": None,
     "ctx_ref": None,
@@ -33,11 +36,19 @@ _MAINTENANCE_ASYNC_STATE = {
 }
 
 
-def normalize_scope(raw_scope):
-    return _cleanup_normalize_scope(raw_scope)
+def _scope_items() -> dict[str, AsyncScopeItem]:
+    raw_items = _MAINTENANCE_ASYNC_STATE.setdefault("scope_items", {})
+    if not isinstance(raw_items, dict):
+        raw_items = {}
+        _MAINTENANCE_ASYNC_STATE["scope_items"] = raw_items
+    return cast(dict[str, AsyncScopeItem], raw_items)
 
 
-def _state_cache_get(scope):
+def normalize_scope(raw_scope: object) -> str:
+    return str(_cleanup_normalize_scope(raw_scope))
+
+
+def _state_cache_get(scope: str) -> MaintenancePayload | None:
     now = time.time()
     with _MAINTENANCE_STATE_CACHE_LOCK:
         item = _MAINTENANCE_STATE_CACHE.get(scope)
@@ -50,7 +61,7 @@ def _state_cache_get(scope):
         return copy.deepcopy(payload) if isinstance(payload, dict) else None
 
 
-def _state_cache_set(scope, payload):
+def _state_cache_set(scope: str, payload: Mapping[str, Any] | dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         return
     with _MAINTENANCE_STATE_CACHE_LOCK:
@@ -60,7 +71,7 @@ def _state_cache_set(scope, payload):
         }
 
 
-def invalidate_state_cache(scope=None):
+def invalidate_state_cache(scope: str | None = None) -> None:
     with _MAINTENANCE_STATE_CACHE_LOCK:
         if scope is None:
             _MAINTENANCE_STATE_CACHE.clear()
@@ -68,12 +79,12 @@ def invalidate_state_cache(scope=None):
             _MAINTENANCE_STATE_CACHE.pop(scope, None)
     with _MAINTENANCE_ASYNC_LOCK:
         if scope is None:
-            _MAINTENANCE_ASYNC_STATE["scope_items"].clear()
+            _scope_items().clear()
         else:
-            _MAINTENANCE_ASYNC_STATE["scope_items"].pop(scope, None)
+            _scope_items().pop(scope, None)
 
 
-def _compute_state_payload(ctx, state, scope):
+def _compute_state_payload(ctx: Any, state: Mapping[str, Any], scope: str) -> MaintenancePayload:
     full_cfg = _cleanup_load_config(ctx)
     cfg = _cleanup_get_scope_view(full_cfg, scope)
     preview = _cleanup_evaluate(ctx, cfg, mode="rule", apply_changes=False, trigger="preview")
@@ -86,10 +97,10 @@ def _compute_state_payload(ctx, state, scope):
     }
 
 
-def has_active_maintenance_clients(ctx=None):
+def has_active_maintenance_clients(ctx: Any = None) -> bool:
     now = time.time()
     with _MAINTENANCE_ASYNC_LOCK:
-        scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
+        scope_items = _scope_items()
         for item in scope_items.values():
             if not isinstance(item, dict):
                 continue
@@ -99,13 +110,13 @@ def has_active_maintenance_clients(ctx=None):
     return False
 
 
-def should_pause_maintenance_refresh(ctx):
+def should_pause_maintenance_refresh(ctx: Any) -> bool:
     service_status = str(ctx.get_status() or "inactive").strip().lower()
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
     return service_status in off_states and not has_active_maintenance_clients(ctx)
 
 
-def _payload_from_db(state, scope):
+def _payload_from_db(state: Mapping[str, Any], scope: str) -> tuple[MaintenancePayload | None, float]:
     db_path = state.get("APP_STATE_DB_PATH")
     if db_path is None:
         return None, 0.0
@@ -130,13 +141,18 @@ def _payload_from_db(state, scope):
         "device_map": state["get_device_name_map"](),
     }
     try:
-        computed_at = float(event.get("id", 0) or 0)
+        computed_at = float(str(event.get("id", 0) or 0))
     except Exception:
         computed_at = 0.0
     return data, computed_at
 
 
-def _payload_with_freshness(payload, *, computed_at, refreshing=False):
+def _payload_with_freshness(
+    payload: Mapping[str, Any] | dict[str, Any],
+    *,
+    computed_at: float,
+    refreshing: bool = False,
+) -> MaintenancePayload:
     body = copy.deepcopy(payload) if isinstance(payload, dict) else {}
     computed_epoch = float(computed_at or 0.0)
     stale_seconds = max(0.0, time.time() - computed_epoch) if computed_epoch > 0 else 0.0
@@ -149,13 +165,13 @@ def _payload_with_freshness(payload, *, computed_at, refreshing=False):
     return body
 
 
-def _async_worker():
+def _async_worker() -> None:
     while True:
         time.sleep(_MAINTENANCE_ASYNC_REFRESH_INTERVAL_SECONDS)
         with _MAINTENANCE_ASYNC_LOCK:
             state = _MAINTENANCE_ASYNC_STATE.get("state_ref")
             ctx = _MAINTENANCE_ASYNC_STATE.get("ctx_ref")
-            scope_items = _MAINTENANCE_ASYNC_STATE.get("scope_items", {})
+            scope_items = _scope_items()
             scope_rows = [(key, dict(value)) for key, value in scope_items.items() if isinstance(value, dict)]
         if state is None or ctx is None:
             continue
@@ -193,11 +209,17 @@ def _async_worker():
                     target["refreshing"] = False
 
 
-def _mark_scope_requested(ctx, state, scope, *, force_refresh=False):
+def _mark_scope_requested(
+    ctx: Any,
+    state: Mapping[str, Any],
+    scope: str,
+    *,
+    force_refresh: bool = False,
+) -> None:
     with _MAINTENANCE_ASYNC_LOCK:
         _MAINTENANCE_ASYNC_STATE["state_ref"] = state
         _MAINTENANCE_ASYNC_STATE["ctx_ref"] = ctx
-        item = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+        item = _scope_items().setdefault(scope, {})
         item["last_requested_at"] = time.time()
         if force_refresh:
             item["force_refresh"] = True
@@ -215,21 +237,26 @@ def _mark_scope_requested(ctx, state, scope, *, force_refresh=False):
             _MAINTENANCE_ASYNC_STATE["started"] = True
 
 
-def _get_async_item(scope):
+def _get_async_item(scope: str) -> AsyncScopeItem | None:
     with _MAINTENANCE_ASYNC_LOCK:
-        item = _MAINTENANCE_ASYNC_STATE["scope_items"].get(scope)
+        item = _scope_items().get(scope)
         return dict(item) if isinstance(item, dict) else None
 
 
-def _set_async_item(scope, payload, *, computed_at=None):
+def _set_async_item(
+    scope: str,
+    payload: Mapping[str, Any] | dict[str, Any],
+    *,
+    computed_at: float | None = None,
+) -> None:
     with _MAINTENANCE_ASYNC_LOCK:
-        item = _MAINTENANCE_ASYNC_STATE["scope_items"].setdefault(scope, {})
+        item = _scope_items().setdefault(scope, {})
         item["payload"] = copy.deepcopy(payload) if isinstance(payload, dict) else {}
         item["computed_at"] = float(computed_at or time.time())
         item["refreshing"] = False
 
 
-def get_page_model(ctx, state, scope):
+def get_page_model(ctx: Any, state: Mapping[str, Any], scope: str) -> MaintenancePayload:
     payload = get_state_payload(ctx, state, scope, force_refresh=False)
     return {
         "snapshot": {key: value for key, value in payload.items() if key not in {"ok", "preview", "scope", "device_map", "freshness"}},
@@ -242,7 +269,13 @@ def get_page_model(ctx, state, scope):
     }
 
 
-def get_state_payload(ctx, state, scope, *, force_refresh=False):
+def get_state_payload(
+    ctx: Any,
+    state: Mapping[str, Any],
+    scope: str,
+    *,
+    force_refresh: bool = False,
+) -> MaintenancePayload:
     _mark_scope_requested(ctx, state, scope, force_refresh=force_refresh)
     if not force_refresh:
         db_payload, _db_id = _payload_from_db(state, scope)

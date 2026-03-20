@@ -14,7 +14,7 @@ from app.platform import get_calls, get_metrics, get_paths
 
 
 class PlatformServiceControlAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self._calls = get_calls()
         self._paths = get_paths()
 
@@ -62,7 +62,7 @@ class PlatformServiceControlAdapter:
 
 
 class PlatformLogAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self._calls = get_calls()
 
     def minecraft_log_stream_mode(self) -> str:
@@ -97,7 +97,7 @@ class PlatformLogAdapter:
             return None
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
-    def iter_process_lines(self, process_handle: Any):
+    def iter_process_lines(self, process_handle: Any) -> Any:
         stdout = getattr(process_handle, "stdout", None)
         if stdout is None:
             return []
@@ -121,7 +121,7 @@ class PlatformLogAdapter:
 
 
 class PlatformBackupAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self._calls = get_calls()
 
     def run_backup_script(self, script_path: Path, trigger: str, *, timeout: float = 600) -> Any:
@@ -132,29 +132,29 @@ class PlatformBackupAdapter:
 
 
 class PlatformMetricsAdapter:
-    def __init__(self):
+    def __init__(self) -> None:
         self._metrics = get_metrics()
 
     def get_cpu_usage_per_core(self) -> str:
-        return self._metrics.get_cpu_usage_per_core()
+        return str(self._metrics.get_cpu_usage_per_core())
 
     def get_ram_usage(self) -> str:
-        return self._metrics.get_ram_usage()
+        return str(self._metrics.get_ram_usage())
 
     def get_cpu_frequency(self) -> str:
-        return self._metrics.get_cpu_frequency()
+        return str(self._metrics.get_cpu_frequency())
 
     def get_storage_usage(self) -> str:
-        return self._metrics.get_storage_usage()
+        return str(self._metrics.get_storage_usage())
 
 
 class StateStoreAdapter:
     """Thin adapter that forwards to state-store module functions."""
 
-    def initialize_state_db(self, db_path: Path, log_exception=None):
+    def initialize_state_db(self, db_path: Path, log_exception: Any = None) -> Any:
         return state_store_service.initialize_state_db(db_path=db_path, log_exception=log_exception)
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         target = getattr(state_store_service, name)
         if not callable(target):
             raise AttributeError(name)
@@ -186,10 +186,16 @@ class FilesystemAdapter:
         return Path(tempfile.mkdtemp(prefix=prefix))
 
     def make_zip_archive(self, base_name: Path | str, *, root_dir: Path | str, base_dir: Path | str | None = None) -> Path:
-        kwargs = {"root_dir": str(root_dir)}
         if base_dir is not None:
-            kwargs["base_dir"] = str(base_dir)
-        return Path(shutil.make_archive(str(base_name), "zip", **kwargs))
+            return Path(
+                shutil.make_archive(
+                    str(base_name),
+                    "zip",
+                    root_dir=str(root_dir),
+                    base_dir=str(base_dir),
+                )
+            )
+        return Path(shutil.make_archive(str(base_name), "zip", root_dir=str(root_dir)))
 
     def rmtree(self, path: Path | str, *, ignore_errors: bool = False) -> None:
         shutil.rmtree(path, ignore_errors=ignore_errors)

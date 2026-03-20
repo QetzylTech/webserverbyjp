@@ -218,16 +218,16 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
         """Return nav attention state for the current request identity."""
         return jsonify({"ok": True, **_get_nav_alert_state_from_request()})
 
-    register_file_routes(app, state)  # type: ignore[no-untyped-call]
-    register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)  # type: ignore[no-untyped-call]
-    register_notification_routes(app, state)  # type: ignore[no-untyped-call]
-    register_maintenance_routes(app, state)  # type: ignore[no-untyped-call]
-    register_panel_settings_routes(app, state)  # type: ignore[no-untyped-call]
+    register_file_routes(app, state)
+    register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
+    register_notification_routes(app, state)
+    register_maintenance_routes(app, state)
+    register_panel_settings_routes(app, state)
     register_control_routes(
         app,
         state,
         run_cleanup_event_if_enabled=run_cleanup_event_if_enabled,
-    )  # type: ignore[no-untyped-call]
+    )
 
 
 

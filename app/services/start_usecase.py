@@ -2,6 +2,7 @@
 
 import time
 from types import SimpleNamespace
+from typing import Any, cast
 
 from werkzeug.security import check_password_hash
 
@@ -14,9 +15,13 @@ from app.services.restore_workflow_helpers import ensure_session_file, ensure_st
 _calls = SimpleNamespace(
     service_start_no_block=ports.service_control.service_start_no_block,
 )
+_notification_service = cast(Any, notification_service)
+_password_throttle_service = cast(Any, password_throttle_service)
+_ensure_session_file = cast(Any, ensure_session_file)
+_ensure_startup_rcon_settings = cast(Any, ensure_startup_rcon_settings)
 
 
-def set_service_status_intent(ctx, intent):
+def set_service_status_intent(ctx: Any, intent: object) -> None:
     normalized_intent = str(intent or "").strip().lower()
     if normalized_intent == "starting":
         with ctx.rcon_startup_lock:
@@ -30,19 +35,19 @@ def set_service_status_intent(ctx, intent):
             ctx.log_mcweb_exception("set_service_status_intent/start_log_fetcher", exc)
 
 
-def get_service_status_intent(ctx):
+def get_service_status_intent(ctx: Any) -> object:
     with ctx.service_status_intent_lock:
         return ctx.service_status_intent
 
 
-def _password_required(ctx):
+def _password_required(ctx: Any) -> bool:
     try:
         return bool(getattr(ctx, "REQUIRE_SUDO_PASSWORD", True))
     except Exception:
         return True
 
 
-def _validate_password(ctx, sudo_password):
+def _validate_password(ctx: Any, sudo_password: object) -> bool:
     client_ip = ""
     getter = getattr(ctx, "_get_client_ip", None)
     if callable(getter):
@@ -50,16 +55,16 @@ def _validate_password(ctx, sudo_password):
             client_ip = str(getter() or "").strip()
         except Exception:
             client_ip = ""
-    if password_throttle_service.is_blocked(ctx, client_ip):
+    if _password_throttle_service.is_blocked(ctx, client_ip):
         return False
 
     expected_hash = (getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
-    candidate = (sudo_password or "").strip()
+    candidate = str(sudo_password or "").strip()
     if not expected_hash or not candidate:
-        blocked_until, triggered = password_throttle_service.record_failure(ctx, client_ip)
+        blocked_until, triggered = _password_throttle_service.record_failure(ctx, client_ip)
         if triggered:
             retry_seconds = max(0, int(blocked_until - time.time()))
-            notification_service.publish_ui_notification(
+            _notification_service.publish_ui_notification(
                 ctx,
                 {
                     "code": "password_throttle",
@@ -81,12 +86,12 @@ def _validate_password(ctx, sudo_password):
     except ValueError:
         ok = False
     if ok:
-        password_throttle_service.record_success(ctx, client_ip)
+        _password_throttle_service.record_success(ctx, client_ip)
         return True
-    blocked_until, triggered = password_throttle_service.record_failure(ctx, client_ip)
+    blocked_until, triggered = _password_throttle_service.record_failure(ctx, client_ip)
     if triggered:
         retry_seconds = max(0, int(blocked_until - time.time()))
-        notification_service.publish_ui_notification(
+        _notification_service.publish_ui_notification(
             ctx,
             {
                 "code": "password_throttle",
@@ -105,18 +110,18 @@ def _validate_password(ctx, sudo_password):
     return False
 
 
-def validate_sudo_password(ctx, sudo_password):
+def validate_sudo_password(ctx: Any, sudo_password: object) -> bool:
     if not _password_required(ctx):
         return True
     return _validate_password(ctx, sudo_password)
 
 
-def validate_admin_password(ctx, sudo_password):
+def validate_admin_password(ctx: Any, sudo_password: object) -> bool:
     return _validate_password(ctx, sudo_password)
 
 
-def read_session_start_time(ctx):
-    if not ensure_session_file(ctx):
+def read_session_start_time(ctx: Any) -> float | None:
+    if not _ensure_session_file(ctx):
         return None
     try:
         raw = ctx.session_state.session_file.read_text(encoding="utf-8").strip()
@@ -135,7 +140,7 @@ def read_session_start_time(ctx):
     return ts
 
 
-def get_session_start_time(ctx, service_status=None):
+def get_session_start_time(ctx: Any, service_status: object = None) -> float | None:
     if service_status is None:
         service_status = ctx.get_status()
     if service_status in ctx.OFF_STATES:
@@ -143,7 +148,7 @@ def get_session_start_time(ctx, service_status=None):
     return read_session_start_time(ctx)
 
 
-def get_session_duration_text(ctx):
+def get_session_duration_text(ctx: Any) -> str:
     start_time = read_session_start_time(ctx)
     if start_time is None:
         return "--"
@@ -154,8 +159,8 @@ def get_session_duration_text(ctx):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def start_service_non_blocking(ctx, timeout=12):
-    rcon_result = ensure_startup_rcon_settings(ctx)
+def start_service_non_blocking(ctx: Any, timeout: int = 12) -> dict[str, object]:
+    rcon_result = _ensure_startup_rcon_settings(ctx)
     if not rcon_result.get("ok"):
         return {
             "ok": False,

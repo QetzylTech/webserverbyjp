@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 from types import SimpleNamespace
+from typing import Any, Callable, Iterator, cast
 
 from app.core import state_store as state_store_service
 from app.ports import ports
@@ -12,13 +13,19 @@ from app.services.restore_workflow_helpers import is_backup_running
 _calls = SimpleNamespace(
     run_backup_script=ports.backup.run_backup_script,
 )
+_is_backup_running = cast(Any, is_backup_running)
 
 
-def _backup_snapshot_root(ctx):
-    return Path(getattr(ctx, "AUTO_SNAPSHOT_DIR", "") or (ctx.BACKUP_DIR / "snapshots"))
+def _backup_snapshot_root(ctx: Any) -> Path:
+    auto_snapshot_dir = getattr(ctx, "AUTO_SNAPSHOT_DIR", "")
+    if isinstance(auto_snapshot_dir, Path) and str(auto_snapshot_dir):
+        return auto_snapshot_dir
+    if str(auto_snapshot_dir or "").strip():
+        return Path(str(auto_snapshot_dir))
+    return Path(ctx.BACKUP_DIR) / "snapshots"
 
 
-def _iter_backup_artifacts(ctx):
+def _iter_backup_artifacts(ctx: Any) -> Iterator[Path]:
     backup_dir = Path(ctx.BACKUP_DIR)
     if backup_dir.exists() and backup_dir.is_dir():
         yield from backup_dir.glob("*.zip")
@@ -30,24 +37,24 @@ def _iter_backup_artifacts(ctx):
                 yield path
 
 
-def _scan_backup_artifacts(ctx, *, stat_attr):
-    snapshot = {}
+def _scan_backup_artifacts(ctx: Any, *, stat_attr: str) -> dict[str, float]:
+    snapshot: dict[str, float] = {}
     for path in _iter_backup_artifacts(ctx):
         try:
-            snapshot[str(path)] = getattr(path.stat(), stat_attr)
+            snapshot[str(path)] = float(getattr(path.stat(), stat_attr))
         except OSError:
             continue
     return snapshot
 
 
 def run_backup_script(
-    ctx,
-    count_skip_as_success=True,
-    trigger="manual",
+    ctx: Any,
+    count_skip_as_success: bool = True,
+    trigger: str = "manual",
     *,
-    snapshot_reader=None,
-    snapshot_changed_fn=None,
-):
+    snapshot_reader: Callable[[Any], dict[str, float]] | None = None,
+    snapshot_changed_fn: Callable[[Any, dict[str, float], dict[str, float]], bool] | None = None,
+) -> bool:
     """Run backup script with single-flight locking and snapshot verification."""
     backup_state = ctx.backup_state
     read_snapshot = snapshot_reader or get_backup_zip_snapshot
@@ -55,7 +62,7 @@ def run_backup_script(
     if not backup_state.run_lock.acquire(blocking=False):
         return bool(count_skip_as_success)
     try:
-        if is_backup_running(ctx, include_run_lock=False):
+        if _is_backup_running(ctx, include_run_lock=False):
             with backup_state.lock:
                 backup_state.last_error = ""
             return bool(count_skip_as_success)
@@ -116,19 +123,19 @@ def run_backup_script(
         backup_state.run_lock.release()
 
 
-def format_backup_time(ctx, timestamp):
+def format_backup_time(ctx: Any, timestamp: float | None) -> str:
     """Format epoch seconds in configured display timezone."""
     if timestamp is None:
         return "--"
     return datetime.fromtimestamp(timestamp, tz=ctx.DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 
-def get_server_time_text(ctx):
+def get_server_time_text(ctx: Any) -> str:
     """Return current server time in configured display timezone."""
     return datetime.now(tz=ctx.DISPLAY_TZ).strftime("%b %d, %Y %I:%M:%S %p %Z")
 
 
-def get_latest_backup_zip_timestamp(ctx):
+def get_latest_backup_zip_timestamp(ctx: Any) -> float | None:
     """Return latest backup artifact timestamp across zips and snapshots."""
     latest = None
     for ts in _scan_backup_artifacts(ctx, stat_attr="st_mtime").values():
@@ -137,12 +144,12 @@ def get_latest_backup_zip_timestamp(ctx):
     return latest
 
 
-def get_backup_zip_snapshot(ctx):
+def get_backup_zip_snapshot(ctx: Any) -> dict[str, float]:
     """Capture backup artifact mtime snapshot for output verification."""
     return _scan_backup_artifacts(ctx, stat_attr="st_mtime_ns")
 
 
-def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
+def backup_snapshot_changed(ctx: Any, before_snapshot: dict[str, float], after_snapshot: dict[str, float]) -> bool:
     """Return True when any backup artifact was created or modified."""
     if not before_snapshot and after_snapshot:
         return True
@@ -153,7 +160,7 @@ def backup_snapshot_changed(ctx, before_snapshot, after_snapshot):
     return False
 
 
-def get_backup_schedule_times(ctx, service_status=None):
+def get_backup_schedule_times(ctx: Any, service_status: object = None) -> dict[str, str]:
     """Return formatted last/next backup schedule timestamps."""
     if service_status is None:
         service_status = ctx.get_status()
@@ -173,9 +180,9 @@ def get_backup_schedule_times(ctx, service_status=None):
     }
 
 
-def get_backup_status(ctx):
+def get_backup_status(ctx: Any) -> tuple[str, str]:
     """Return backup runtime status text and CSS class."""
-    if is_backup_running(ctx):
+    if _is_backup_running(ctx):
         return "Running", "stat-green"
     try:
         rows = state_store_service.list_operations_by_status(

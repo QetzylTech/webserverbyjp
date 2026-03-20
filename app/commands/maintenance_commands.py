@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+from typing import Any, Mapping, cast
+
 from flask import has_request_context, request
 
 from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_run_with_lock
@@ -25,12 +27,15 @@ from app.services.maintenance_state_store import (
     _cleanup_save_config,
 )
 
+_normalize_scope = cast(Any, _cleanup_normalize_scope)
+CommandResult = dict[str, Any] | tuple[dict[str, Any], int]
 
-def normalize_scope(raw_scope):
-    return _cleanup_normalize_scope(raw_scope)
+
+def normalize_scope(raw_scope: object) -> str:
+    return str(_normalize_scope(raw_scope))
 
 
-def _request_client_ip(state):
+def _request_client_ip(state: Any) -> str:
     getter = None
     if isinstance(state, dict):
         getter = state.get('_get_client_ip')
@@ -60,7 +65,17 @@ def _request_client_ip(state):
 
 
 
-def _require_password(state, payload, *, what, why, trigger, scope, details='', log_success=False):
+def _require_password(
+    state: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    *,
+    what: str,
+    why: str,
+    trigger: str,
+    scope: str,
+    details: str = '',
+    log_success: bool = False,
+) -> tuple[bool, CommandResult | None]:
     sudo_password = str(payload.get('sudo_password', ''))
     if state['validate_sudo_password'](sudo_password):
         state['record_successful_password_ip']()
@@ -83,9 +98,7 @@ def _require_password(state, payload, *, what, why, trigger, scope, details='', 
         details=f"scope={scope};{details}".strip(';'),
     )
     return False, _cleanup_error('invalid_password', status=403)
-
-
-def confirm_password(state, payload):
+def confirm_password(state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
     action = str(payload.get('action', '')).strip().lower()
     action_map = {
@@ -108,14 +121,16 @@ def confirm_password(state, payload):
         log_success=True,
     )
     if not ok:
+        assert err is not None
         return err
     return {'ok': True, 'scope': scope, 'action': action}
 
 
-def save_rules(ctx, state, payload):
+def save_rules(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
     ok_pw, err = _require_password(payload=payload, state=state, what='save_rules', why='manual_save', trigger='manual', scope=scope)
     if not ok_pw:
+        assert err is not None
         return err
     raw_rules = payload.get('rules', {})
     if scope == 'stale_worlds' and isinstance(raw_rules, dict):
@@ -133,9 +148,10 @@ def save_rules(ctx, state, payload):
     if not ok:
         _cleanup_log(ctx, what='save_rules', why='manual_save', trigger='manual', result='validation_failure', details=f'scope={scope};error={parsed}')
         return _cleanup_error('validation_failure', parsed, status=400)
+    parsed_rules = cast(dict[str, Any], parsed)
     full_cfg = _cleanup_load_config(ctx)
     cfg = _cleanup_get_scope_view(full_cfg, scope)
-    cfg['rules'] = _cleanup_apply_scope_from_state(ctx, parsed, scope=scope)
+    cfg['rules'] = _cleanup_apply_scope_from_state(ctx, parsed_rules, scope=scope)
     time_based = cfg.get('rules', {}).get('time_based', {})
     time_enabled = bool(time_based.get('enabled', True))
     repeat_mode = str(time_based.get('repeat_mode', 'does_not_repeat')).strip().lower()
@@ -187,14 +203,14 @@ def save_rules(ctx, state, payload):
     return {'ok': True, 'config': cfg, 'preview': preview, 'scope': scope}
 
 
-def _parse_dry_run(value):
+def _parse_dry_run(value: object) -> bool:
     dry_run = bool(value)
     if isinstance(value, str):
         dry_run = value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return dry_run
 
 
-def run_rules(ctx, state, payload):
+def run_rules(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
     conflict_reason = priority_conflict(ctx, state=state)
     if conflict_reason:
@@ -242,6 +258,7 @@ def run_rules(ctx, state, payload):
         return {'ok': True, 'dry_run': True, 'preview': preview, 'config': cfg, 'scope': scope}
     ok_pw, err = _require_password(payload=payload, state=state, what='run_rules', why='manual_apply', trigger='manual', scope=scope)
     if not ok_pw:
+        assert err is not None
         return err
     result = _cleanup_run_with_lock(ctx, eval_cfg, mode='rule', trigger='manual_rule')
     if result is None:
@@ -277,7 +294,7 @@ def run_rules(ctx, state, payload):
     return {'ok': True, 'result': result, 'config': cfg, 'scope': scope}
 
 
-def manual_delete(ctx, state, payload):
+def manual_delete(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
     conflict_reason = priority_conflict(ctx, state=state)
     if conflict_reason:
@@ -324,6 +341,7 @@ def manual_delete(ctx, state, payload):
         return {'ok': True, 'dry_run': True, 'preview': preview, 'config': cfg, 'scope': scope}
     ok_pw, err = _require_password(payload=payload, state=state, what='manual_delete', why='manual_selection', trigger='manual', scope=scope)
     if not ok_pw:
+        assert err is not None
         return err
     result = _cleanup_run_with_lock(ctx, cfg, mode='manual', selected_paths=selected, trigger='manual_selection')
     if result is None:
@@ -359,12 +377,12 @@ def manual_delete(ctx, state, payload):
     return {'ok': True, 'result': result, 'config': cfg, 'scope': scope}
 
 
-def ack_non_normal(ctx, payload):
+def ack_non_normal(ctx: Any, payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
     ack_at = _cleanup_now_iso(ctx)
     ack_by = _cleanup_get_client_ip(ctx)
 
-    def _entry_scope(entry):
+    def _entry_scope(entry: object) -> str:
         if not isinstance(entry, dict):
             return ''
         raw_scope = str(entry.get('scope', '')).strip().lower()

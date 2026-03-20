@@ -32,13 +32,13 @@ def _invalidate_runtime_status(ctx: Any) -> None:
 def graceful_stop_minecraft(ctx: Any, trigger: str = "session_end") -> dict[str, bool]:
     """Stop service and run a shutdown backup with the provided trigger."""
     service_stop_ok = stop_service_runtime(ctx)
-    backup_ok = run_backup_script(ctx, trigger=trigger)  # type: ignore[no-untyped-call]
+    backup_ok = run_backup_script(ctx, trigger=trigger)
     return {"service_stop_ok": service_stop_ok, "backup_ok": backup_ok}
 
 
 def stop_server_automatically(ctx: Any, trigger: str = "session_end") -> dict[str, bool]:
     """Apply automatic-stop flow (intent, stop, session clear, backup reset)."""
-    set_service_status_intent(ctx, "shutting")  # type: ignore[no-untyped-call]
+    set_service_status_intent(ctx, "shutting")
     _invalidate_runtime_status(ctx)
     _publish_transition_metrics(ctx)
     result = graceful_stop_minecraft(ctx, trigger=trigger)

@@ -1,25 +1,41 @@
 """Notification SSE routes."""
+# mypy: disable-error-code=untyped-decorator
 
+from collections.abc import Iterator, Mapping
 import json
 import time
+from typing import Any
 
 from flask import Response, request, stream_with_context
 
 from app.core import state_store as state_store_service
 
 
-def register_notification_routes(app, state):
+def _coerce_event_id(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip() or str(default))
+        except ValueError:
+            return default
+    return default
+
+
+def register_notification_routes(app: Any, state: Mapping[str, Any]) -> None:
     """Register global UI notification SSE stream."""
 
     @app.route("/notifications-stream")
-    def notifications_stream():
+    def notifications_stream() -> Response:
         since_raw = request.args.get("since", "") or request.headers.get("Last-Event-ID", "") or "0"
-        try:
-            last_event_id = int(str(since_raw).strip() or "0")
-        except ValueError:
-            last_event_id = 0
+        last_event_id = _coerce_event_id(since_raw)
 
-        def generate():
+        def generate() -> Iterator[str]:
+            nonlocal last_event_id
             while True:
                 db_path = state.get("APP_STATE_DB_PATH")
                 if db_path is not None:
@@ -39,7 +55,8 @@ def register_notification_routes(app, state):
                             if isinstance(notification, dict):
                                 data = json.dumps(notification, separators=(",", ":"))
                                 yield f"event: notification\ndata: {data}\n\n"
-                            last_event_id = int(row.get("id", last_event_id) or last_event_id)
+                            row_id = row.get("id", last_event_id) if isinstance(row, dict) else last_event_id
+                            last_event_id = _coerce_event_id(row_id, last_event_id)
                         continue
                 yield ": keepalive\n\n"
                 time.sleep(2.0)

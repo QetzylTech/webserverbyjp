@@ -7,6 +7,7 @@ import os
 import secrets
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from app.ports import ports
@@ -19,18 +20,18 @@ validate_minecraft_root = _setup_validation.validate_minecraft_root
 validate_backup_location = _setup_validation.validate_backup_location
 
 
-def assess_setup_requirement(config_path, values):
+def assess_setup_requirement(config_path: str | Path, values: object) -> dict[str, Any]:
     """Return setup mode status based on env presence and required validity."""
     config_path = Path(config_path)
-    reasons = []
+    reasons: list[str] = []
     if not config_path.exists():
         reasons.append("mcweb.env not found.")
         return {"required": True, "reasons": reasons, "mode": "full"}
 
-    raw = values if isinstance(values, dict) else {}
+    raw = dict(values) if isinstance(values, Mapping) else {}
     path_keys = {"MINECRAFT_ROOT_DIR", "BACKUP_DIR"}
-    blocking_non_path = []
-    path_reasons = []
+    blocking_non_path: list[str] = []
+    path_reasons: list[str] = []
     for key in REQUIRED_KEYS:
         if not str(raw.get(key, "")).strip():
             message = f"Missing required setting: {key}"
@@ -61,17 +62,17 @@ def assess_setup_requirement(config_path, values):
     return {"required": required, "reasons": reasons, "mode": mode}
 
 
-def setup_form_defaults(existing_values):
+def setup_form_defaults(existing_values: object) -> dict[str, str]:
     """Build setup form defaults from existing env values + app defaults."""
     user_name = (
         str(os.environ.get("SUDO_USER", "")).strip()
         or str(os.environ.get("USER", "")).strip()
         or str(getpass.getuser() or "").strip()
     )
-    base = dict(ENV_DEFAULTS)
+    base: dict[str, str] = dict(ENV_DEFAULTS)
     base["MINECRAFT_ROOT_DIR"] = ports.service_control.default_minecraft_root(user_name=user_name)
     base["BACKUP_DIR"] = ports.service_control.default_backup_dir(user_name=user_name)
-    raw = existing_values if isinstance(existing_values, dict) else {}
+    raw = dict(existing_values) if isinstance(existing_values, Mapping) else {}
     for key, value in raw.items():
         if value is None:
             continue
@@ -85,12 +86,12 @@ def setup_form_defaults(existing_values):
     return base
 
 
-def write_env_file(config_path, values):
+def write_env_file(config_path: str | Path, values: Mapping[str, object]) -> None:
     """Write mcweb.env from validated setup values."""
     config_path = Path(config_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    payload = dict(ENV_DEFAULTS)
+    payload: dict[str, str] = dict(ENV_DEFAULTS)
     for key in ("MCWEB_SECRET_KEY", "MCWEB_ADMIN_PASSWORD_HASH", "MCWEB_SUPERADMIN_PASSWORD_HASH", "MCWEB_REQUIRE_PASSWORD"):
         value = str(values.get(key, "")).strip()
         if value or key in {"MCWEB_SECRET_KEY", "MCWEB_ADMIN_PASSWORD_HASH"}:
@@ -113,7 +114,7 @@ def write_env_file(config_path, values):
     config_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def archive_data_residuals(data_dir):
+def archive_data_residuals(data_dir: str | Path) -> None:
     """Move all residual data files/dirs into data/old_app_data."""
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)

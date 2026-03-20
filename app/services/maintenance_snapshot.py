@@ -1,6 +1,7 @@
 ﻿"""Maintenance state snapshot helpers."""
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from app.core import profiling
 from app.services.maintenance_context import as_ctx
@@ -12,15 +13,15 @@ from app.services.maintenance_state_store import (
 )
 
 
-def _cleanup_state_snapshot(ctx, cfg):
+def _cleanup_state_snapshot(ctx: Any, cfg: dict[str, Any]) -> dict[str, Any]:
     """Return a compact snapshot of cleanup state for UI polling."""
     ctx = as_ctx(ctx)
     with profiling.timed("maintenance.state_snapshot.total"):
-        def _next_time_schedule_run():
+        def _next_time_schedule_run() -> str:
             tz = getattr(ctx, "DISPLAY_TZ", None)
             now_local = datetime.now(tz) if tz else datetime.now()
             schedules = cfg.get("schedules", [])
-            next_candidates = []
+            next_candidates: list[datetime] = []
             has_event_schedule = False
 
             for schedule in schedules:

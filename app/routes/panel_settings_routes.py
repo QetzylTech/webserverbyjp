@@ -1,13 +1,15 @@
 ﻿"""Panel settings routes for admin configuration."""
 
 from __future__ import annotations
+# mypy: disable-error-code=untyped-decorator
 
 import csv
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Any, cast
 
 from flask import jsonify, render_template, request
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -22,7 +24,7 @@ from app.services.worker_scheduler import start_detached
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
-def _state_value(state, key, default=None):
+def _state_value(state: Mapping[str, Any], key: str, default: Any = None) -> Any:
     try:
         if hasattr(state, "get"):
             value = state.get(key)
@@ -33,18 +35,25 @@ def _state_value(state, key, default=None):
     return default if value is None else value
 
 
-def _to_bool(value) -> bool:
+def _to_bool(value: object) -> bool:
     return str(value or "").strip().lower() in _TRUE_VALUES
 
 
-def _json_ok(extra=None, status=200):
+def _json_ok(extra: Mapping[str, Any] | None = None, status: int = 200) -> Any:
     payload = {"ok": True}
     if isinstance(extra, dict):
         payload.update(extra)
     return jsonify(payload), status
 
 
-def _json_fail(message, *, status=400, field_errors=None, extra=None, error=None):
+def _json_fail(
+    message: str,
+    *,
+    status: int = 400,
+    field_errors: Mapping[str, str] | None = None,
+    extra: Mapping[str, Any] | None = None,
+    error: str | None = None,
+) -> Any:
     payload = {"ok": False, "message": message}
     if error:
         payload["error"] = error
@@ -55,18 +64,18 @@ def _json_fail(message, *, status=400, field_errors=None, extra=None, error=None
     return jsonify(payload), status
 
 
-def _panel_app_dir(state) -> Path:
+def _panel_app_dir(state: Mapping[str, Any]) -> Path:
     docs_dir = _state_value(state, "DOCS_DIR")
     if docs_dir:
         return Path(docs_dir).parent
     return Path(__file__).resolve().parents[2]
 
 
-def _panel_web_conf_path(state) -> Path:
+def _panel_web_conf_path(state: Mapping[str, Any]) -> Path:
     return _panel_app_dir(state) / "mcweb.env"
 
 
-def _load_env_defaults(state) -> Tuple[dict, Path, Path]:
+def _load_env_defaults(state: Mapping[str, Any]) -> tuple[dict[str, str], Path, Path]:
     app_dir = _panel_app_dir(state)
     web_conf_path = _panel_web_conf_path(state)
     web_cfg = WebConfig(web_conf_path, app_dir)
@@ -82,8 +91,8 @@ def _load_env_defaults(state) -> Tuple[dict, Path, Path]:
     return defaults, web_conf_path, app_dir
 
 
-def _trigger_process_reload(state):
-    def _reload():
+def _trigger_process_reload(state: Mapping[str, Any]) -> None:
+    def _reload() -> None:
         time.sleep(0.35)
         try:
             os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -96,7 +105,7 @@ def _trigger_process_reload(state):
     start_detached(target=_reload, daemon=True)
 
 
-def _validate_admin_password(state, password) -> bool:
+def _validate_admin_password(state: Mapping[str, Any], password: str) -> bool:
     try:
         ok = bool(state["validate_admin_password"](password))
     except Exception:
@@ -109,7 +118,7 @@ def _validate_admin_password(state, password) -> bool:
     return ok
 
 
-def _validate_superadmin_password(state, password) -> bool:
+def _validate_superadmin_password(state: Mapping[str, Any], password: str) -> bool:
     defaults, _web_conf_path, _app_dir = _load_env_defaults(state)
     expected_hash = str(defaults.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "") or "").strip()
     if not expected_hash:
@@ -128,7 +137,7 @@ def _validate_superadmin_password(state, password) -> bool:
     return ok
 
 
-def _save_env_values(state, values, web_conf_path):
+def _save_env_values(state: Mapping[str, Any], values: Mapping[str, object], web_conf_path: str | Path) -> tuple[bool, str]:
     try:
         setup_service_service.write_env_file(web_conf_path, values)
     except Exception as exc:
@@ -140,8 +149,8 @@ def _save_env_values(state, values, web_conf_path):
     return True, ""
 
 
-def _parse_device_rows(rows: Iterable[dict]) -> Dict[str, str]:
-    mapping: Dict[str, str] = {}
+def _parse_device_rows(rows: list[object]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -153,7 +162,7 @@ def _parse_device_rows(rows: Iterable[dict]) -> Dict[str, str]:
     return mapping
 
 
-def _load_device_fallmap(state) -> Dict[str, str]:
+def _load_device_fallmap(state: Mapping[str, Any]) -> dict[str, str]:
     db_path = _state_value(state, "APP_STATE_DB_PATH")
     if not db_path:
         return {}
@@ -167,12 +176,12 @@ def _load_device_fallmap(state) -> Dict[str, str]:
     return {}
 
 
-def _write_device_fallmap(state, mapping: Dict[str, str]):
+def _write_device_fallmap(state: Mapping[str, Any], mapping: dict[str, str]) -> bool:
     db_path = _state_value(state, "APP_STATE_DB_PATH")
     if not db_path:
         return False
     try:
-        state_store_service.replace_fallmap(db_path, mapping)
+        state_store_service.replace_fallmap(db_path, cast(Mapping[object, object], mapping))
         return True
     except Exception as exc:
         try:
@@ -182,7 +191,7 @@ def _write_device_fallmap(state, mapping: Dict[str, str]):
     return False
 
 
-def _parse_csv_upload(file_storage) -> Tuple[Dict[str, str], list]:
+def _parse_csv_upload(file_storage: Any) -> tuple[dict[str, str], list[str]]:
     if file_storage is None:
         return {}, ["CSV file is required."]
     try:
@@ -192,8 +201,8 @@ def _parse_csv_upload(file_storage) -> Tuple[Dict[str, str], list]:
     reader = csv.DictReader(text.splitlines())
     if not reader.fieldnames:
         return {}, ["CSV file has no headers."]
-    mapping: Dict[str, str] = {}
-    errors = []
+    mapping: dict[str, str] = {}
+    errors: list[str] = []
     for row in reader:
         if not isinstance(row, dict):
             continue
@@ -210,7 +219,13 @@ def _parse_csv_upload(file_storage) -> Tuple[Dict[str, str], list]:
     return mapping, errors
 
 
-def _merge_device_maps(existing: Dict[str, str], incoming: Dict[str, str], *, mode: str, resolution: str):
+def _merge_device_maps(
+    existing: dict[str, str],
+    incoming: dict[str, str],
+    *,
+    mode: str,
+    resolution: str,
+) -> tuple[dict[str, str], list[dict[str, str]]]:
     base = {} if mode == "overwrite" else dict(existing)
     conflicts = []
     for ip, name in incoming.items():
@@ -225,9 +240,9 @@ def _merge_device_maps(existing: Dict[str, str], incoming: Dict[str, str], *, mo
     return base, conflicts
 
 
-def register_panel_settings_routes(app, state):
+def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
     @app.route("/panel-settings")
-    def panel_settings_page():
+    def panel_settings_page() -> Any:
         defaults, _web_conf_path, _app_dir = _load_env_defaults(state)
         panel_settings = {
             "display_tz": defaults.get("DISPLAY_TZ", ""),
@@ -257,7 +272,7 @@ def register_panel_settings_routes(app, state):
         )
 
     @app.route("/panel-settings/confirm-password", methods=["POST"])
-    def panel_settings_confirm_password():
+    def panel_settings_confirm_password() -> Any:
         payload = request.get_json(silent=True) or {}
         password = str(payload.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
@@ -265,7 +280,7 @@ def register_panel_settings_routes(app, state):
         return _json_ok()
 
     @app.route("/panel-settings/security", methods=["POST"])
-    def panel_settings_security():
+    def panel_settings_security() -> Any:
         payload = request.get_json(silent=True) or {}
         password = str(payload.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
@@ -300,7 +315,7 @@ def register_panel_settings_routes(app, state):
         return _json_ok({"message": "Security settings saved."})
 
     @app.route("/panel-settings/paths", methods=["POST"])
-    def panel_settings_paths():
+    def panel_settings_paths() -> Any:
         payload = request.get_json(silent=True) or {}
         password = str(payload.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
@@ -310,7 +325,7 @@ def register_panel_settings_routes(app, state):
         backup_dir = str(payload.get("backup_dir", "") or "").strip()
         create_backup_dir = _to_bool(payload.get("create_backup_dir"))
 
-        field_errors = {}
+        field_errors: dict[str, str] = {}
         if not display_tz:
             field_errors["DISPLAY_TZ"] = "This field is required."
         if not minecraft_root_dir:
@@ -322,9 +337,9 @@ def register_panel_settings_routes(app, state):
 
         defaults, web_conf_path, _app_dir = _load_env_defaults(state)
         service_name = str(defaults.get("SERVICE", "minecraft") or "minecraft").strip()
-        validation_errors = {}
+        validation_errors: dict[str, str] = {}
         validation_message = ""
-        validation_extra = {}
+        validation_extra: dict[str, Any] = {}
 
         tz_result = setup_queries_service.validate_setup_request("timezone", {
             "DISPLAY_TZ": display_tz,
@@ -364,7 +379,7 @@ def register_panel_settings_routes(app, state):
         return _json_ok({"message": "Settings saved."})
 
     @app.route("/panel-settings/reboot", methods=["POST"])
-    def panel_settings_reboot():
+    def panel_settings_reboot() -> Any:
         payload = request.get_json(silent=True) or {}
         password = str(payload.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
@@ -373,19 +388,20 @@ def register_panel_settings_routes(app, state):
         return _json_ok({"message": "Rebooting app..."})
 
     @app.route("/panel-settings/device-map/save", methods=["POST"])
-    def panel_settings_device_map_save():
+    def panel_settings_device_map_save() -> Any:
         payload = request.get_json(silent=True) or {}
         password = str(payload.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
             return _json_fail("Password incorrect.", status=403, error="password_incorrect")
-        rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+        raw_rows = payload.get("rows")
+        rows: list[object] = raw_rows if isinstance(raw_rows, list) else []
         mapping = _parse_device_rows(rows)
         if not _write_device_fallmap(state, mapping):
             return _json_fail("Failed to save device map.")
         return _json_ok({"device_map": mapping, "message": "Device map saved."})
 
     @app.route("/panel-settings/device-map/import", methods=["POST"])
-    def panel_settings_device_map_import():
+    def panel_settings_device_map_import() -> Any:
         password = str(request.form.get("sudo_password", "") or "").strip()
         if not _validate_superadmin_password(state, password):
             return _json_fail("Password incorrect.", status=403, error="password_incorrect")

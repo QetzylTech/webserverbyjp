@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+from typing import Any
 from pathlib import Path
 
 from app.ports import ports
@@ -14,13 +15,14 @@ from app.core import profiling
 
 _RESTORE_STAMP_SUFFIX_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?$")
 _INDEX_LOCK = threading.Lock()
-_DIR_SIZE_CACHE = {}
+CleanupCandidate = dict[str, Any]
+CleanupResult = dict[str, Any]
+_DIR_SIZE_CACHE: dict[str, dict[str, int]] = {}
 
 
-
-def _backup_bucket(name):
+def _backup_bucket(name: object) -> str:
     """Classify a backup filename into its retention bucket."""
-    lowered = (name or "").lower()
+    lowered = str(name or "").lower()
     if "_pre_restore" in lowered:
         return "pre_restore"
     if "_auto" in lowered:
@@ -34,11 +36,11 @@ def _backup_bucket(name):
     return "other"
 
 
-def _iter_backup_files(backup_dir):
+def _iter_backup_files(backup_dir: Path) -> list[CleanupCandidate]:
     """Iter backup files."""
     if not backup_dir.exists() or not backup_dir.is_dir():
         return []
-    items = []
+    items: list[CleanupCandidate] = []
     for path in backup_dir.glob("*.zip"):
         try:
             stat = path.stat()
@@ -54,24 +56,40 @@ def _iter_backup_files(backup_dir):
     return items
 
 
-def _safe_dir_mtime_ns(path):
+def _safe_dir_mtime_ns(path: str | Path) -> int:
     try:
         return int(Path(path).stat().st_mtime_ns)
     except OSError:
         return -1
 
 
-def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, keep_session_days, keep_pre_restore_days, dry_run):
+def _cleanup_backups(
+    backup_dir: Path,
+    *,
+    keep_manual: int,
+    keep_other: int,
+    keep_auto_days: int,
+    keep_session_days: int,
+    keep_pre_restore_days: int,
+    dry_run: bool,
+) -> CleanupResult:
     """Apply retention rules to backup archives and return a preview/result payload."""
     now = time.time()
     files = _iter_backup_files(backup_dir)
-    by_bucket = {"manual": [], "emergency": [], "other": [], "auto": [], "session": [], "pre_restore": []}
+    by_bucket: dict[str, list[CleanupCandidate]] = {
+        "manual": [],
+        "emergency": [],
+        "other": [],
+        "auto": [],
+        "session": [],
+        "pre_restore": [],
+    }
     for item in files:
         by_bucket[item["bucket"]].append(item)
     for bucket in by_bucket:
         by_bucket[bucket].sort(key=lambda row: row["mtime"], reverse=True)
 
-    to_delete = []
+    to_delete: list[CleanupCandidate] = []
     for idx, item in enumerate(by_bucket["manual"]):
         if idx >= keep_manual:
             to_delete.append(item)
@@ -97,8 +115,8 @@ def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, kee
     unique = {str(item["path"]): item for item in to_delete}
     targets = sorted(unique.values(), key=lambda row: row["mtime"])
 
-    deleted = []
-    errors = []
+    deleted: list[CleanupCandidate] = []
+    errors: list[str] = []
     for item in targets:
         if dry_run:
             deleted.append(item)
@@ -132,7 +150,7 @@ def _cleanup_backups(backup_dir, *, keep_manual, keep_other, keep_auto_days, kee
     }
 
 
-def _iter_old_world_dirs(data_dir):
+def _iter_old_world_dirs(data_dir: Path) -> list[Path]:
     """Iter old world dirs."""
     old_worlds_dir = data_dir / "old_worlds"
     if not old_worlds_dir.exists() or not old_worlds_dir.is_dir():
@@ -140,13 +158,20 @@ def _iter_old_world_dirs(data_dir):
     return [child for child in old_worlds_dir.iterdir() if child.is_dir()]
 
 
-def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_run):
+def _cleanup_stale_worlds(
+    *,
+    world_dir: str | Path,
+    data_dir: Path,
+    keep_count: int,
+    max_age_days: int,
+    dry_run: bool,
+) -> CleanupResult:
     """Prune archived world directories outside the active world and retention window."""
     now = time.time()
     world_dir = Path(world_dir).resolve()
     old_worlds_dir = data_dir / "old_worlds"
     cutoff = now - (max_age_days * 86400)
-    stale_paths = []
+    stale_paths: list[CleanupCandidate] = []
     for old_path in _iter_old_world_dirs(data_dir):
         try:
             resolved = old_path.resolve()
@@ -175,8 +200,8 @@ def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_
     stale_paths.sort(key=lambda row: row["mtime"], reverse=True)
     delete_targets = [item for idx, item in enumerate(stale_paths) if idx >= keep_count and item["mtime"] <= cutoff]
 
-    deleted = []
-    errors = []
+    deleted: list[CleanupCandidate] = []
+    errors: list[str] = []
     for item in delete_targets:
         if dry_run:
             deleted.append(item)
@@ -208,14 +233,14 @@ def _cleanup_stale_worlds(*, world_dir, data_dir, keep_count, max_age_days, dry_
     }
 
 
-def _cleanup_is_under(root, path):
+def _cleanup_is_under(root: str | Path, path: str | Path) -> bool:
     """Return whether a resolved path stays within the resolved root."""
     root = Path(root).resolve()
     path = Path(path).resolve()
     return path == root or root in path.parents
 
 
-def _cleanup_read_level_name(path):
+def _cleanup_read_level_name(path: str | Path) -> str | None:
     """Read the configured level-name from a server.properties file."""
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -232,7 +257,7 @@ def _cleanup_read_level_name(path):
     return None
 
 
-def _cleanup_active_world_path(ctx):
+def _cleanup_active_world_path(ctx: Any) -> Path | None:
     """Resolve the currently active world path from server.properties candidates."""
     ctx = as_ctx(ctx)
     for candidate in ctx.SERVER_PROPERTIES_CANDIDATES:
@@ -251,7 +276,7 @@ def _cleanup_active_world_path(ctx):
     return None
 
 
-def _cleanup_dir_size(path):
+def _cleanup_dir_size(path: str | Path) -> int:
     """Return a cached recursive directory size for cleanup previews."""
     with profiling.timed("maintenance.fs.dir_size"):
         target_path = Path(path)
@@ -274,7 +299,7 @@ def _cleanup_dir_size(path):
         return total
 
 
-def _cleanup_collect_candidates(ctx, cfg):
+def _cleanup_collect_candidates(ctx: Any, cfg: dict[str, Any]) -> list[CleanupCandidate]:
     """Collect backup and world cleanup candidates for maintenance evaluation."""
     ctx = as_ctx(ctx)
     with profiling.timed("maintenance.candidate_discovery.total"):
@@ -291,11 +316,11 @@ def _cleanup_collect_candidates(ctx, cfg):
         with profiling.timed("maintenance.candidate_discovery.active_world_probe"):
             active_world = _cleanup_active_world_path(ctx)
         categories = cfg.get("rules", {}).get("categories", {})
-        candidates = []
+        candidates: list[CleanupCandidate] = []
 
-        def _append(path, category, is_dir=False):
+        def _append(path: str | Path, category: str, is_dir: bool = False) -> None:
             """Append one discovered candidate row with eligibility guards."""
-            row = {
+            row: CleanupCandidate = {
                 "category": category,
                 "path": str(path),
                 "name": Path(path).name,

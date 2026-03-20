@@ -1,5 +1,7 @@
 """Maintenance route registration for the MC web dashboard."""
+# mypy: disable-error-code=untyped-decorator
 
+from typing import Any, cast
 from flask import jsonify, render_template, request
 
 from app.commands import maintenance_commands as maintenance_commands_service
@@ -9,16 +11,18 @@ from app.queries import maintenance_queries as maintenance_queries_service
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 
 _MAINTENANCE_RATE_LIMITER = InMemoryRateLimiter()
+_maintenance_commands = cast(Any, maintenance_commands_service)
+_maintenance_queries = cast(Any, maintenance_queries_service)
 
 
-def _maintenance_client_key():
+def _maintenance_client_key() -> str:
     xff = (request.headers.get("X-Forwarded-For", "") or "").strip()
     if xff:
         return xff.split(",")[0].strip()
     return str(request.remote_addr or "unknown")
 
 
-def _maintenance_enforce_rate_limit(route_key, *, limit, window_seconds):
+def _maintenance_enforce_rate_limit(route_key: str, *, limit: int, window_seconds: float) -> Any:
     allowed, retry_after = _MAINTENANCE_RATE_LIMITER.allow(
         f"{route_key}:{_maintenance_client_key()}",
         limit=limit,
@@ -37,7 +41,7 @@ def _maintenance_enforce_rate_limit(route_key, *, limit, window_seconds):
     return response
 
 
-def _json_or_passthrough(result):
+def _json_or_passthrough(result: Any) -> Any:
     if isinstance(result, tuple):
         return result
     if hasattr(result, 'status_code'):
@@ -45,14 +49,14 @@ def _json_or_passthrough(result):
     return jsonify(result)
 
 
-def register_maintenance_routes(app, state):
+def register_maintenance_routes(app: Any, state: Any) -> None:
     """Register maintenance page and maintenance API routes."""
     ctx = getattr(state, "ctx", state)
-    maintenance_queries_service.invalidate_state_cache()
-    maintenance_commands_service.start_cleanup_scheduler_once(ctx)
+    _maintenance_queries.invalidate_state_cache()
+    _maintenance_commands.start_cleanup_scheduler_once(ctx)
 
-    def _maintenance_template_context(scope):
-        model = maintenance_queries_service.get_page_model(ctx, state, scope)
+    def _maintenance_template_context(scope: str) -> dict[str, object]:
+        model = _maintenance_queries.get_page_model(ctx, state, scope)
         return {
             "csrf_token": state["_ensure_csrf_token"](),
             "maintenance_snapshot": model["snapshot"],
@@ -66,9 +70,9 @@ def register_maintenance_routes(app, state):
         }
 
     @app.route("/maintenance")
-    def maintenance_page():
+    def maintenance_page() -> Any:
         with profiling.timed("maintenance.route.page"):
-            scope = maintenance_queries_service.normalize_scope(request.args.get("scope", "backups"))
+            scope = _maintenance_queries.normalize_scope(request.args.get("scope", "backups"))
             context = _maintenance_template_context(scope)
             return render_shell_page_helper(
                 app,
@@ -81,64 +85,64 @@ def register_maintenance_routes(app, state):
             )
 
     @app.route("/maintenance/api/state", methods=["GET"])
-    def maintenance_api_state():
+    def maintenance_api_state() -> Any:
         with profiling.timed("maintenance.route.api_state"):
             limited = _maintenance_enforce_rate_limit("maintenance_api_state", limit=30, window_seconds=10.0)
             if limited is not None:
                 return limited
             force_refresh = str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "on"}
-            scope = maintenance_queries_service.normalize_scope(request.args.get("scope", "backups"))
-            return jsonify(maintenance_queries_service.get_state_payload(ctx, state, scope, force_refresh=force_refresh))
+            scope = _maintenance_queries.normalize_scope(request.args.get("scope", "backups"))
+            return jsonify(_maintenance_queries.get_state_payload(ctx, state, scope, force_refresh=force_refresh))
 
     @app.route("/maintenance/api/confirm-password", methods=["POST"])
-    def maintenance_api_confirm_password():
+    def maintenance_api_confirm_password() -> Any:
         limited = _maintenance_enforce_rate_limit("maintenance_api_confirm_password", limit=15, window_seconds=30.0)
         if limited is not None:
             return limited
         payload = request.get_json(silent=True) or {}
-        return _json_or_passthrough(maintenance_commands_service.confirm_password(state, payload))
+        return _json_or_passthrough(_maintenance_commands.confirm_password(state, payload))
 
     @app.route("/maintenance/api/save-rules", methods=["POST"])
-    def maintenance_api_save_rules():
+    def maintenance_api_save_rules() -> Any:
         limited = _maintenance_enforce_rate_limit("maintenance_api_save_rules", limit=8, window_seconds=30.0)
         if limited is not None:
             return limited
         payload = request.get_json(silent=True) or {}
-        result = maintenance_commands_service.save_rules(ctx, state, payload)
+        result = _maintenance_commands.save_rules(ctx, state, payload)
         if isinstance(result, dict) and result.get("ok"):
-            maintenance_queries_service.invalidate_state_cache(result.get("scope"))
+            _maintenance_queries.invalidate_state_cache(result.get("scope"))
         return _json_or_passthrough(result)
 
     @app.route("/maintenance/api/run-rules", methods=["POST"])
-    def maintenance_api_run_rules():
+    def maintenance_api_run_rules() -> Any:
         limited = _maintenance_enforce_rate_limit("maintenance_api_run_rules", limit=8, window_seconds=30.0)
         if limited is not None:
             return limited
         payload = request.get_json(silent=True) or {}
-        result = maintenance_commands_service.run_rules(ctx, state, payload)
+        result = _maintenance_commands.run_rules(ctx, state, payload)
         if isinstance(result, dict) and result.get("ok") and not result.get("dry_run"):
-            maintenance_queries_service.invalidate_state_cache(result.get("scope"))
+            _maintenance_queries.invalidate_state_cache(result.get("scope"))
         return _json_or_passthrough(result)
 
     @app.route("/maintenance/api/manual-delete", methods=["POST"])
-    def maintenance_api_manual_delete():
+    def maintenance_api_manual_delete() -> Any:
         limited = _maintenance_enforce_rate_limit("maintenance_api_manual_delete", limit=8, window_seconds=30.0)
         if limited is not None:
             return limited
         payload = request.get_json(silent=True) or {}
-        result = maintenance_commands_service.manual_delete(ctx, state, payload)
+        result = _maintenance_commands.manual_delete(ctx, state, payload)
         if isinstance(result, dict) and result.get("ok") and not result.get("dry_run"):
-            maintenance_queries_service.invalidate_state_cache(result.get("scope"))
+            _maintenance_queries.invalidate_state_cache(result.get("scope"))
         return _json_or_passthrough(result)
 
     @app.route("/maintenance/api/ack-non-normal", methods=["POST"])
-    def maintenance_api_ack_non_normal():
+    def maintenance_api_ack_non_normal() -> Any:
         limited = _maintenance_enforce_rate_limit("maintenance_api_ack_non_normal", limit=10, window_seconds=30.0)
         if limited is not None:
             return limited
         payload = request.get_json(silent=True) or {}
-        result = maintenance_commands_service.ack_non_normal(ctx, payload)
+        result = _maintenance_commands.ack_non_normal(ctx, payload)
         if isinstance(result, dict) and result.get("ok"):
-            maintenance_queries_service.invalidate_state_cache(result.get("scope"))
+            _maintenance_queries.invalidate_state_cache(result.get("scope"))
         return _json_or_passthrough(result)
 

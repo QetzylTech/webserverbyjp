@@ -37,7 +37,7 @@ def _append_file_log_cache_line(
     mtime_attr: str,
 ) -> None:
     """Append one log line to a file-backed cache and refresh its mtime marker."""
-    clean = (line or "").rstrip("\r\n")
+    clean = str(line or "").rstrip("\r\n")
     if not clean:
         return
     with lock:
@@ -78,7 +78,7 @@ def _get_cached_file_log_text(
 
 def _is_rcon_noise_line(line: object) -> bool:
     """Return whether a minecraft log line is known RCON shutdown/startup noise."""
-    lower = (line or "").lower()
+    lower = str(line or "").lower()
     if "thread rcon client" in lower:
         return True
     if "minecraft/rconclient" in lower and "shutting down" in lower:
@@ -99,7 +99,10 @@ def _minecraft_log_lines_from_latest_file(ctx: Any, max_visible_lines: int = 500
 
     if latest_path is not None:
         # Read a larger tail window so filtering still leaves enough visible lines.
-        source_lines = ctx._read_recent_file_lines(latest_path, max(max_visible_lines * 8, 2000))
+        source_lines = [
+            str(line)
+            for line in ctx._read_recent_file_lines(latest_path, max(max_visible_lines * 8, 2000))
+        ]
         filtered = [line for line in source_lines if not _is_rcon_noise_line(line)]
         if len(filtered) >= max_visible_lines:
             return filtered[-max_visible_lines:]
@@ -204,7 +207,7 @@ def load_minecraft_log_cache_from_journal(ctx: Any) -> None:
 
 def append_minecraft_log_cache_line(ctx: Any, line: object) -> None:
     """Append one minecraft journal line into cache."""
-    clean = (line or "").rstrip("\r\n")
+    clean = str(line or "").rstrip("\r\n")
     if not clean:
         return
     # Keep the cache bounded by the deque maxlen; just append the newest line.
@@ -260,3 +263,4 @@ def get_cached_mcweb_log_text(ctx: Any) -> str:
         loaded_attr="mcweb_log_cache_loaded",
         mtime_attr="mcweb_log_cache_mtime_ns",
     )
+

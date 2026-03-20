@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 import threading
+from typing import Any
 
 _LOCK_TYPE = type(threading.Lock())
 
@@ -11,7 +12,23 @@ from app.core import state_store as state_store_service
 from app.services import log_stream_service as log_stream_service
 from app.services.operation_state import has_pending_operation
 
-def _restore_status_defaults():
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip() or str(default))
+        except ValueError:
+            return default
+    return default
+
+
+def _restore_status_defaults() -> dict[str, object]:
     return {
         "job_id": "",
         "running": False,
@@ -22,7 +39,7 @@ def _restore_status_defaults():
     }
 
 
-def _ensure_restore_status_state(ctx):
+def _ensure_restore_status_state(ctx: Any) -> tuple[dict[str, object], threading.Lock]:
     state = getattr(ctx, "restore_status", None)
     if not isinstance(state, dict):
         state = _restore_status_defaults()
@@ -44,19 +61,23 @@ def _ensure_restore_status_state(ctx):
     return state, lock
 
 
-def append_restore_event(ctx, message):
+def append_restore_event(ctx: Any, message: object) -> dict[str, object] | None:
     state, lock = _ensure_restore_status_state(ctx)
     text = str(message or "").strip()
     if not text:
         return None
     with lock:
-        state["seq"] = int(state.get("seq", 0)) + 1
+        state["seq"] = _coerce_int(state.get("seq", 0)) + 1
         event = {
             "seq": state["seq"],
             "message": text,
             "at": time.time(),
         }
-        events = state.setdefault("events", [])
+        events_obj = state.setdefault("events", [])
+        if not isinstance(events_obj, list):
+            events_obj = []
+            state["events"] = events_obj
+        events: list[dict[str, object]] = events_obj
         events.append(event)
         if len(events) > 120:
             del events[:-120]
@@ -79,10 +100,10 @@ def append_restore_event(ctx, message):
         stamp = datetime.now(tz=getattr(ctx, "DISPLAY_TZ", None)).strftime("%Y-%m-%d %H:%M:%S %Z")
         line = f"{stamp} | {text}\n"
 
-        def _append_log_line(path):
+        def _append_log_line(path: object) -> None:
             if not path:
                 return
-            log_file = Path(path)
+            log_file = path if isinstance(path, Path) else Path(str(path))
             log_file.parent.mkdir(parents=True, exist_ok=True)
             with log_file.open("a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -101,12 +122,9 @@ def append_restore_event(ctx, message):
     return event
 
 
-def get_restore_status(ctx, since_seq=0, job_id=None):
+def get_restore_status(ctx: Any, since_seq: object = 0, job_id: object = None) -> dict[str, object]:
     state, lock = _ensure_restore_status_state(ctx)
-    try:
-        since = int(since_seq or 0)
-    except (TypeError, ValueError):
-        since = 0
+    since = _coerce_int(since_seq)
     requested_job_id = str(job_id or "").strip()
     db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
     process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
@@ -115,14 +133,16 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
             state["running"] = False
             state["job_id"] = ""
         current_job_id = str(state.get("job_id", "") or "")
-        events = [dict(item) for item in state.get("events", []) if int(item.get("seq", 0) or 0) > since]
+        raw_events = state.get("events", [])
+        event_items = raw_events if isinstance(raw_events, list) else []
+        events = [dict(item) for item in event_items if isinstance(item, dict) and _coerce_int(item.get("seq", 0)) > since]
         if requested_job_id and current_job_id and requested_job_id != current_job_id:
             if events:
                 return {
                     "ok": True,
                     "job_id": requested_job_id,
                     "running": False,
-                    "seq": int(state.get("seq", 0) or 0),
+                    "seq": _coerce_int(state.get("seq", 0)),
                     "events": [],
                     "result": None,
                 }
@@ -149,7 +169,7 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
                         continue
                     events.append(
                         {
-                            "seq": int(row.get("id", 0) or 0),
+                            "seq": _coerce_int(row.get("id", 0) if isinstance(row, dict) else 0),
                             "message": str(payload.get("message", "") or ""),
                             "at": payload.get("at") or row.get("created_at"),
                         }
@@ -158,12 +178,16 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
                     if requested_job_id:
                         current_job_id = requested_job_id
                     else:
-                        last_job_id = str((rows[-1].get("payload") or {}).get("job_id", "") or "")
+                        last_row = rows[-1] if rows else {}
+                        last_payload = last_row.get("payload", {}) if isinstance(last_row, dict) else {}
+                        if not isinstance(last_payload, dict):
+                            last_payload = {}
+                        last_job_id = str(last_payload.get("job_id", "") or "")
                         current_job_id = last_job_id or current_job_id
-        seq_value = int(state.get("seq", 0) or 0)
+        seq_value = _coerce_int(state.get("seq", 0))
         if events:
             try:
-                seq_value = max(seq_value, int(events[-1].get("seq", seq_value) or seq_value))
+                seq_value = max(seq_value, _coerce_int(events[-1].get("seq", seq_value), seq_value))
             except Exception:
                 pass
         if process_role == "web" and not state.get("running") and has_pending_operation(ctx, "restore"):
@@ -178,7 +202,7 @@ def get_restore_status(ctx, since_seq=0, job_id=None):
         }
 
 
-def restore_running_from_getter(getter):
+def restore_running_from_getter(getter: Any) -> bool:
     if not callable(getter):
         return False
     try:

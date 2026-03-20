@@ -3,6 +3,7 @@
 import threading
 import time
 from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.services.worker_scheduler import WorkerSpec, start_worker
@@ -33,7 +34,17 @@ _cleanup_scheduler_started = False
 
 
 
-def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
+def _save_run_result(
+    ctx: Any,
+    full_cfg: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    scope: str,
+    trigger: str,
+    result: dict[str, Any],
+    why: str,
+    what: str,
+) -> None:
     """Persist cleanup run metadata, history, and log output for one execution."""
     meta = cfg.setdefault("meta", {})
     run_result = "ok" if not result["errors"] else "partial"
@@ -65,7 +76,18 @@ def _save_run_result(ctx, full_cfg, cfg, *, scope, trigger, result, why, what):
     _cleanup_save_config(ctx, full_cfg)
 
 
-def _run_cleanup_trigger(ctx, full_cfg, cfg, *, scope, trigger, schedule_id, why, what, extra_meta=None):
+def _run_cleanup_trigger(
+    ctx: Any,
+    full_cfg: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    scope: str,
+    trigger: str,
+    schedule_id: str,
+    why: str,
+    what: str,
+    extra_meta: dict[str, Any] | None = None,
+) -> bool:
     """Run one cleanup trigger and record the outcome when work actually executes."""
     conflict_reason = priority_conflict(ctx)
     if conflict_reason:
@@ -81,7 +103,7 @@ def _run_cleanup_trigger(ctx, full_cfg, cfg, *, scope, trigger, schedule_id, why
     return True
 
 
-def _low_free_space_due(ctx, cfg, schedule):
+def _low_free_space_due(ctx: Any, cfg: dict[str, Any], schedule: dict[str, Any]) -> bool:
     """Return whether the low-free-space event threshold is currently met."""
     used_percent, _, _ = _cleanup_safe_used_percent(ctx.BACKUP_DIR)
     threshold = _safe_int(
@@ -93,10 +115,10 @@ def _low_free_space_due(ctx, cfg, schedule):
     return used_percent is not None and used_percent >= threshold
 
 
-def _cleanup_scheduler_loop(ctx):
+def _cleanup_scheduler_loop(ctx: Any) -> None:
     """Poll configured schedules and run eligible cleanup jobs."""
     ctx = as_ctx(ctx)
-    boot_event_done = set()
+    boot_event_done: set[str] = set()
     while True:
         try:
             full_cfg = _cleanup_load_config(ctx)
@@ -167,7 +189,7 @@ def _cleanup_scheduler_loop(ctx):
         time.sleep(30)
 
 
-def _cleanup_start_scheduler_once(ctx):
+def _cleanup_start_scheduler_once(ctx: Any) -> None:
     """Start the cleanup scheduler once for the current process."""
     ctx = as_ctx(ctx)
     global _cleanup_scheduler_started
@@ -200,7 +222,7 @@ def _cleanup_start_scheduler_once(ctx):
         _cleanup_scheduler_started = True
 
 
-def _cleanup_run_event_if_enabled(ctx, event_name):
+def _cleanup_run_event_if_enabled(ctx: Any, event_name: object) -> None:
     """Run event-triggered cleanup for scopes that enable the given event."""
     ctx = as_ctx(ctx)
     full_cfg = _cleanup_load_config(ctx)
@@ -229,18 +251,11 @@ def _cleanup_run_event_if_enabled(ctx, event_name):
         )
 
 
-def start_cleanup_scheduler_once(ctx):
-    """Public wrapper that lazily starts the maintenance scheduler."""
-    return _cleanup_start_scheduler_once(as_ctx(ctx))
+start_cleanup_scheduler_once = _cleanup_start_scheduler_once
+run_cleanup_event_if_enabled = _cleanup_run_event_if_enabled
 
 
-
-def run_cleanup_event_if_enabled(ctx, event_name):
-    """Public wrapper used by control routes to fire maintenance events."""
-    return _cleanup_run_event_if_enabled(as_ctx(ctx), event_name)
-
-
-def _schedule_next_time(now_local, schedule):
+def _schedule_next_time(now_local: datetime, schedule: dict[str, Any]) -> datetime | None:
     """Return next datetime for a time-based schedule, or None."""
     if not schedule.get("enabled", True):
         return None
@@ -255,14 +270,14 @@ def _schedule_next_time(now_local, schedule):
     if interval == "daily":
         return base_today if base_today > now_local else (base_today + timedelta(days=1))
     if interval == "weekly":
-        target = int(schedule.get("day_of_week", 0) or 0) % 7
+        target = _safe_int(schedule.get("day_of_week", 0), 0, minimum=0, maximum=6) % 7
         delta = (target - now_local.weekday()) % 7
         candidate = base_today + timedelta(days=delta)
         if candidate <= now_local:
             candidate += timedelta(days=7)
         return candidate
     if interval == "monthly":
-        day = int(schedule.get("day_of_month", 1) or 1)
+        day = _safe_int(schedule.get("day_of_month", 1), 1, minimum=1, maximum=31)
         if day < 1:
             day = 1
         try:
@@ -280,7 +295,7 @@ def _schedule_next_time(now_local, schedule):
                 candidate = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
         return candidate
     if interval == "every_n_days":
-        every_n = max(1, int(schedule.get("every_n_days", 1) or 1))
+        every_n = _safe_int(schedule.get("every_n_days", 1), 1, minimum=1, maximum=365)
         anchor_raw = str(schedule.get("anchor_date", now_local.date().isoformat()))
         try:
             anchor = datetime.fromisoformat(anchor_raw).date()
@@ -298,14 +313,14 @@ def _schedule_next_time(now_local, schedule):
     return None
 
 
-def get_next_cleanup_run_at(ctx, scope="backups"):
+def get_next_cleanup_run_at(ctx: Any, scope: str = "backups") -> str:
     """Return the next scheduled cleanup run time (ISO string) for a scope."""
     ctx = as_ctx(ctx)
     cfg = _cleanup_load_config(ctx)
     scope_view = _cleanup_get_scope_view(cfg, scope)
     schedules = scope_view.get("schedules", []) if isinstance(scope_view, dict) else []
     now_local = datetime.now(ctx.DISPLAY_TZ)
-    next_times = []
+    next_times: list[datetime] = []
     if isinstance(schedules, list):
         for schedule in schedules:
             if not isinstance(schedule, dict):

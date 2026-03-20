@@ -5,6 +5,7 @@ import json
 import time
 import threading
 from datetime import datetime
+from typing import Any, Iterator, Mapping, cast
 
 from flask import Response, stream_with_context
 
@@ -30,9 +31,18 @@ from app.commands.control_types import CommandResult
 _STARTING_STATES = {"activating", "starting"}
 _SHUTTING_STATES = {"deactivating", "shutting_down"}
 _START_COOLDOWN_SECONDS = 10.0
+_state_store_service = cast(Any, state_store_service)
+_maintenance_engine_service = cast(Any, maintenance_engine_service)
 
 
-def _service_state_snapshot(state):
+def _event_id(value: object, default: int = 0) -> int:
+    try:
+        return int(str(value or default))
+    except Exception:
+        return default
+
+
+def _service_state_snapshot(state: Mapping[str, Any]) -> tuple[str, str, bool, bool, bool]:
     raw = ""
     try:
         raw = str(state["get_status"]() or "").strip().lower()
@@ -49,11 +59,11 @@ def _service_state_snapshot(state):
     return raw, intent, is_off, is_starting, is_shutting
 
 
-def _reject_invalid_state(message, *, error="invalid_state", status_code=409):
+def _reject_invalid_state(message: str, *, error: str = "invalid_state", status_code: int = 409) -> Any:
     return _payload_result({"ok": False, "error": error, "message": message}, status_code=status_code)
 
 
-def _restore_in_progress(ctx):
+def _restore_in_progress(ctx: Any) -> bool:
     try:
         state = ctx.state
     except Exception:
@@ -61,30 +71,30 @@ def _restore_in_progress(ctx):
     return restore_running_from_getter(state.get("get_restore_status"))
 
 
-def _cleanup_in_progress():
-    return bool(maintenance_engine_service.cleanup_lock_held())
+def _cleanup_in_progress() -> bool:
+    return bool(_maintenance_engine_service.cleanup_lock_held())
 
 
 
 
-def _start_cooldown_container(state):
+def _start_cooldown_container(state: Any) -> Any:
     return state.ctx if hasattr(state, "ctx") else state
 
 
-def _cooldown_get(container, key, default=None):
+def _cooldown_get(container: Any, key: str, default: object = None) -> Any:
     if isinstance(container, dict):
         return container.get(key, default)
     return getattr(container, key, default)
 
 
-def _cooldown_set(container, key, value):
+def _cooldown_set(container: Any, key: str, value: object) -> None:
     if isinstance(container, dict):
         container[key] = value
     else:
         setattr(container, key, value)
 
 
-def _ensure_start_cooldown_state(state):
+def _ensure_start_cooldown_state(state: Any) -> tuple[Any, Any]:
     container = _start_cooldown_container(state)
     lock = _cooldown_get(container, "start_cooldown_lock")
     if lock is None:
@@ -94,7 +104,7 @@ def _ensure_start_cooldown_state(state):
     return container, lock
 
 
-def _start_cooldown_remaining(state):
+def _start_cooldown_remaining(state: Any) -> float:
     container, lock = _ensure_start_cooldown_state(state)
     now = time.time()
     with lock:
@@ -102,7 +112,7 @@ def _start_cooldown_remaining(state):
     return max(0.0, until - now)
 
 
-def _set_start_cooldown(state, seconds):
+def _set_start_cooldown(state: Any, seconds: float | None) -> None:
     if seconds is None:
         return
     container, lock = _ensure_start_cooldown_state(state)
@@ -111,7 +121,7 @@ def _set_start_cooldown(state, seconds):
         _cooldown_set(container, "start_cooldown_until", until)
 
 
-def start_operation(ctx, *, idempotency_key, client_key):
+def start_operation(ctx: Any, *, idempotency_key: str, client_key: str) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "start", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
@@ -176,7 +186,7 @@ def start_operation(ctx, *, idempotency_key, client_key):
     _enqueue_control_intent(ctx, "start", op_id, target=state.get("SERVICE", "minecraft"))
     _refresh_runtime_status(ctx, "starting", invalidate_observed=True)
 
-    def _start_worker():
+    def _start_worker() -> None:
         _update_operation_record(
             ctx,
             op_id,
@@ -222,6 +232,10 @@ def start_operation(ctx, *, idempotency_key, client_key):
         )
         _refresh_runtime_status(ctx, "starting", invalidate_observed=True)
 
+    def _on_start_thread_failed() -> None:
+        _refresh_runtime_status(ctx, None)
+        state["log_mcweb_action"]("start-worker", rejection_message="Failed to start service worker thread.")
+
     worker_result = _start_operation_worker(
         ctx,
         "start",
@@ -229,10 +243,7 @@ def start_operation(ctx, *, idempotency_key, client_key):
         target=_start_worker,
         thread_error_message="Failed to start service worker thread.",
         error_result_builder=lambda message: _response_result(state["_start_failed_response"](message)),
-        on_thread_start_failed=lambda: (
-            _refresh_runtime_status(ctx, None),
-            state["log_mcweb_action"]("start-worker", rejection_message="Failed to start service worker thread."),
-        ),
+        on_thread_start_failed=_on_start_thread_failed,
     )
     if worker_result is not None:
         return worker_result
@@ -241,7 +252,7 @@ def start_operation(ctx, *, idempotency_key, client_key):
     return _accepted_operation_result(op_id, existing=resumed, resumed=resumed)
 
 
-def stop_operation(ctx, *, idempotency_key, client_key, sudo_password):
+def stop_operation(ctx: Any, *, idempotency_key: str, client_key: str, sudo_password: str) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "stop", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
@@ -277,7 +288,7 @@ def stop_operation(ctx, *, idempotency_key, client_key, sudo_password):
         state["log_mcweb_action"]("stop")
         return _accepted_operation_result(op_id, existing=resumed, resumed=resumed, queued=True)
 
-    def _stop_worker():
+    def _stop_worker() -> None:
         _update_operation_record(
             ctx,
             op_id,
@@ -340,7 +351,7 @@ def stop_operation(ctx, *, idempotency_key, client_key, sudo_password):
     return _accepted_operation_result(op_id, existing=resumed, resumed=resumed)
 
 
-def backup_operation(ctx, *, idempotency_key, client_key):
+def backup_operation(ctx: Any, *, idempotency_key: str, client_key: str) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "backup", client_key=client_key, limit=8, window_seconds=30.0)
     if limited is not None:
@@ -383,7 +394,7 @@ def backup_operation(ctx, *, idempotency_key, client_key):
     _enqueue_control_intent(ctx, "backup", op_id, target="manual")
     _invalidate_observed_cache(ctx)
 
-    def _backup_worker():
+    def _backup_worker() -> None:
         _update_operation_record(
             ctx,
             op_id,
@@ -440,7 +451,14 @@ def backup_operation(ctx, *, idempotency_key, client_key):
     return _accepted_operation_result(op_id, existing=resumed, resumed=resumed)
 
 
-def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filename):
+def restore_operation(
+    ctx: Any,
+    *,
+    idempotency_key: str,
+    client_key: str,
+    sudo_password: str,
+    filename: str,
+) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "restore-backup", client_key=client_key, limit=6, window_seconds=30.0)
     if limited is not None:
@@ -531,7 +549,7 @@ def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filena
             message="Restore accepted.",
         )
 
-    def _restore_worker():
+    def _restore_worker() -> None:
         _update_operation_record(
             ctx,
             op_id,
@@ -633,21 +651,18 @@ def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filena
     )
 
 
-def restore_status(ctx, *, since, job_id=None):
+def restore_status(ctx: Any, *, since: int, job_id: str | None = None) -> Any:
     state = ctx.state
     payload = state["get_restore_status"](since_seq=since, job_id=job_id)
     return _payload_result(payload)
 
 
-def restore_log_stream(ctx, *, since, job_id=None):
+def restore_log_stream(ctx: Any, *, since: object, job_id: str | None = None) -> CommandResult:
     state = ctx.state
-    try:
-        since_seq = int(since or 0)
-    except (TypeError, ValueError):
-        since_seq = 0
+    since_seq = _event_id(since)
     requested_job_id = str(job_id or "").strip() or None
 
-    def generate():
+    def generate() -> Iterator[str]:
         last_seq = since_seq
         status_sent = False
         db_path = state.get("APP_STATE_DB_PATH")
@@ -655,7 +670,7 @@ def restore_log_stream(ctx, *, since, job_id=None):
             rows = []
             if db_path:
                 try:
-                    rows = state_store_service.list_events_since(
+                    rows = _state_store_service.list_events_since(
                         db_path,
                         topic="restore_log",
                         since_id=last_seq,
@@ -666,11 +681,11 @@ def restore_log_stream(ctx, *, since, job_id=None):
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                payload: dict[str, Any] = row.get("payload", {}) if isinstance(row.get("payload"), dict) else {}
                 row_job_id = str(payload.get("job_id", "") or "")
                 if requested_job_id and row_job_id and row_job_id != requested_job_id:
                     continue
-                seq = int(row.get("id", last_seq) or last_seq)
+                seq = _event_id(row.get("id", last_seq), last_seq)
                 last_seq = max(last_seq, seq)
                 data = {
                     "type": "line",
@@ -707,18 +722,18 @@ def restore_log_stream(ctx, *, since, job_id=None):
     return CommandResult(response=response)
 
 
-def operation_status(ctx, *, op_id, client_key):
+def operation_status(ctx: Any, *, op_id: str, client_key: str) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "operation-status", client_key=client_key, limit=90, window_seconds=15.0)
     if limited is not None:
         return limited
-    item = state_store_service.get_operation(state["APP_STATE_DB_PATH"], op_id)
+    item = _state_store_service.get_operation(state["APP_STATE_DB_PATH"], op_id)
     if item is None:
         return _payload_result({"ok": False, "error": "not_found", "message": "Operation not found."}, status_code=404)
     return _payload_result({"ok": True, "operation": item})
 
 
-def rcon_command(ctx, *, client_key, command, sudo_password):
+def rcon_command(ctx: Any, *, client_key: str, command: str, sudo_password: str) -> Any:
     state = ctx.state
     limited = enforce_rate_limit(ctx, "rcon", client_key=client_key, limit=20, window_seconds=30.0)
     if limited is not None:

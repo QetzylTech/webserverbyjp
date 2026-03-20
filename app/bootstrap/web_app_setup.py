@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,12 +22,12 @@ def configure_setup(
     app: Any,
     *,
     web_conf_path: str | Path,
-    web_cfg_values: dict[str, object],
+    web_cfg_values: dict[str, object] | Mapping[str, object],
     setup_required_state: dict[str, object],
     data_dir: str | Path,
     app_state_db_path: str | Path,
-    log_mcweb_log: Callable[..., object],
-    log_mcweb_exception: Callable[..., object],
+    log_mcweb_log: Callable[..., None],
+    log_mcweb_exception: Callable[..., None],
 ) -> tuple[Callable[[], bool], Callable[[], str]]:
     def _setup_required() -> bool:
         return bool(setup_required_state.get("required"))
@@ -44,7 +45,7 @@ def configure_setup(
 
         start_detached(target=_reload, daemon=True)
 
-    def _setup_defaults() -> dict[str, object]:
+    def _setup_defaults() -> dict[str, str]:
         return setup_service.setup_form_defaults(web_cfg_values)
 
     def _save_setup_values(values: dict[str, object]) -> tuple[bool, str, dict[str, str]]:

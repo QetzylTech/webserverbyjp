@@ -1,5 +1,6 @@
 """Build the runtime context, bind services, and register routes."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, FrozenSet, Mapping
 
@@ -37,7 +38,12 @@ class RuntimeServices:
     status_cache_service: Any
 
 
-def _build_runtime_context(namespace, required_state_key_set, runtime_context_extra_keys, runtime_imported_symbols):
+def _build_runtime_context(
+    namespace: Mapping[str, Any],
+    required_state_key_set: FrozenSet[str],
+    runtime_context_extra_keys: FrozenSet[str],
+    runtime_imported_symbols: Mapping[str, Any],
+) -> dict[str, Any]:
     """Assemble the initial runtime context from explicit state keys and imports."""
     allowed = required_state_key_set | runtime_context_extra_keys
     runtime_context = {key: namespace[key] for key in allowed if key in namespace}
@@ -46,7 +52,12 @@ def _build_runtime_context(namespace, required_state_key_set, runtime_context_ex
     return runtime_context
 
 
-def _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_stage_values):
+def _install_binding_stage(
+    stage_name: str,
+    mapping: Mapping[str, Any],
+    binding_stage_exports: set[str],
+    binding_stage_values: dict[str, Any],
+) -> None:
     """Merge a binding stage while rejecting duplicate exported keys."""
     duplicates = sorted(set(mapping.keys()) & binding_stage_exports)
     if duplicates:
@@ -57,7 +68,12 @@ def _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_s
     binding_stage_values.update(mapping)
 
 
-def _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace):
+def _install_lifecycle_hooks(
+    app_lifecycle_service: Any,
+    app: Any,
+    binding: Callable[[str], Any],
+    namespace: Mapping[str, Any],
+) -> None:
     """Install Flask lifecycle hooks from the resolved runtime bindings."""
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
     app_lifecycle_service.install_flask_hooks(
@@ -78,7 +94,12 @@ def _install_lifecycle_hooks(app_lifecycle_service, app, binding, namespace):
     )
 
 
-def _build_run_server(app_lifecycle_service, app, namespace, binding):
+def _build_run_server(
+    app_lifecycle_service: Any,
+    app: Any,
+    namespace: Mapping[str, Any],
+    binding: Callable[[str], Any],
+) -> Any:
     """Create the app startup entrypoint from the resolved runtime bindings."""
     bootstrap_service = namespace.get("bootstrap_service") or _default_bootstrap_service
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
@@ -108,12 +129,12 @@ def _build_run_server(app_lifecycle_service, app, namespace, binding):
 
 def create_runtime(
     *,
-    app,
-    namespace,
+    app: Any,
+    namespace: Mapping[str, Any],
     wiring_config: RuntimeWiringConfig,
     services: RuntimeServices,
-    register_routes,
-):
+    register_routes: Callable[[Any, Any], None],
+) -> dict[str, Any]:
     """Build the runtime context, register routes, and return the run-server entrypoint."""
     required_state_key_set = wiring_config.required_state_key_set
     runtime_context = _build_runtime_context(
@@ -156,8 +177,8 @@ def create_runtime(
         ),
     )
 
-    binding_stage_exports = set()
-    binding_stage_values = {}
+    binding_stage_exports: set[str] = set()
+    binding_stage_values: dict[str, Any] = {}
     for stage_name, mapping in stages:
         _install_binding_stage(stage_name, mapping, binding_stage_exports, binding_stage_values)
 
@@ -172,7 +193,7 @@ def create_runtime(
     )
     _install_binding_stage("request_bindings", request_bindings, binding_stage_exports, binding_stage_values)
 
-    def binding(key):
+    def binding(key: str) -> Any:
         if key not in binding_stage_values:
             raise KeyError(f"Missing staged binding key: {key}")
         return binding_stage_values[key]

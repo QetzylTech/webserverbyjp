@@ -9,6 +9,7 @@ This app provides:
 from flask import Flask
 import json
 import time
+from typing import Any
 
 from app.bootstrap import web_app_config
 from app.bootstrap import web_app_runtime
@@ -130,7 +131,7 @@ STATE = _runtime_bundle["state"]
 _static_asset_version_fn = _runtime_bundle["static_asset_version_fn"]
 run_server = _runtime_bundle["run_server"]
 if _setup_required():
-    def _setup_run_server():
+    def _setup_run_server() -> None:
         bootstrap_service.run_server(
             app,
             APP_CONFIG,
@@ -141,7 +142,7 @@ if _setup_required():
     run_server = _setup_run_server
 
 
-def run_worker():
+def run_worker() -> None:
     """Run background worker loops without starting the Flask web server."""
     log_mcweb_log("worker-boot-start", command=f"role={PROCESS_ROLE}")
     ctx = RUNTIME_CONTEXT
@@ -162,7 +163,7 @@ def run_worker():
 
 
 @app.context_processor
-def inject_asset_helpers():
+def inject_asset_helpers() -> dict[str, Any]:
     """Expose per-file static version helper to templates."""
     maintenance_enabled = True
     cleanup_has_missed = False

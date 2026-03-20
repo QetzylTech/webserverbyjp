@@ -58,13 +58,13 @@ _calls = SimpleNamespace(
 
 def start_service_non_blocking(ctx: Any, timeout: float = 12) -> Any:
     _start._calls.service_start_no_block = _calls.service_start_no_block
-    return _start.start_service_non_blocking(ctx, timeout=timeout)  # type: ignore[no-untyped-call]
+    return _start.start_service_non_blocking(ctx, timeout=int(timeout))
 
 
 def run_backup_script(ctx: Any, count_skip_as_success: bool = True, trigger: str = "manual") -> bool:
     _backup._calls.run_backup_script = _calls.run_backup_script
     setattr(_backup, "is_backup_running", is_backup_running)
-    result = _backup.run_backup_script(  # type: ignore[no-untyped-call]
+    result = _backup.run_backup_script(
         ctx,
         count_skip_as_success=count_skip_as_success,
         trigger=trigger,
