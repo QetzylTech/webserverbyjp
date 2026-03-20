@@ -25,10 +25,22 @@ def render_shell_page(app, state, render_template_fn, fragment_template, *, curr
         snapshot_getter = getattr(state, "get_cached_dashboard_metrics", None)
     initial_metrics_snapshot = snapshot_getter() if callable(snapshot_getter) else {}
     cleaned_fragment = fragment_html.strip()
+    password_required = True
+    csrf_token = ""
+    try:
+        password_required = bool(state.get("REQUIRE_SUDO_PASSWORD", True))
+    except Exception:
+        password_required = True
+    try:
+        csrf_token = str(state["_ensure_csrf_token"]() or "")
+    except Exception:
+        csrf_token = ""
     return render_template_fn(
         "app_shell.html",
         current_page=current_page,
         page_title=page_title,
         initial_page_html=Markup(cleaned_fragment),
         initial_metrics_snapshot=initial_metrics_snapshot,
+        password_required=password_required,
+        csrf_token=csrf_token,
     )

@@ -4,6 +4,8 @@
     const alertMessage = __MCWEB_HOME_CONFIG.alertMessage ?? "";
     const alertMessageCode = __MCWEB_HOME_CONFIG.alertMessageCode ?? "";
     const csrfToken = __MCWEB_HOME_CONFIG.csrfToken ?? "";
+    const shellConfig = window.__MCWEB_SHELL_CONFIG || {};
+    const passwordRequired = shellConfig.passwordRequired !== false;
     const http = window.MCWebHttp || null;
     const shell = window.MCWebShell || null;
     const domUtils = window.MCWebDomUtils || {};
@@ -939,6 +941,10 @@
         document.querySelectorAll("form.sudo-form").forEach((form) => {
             addScopedListener(form, "submit", async (event) => {
                 event.preventDefault();
+                if (!passwordRequired) {
+                    await submitFormAjax(form);
+                    return;
+                }
                 openSudoModal(form);
             });
         });

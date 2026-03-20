@@ -1,96 +1,156 @@
-# PR Acceptance Checklist (Priority Ordered, Client-Spec Aligned)
+# PR Acceptance Checklist (Aligned With `doc/project requirements.txt` And `ARCHITECTURE.md`)
 
-Use this checklist in every PR review. `P0` is a hard stop: if any `P0` item fails, do not merge.
+Use this checklist for every PR review. Treat `doc/project requirements.txt` as the client-behavior source of truth and `ARCHITECTURE.md` as the implementation contract. Treat any failed hard-gate item as a merge blocker.
 
-## P0 Data Protection (Hard Gate)
+## P0 Hard Gates
 
-- [ ] Boot-time world source selection remains correct: debug mode uses debug source/config world behavior; non-debug mode uses real world path behavior.
-- [ ] Backup paths remain valid: manual/session/auto/pre-restore/emergency behavior still works as designed.
-- [ ] Restore flow preserves integrity: pre-restore archive is created, live world is moved to `data/old_worlds`, archive extraction is validated.
-- [ ] Rollback path remains functional and audited after restore.
-- [ ] Destructive cleanup remains guarded by hard guards and blast-radius caps.
-- [ ] Manual/rule cleanup dry-run path remains available and accurate.
-- [ ] No change can delete world/backup data without explicit guarded path and audit trail.
+- [ ] No change breaks world safety, backup safety, restore safety, or cleanup safety.
+- [ ] No change weakens password checks, CSRF protection, or password hashing behavior.
+- [ ] No change breaks the shell-owned client model, shared SSE ownership, or multi-tab single-owner behavior.
+- [ ] No change breaks the required fallback rule for device identification in UI: show mapped device name when found, otherwise show IP address.
+- [ ] No change violates explicit client-spec behavior in `doc/project requirements.txt` without also updating the requirements and PR notes.
+- [ ] No change violates `ARCHITECTURE.md` layer, runtime, or shell ownership rules without an intentional contract update.
 
-## P1 Compute / Power / I/O Efficiency
+## P1 Live Metrics And Client Dissemination
 
-- [ ] No unnecessary loop/polling cadence increases were introduced.
-- [ ] Background loops remain centralized under scheduler/worker lifecycle.
-- [ ] Heavy filesystem/process operations remain cached, indexed, bounded, or justified.
-- [ ] Live dissemination implementation avoids avoidable duplicate work per client.
+- [ ] All required live data still exists and is available to connected clients through server-driven JSON/SSE updates.
+- [ ] Home metrics still include RAM, CPU per core, CPU frequency, storage, server status, players online, tick time, auto-stop timer, backup status, last backup, next backup, backups folder, backup/stale-world counts, cleanup run metadata, cleanup versions, rule last changed by, next cleanup run, and missed-run count.
+- [ ] Clients do not introduce individual polling for data that is supposed to come from shared server broadcasts.
+- [ ] Cadence-by-state still matches the rules:
+- [ ] Server off + 0 clients: metrics/logs paused.
+- [ ] Server on + 0 clients: metrics paused, logs/storage refreshed only at the specified idle cadence.
+- [ ] 1+ clients connected: shared data updates at 1 Hz, live logs stream as they arrive.
+- [ ] File lists, counts, and storage-related data remain cached and refreshed by boot/interval/action-trigger rules.
+- [ ] CSS/JS offline shell behavior still works: UI loads without server data, shows disconnected state, and rehydrates when the server comes back.
+- [ ] Multi-tab behavior still acts like a single active tab from the server perspective, with one tab owning live data and forwarding to the others.
+- [ ] Entire client still behaves as an app shell where shared metrics/processes are shell-owned and pages do not own duplicate long-lived runtime state.
 
-## P2 System Stability
+## P2 Server Runs And Status
 
-- [ ] Boot-time discovery remains stable: env/config, root paths, server.properties, logs/crash paths, backup/snapshot paths, data/db bootstrap.
-- [ ] Web/worker/debug boot paths still pass smoke tests.
-- [ ] No redirect-loop, crash-loop, or thread-leak risk introduced.
-- [ ] Failure paths degrade safely without corrupting runtime state.
+- [ ] Start still requires no password and is only triggered from the Start action.
+- [ ] Start still moves status through queued -> starting -> running according to the log/status rules.
+- [ ] Server still resolves to running correctly when already up at Flask app boot.
+- [ ] Stop still requires password confirmation and shows shutting down state.
+- [ ] Off/running/shutting down/crashed states still follow the documented requirements.
+- [ ] Start cooldown still prevents duplicate start requests for 10 seconds.
+- [ ] Start/Stop/Backup button enablement rules still match the spec.
+- [ ] Low-storage and estimated-storage emergency shutdown rules still work.
+- [ ] Idle auto-stop after zero players for 3 minutes still works.
 
-## P3 Reliability
+## P3 Backup And Restore
 
-- [ ] Control actions remain deterministic: start/stop/backup/restore/rcon outcomes are explicit.
-- [ ] Idempotency and operation status behavior remain preserved.
-- [ ] Timeout and error mapping behavior remains explicit and test-covered.
-- [ ] Restore-pane and maintenance event triggers remain reliable under concurrent clients.
+- [ ] All four backup triggers still exist: session end, manual backup button, backup interval, and restore initiation.
+- [ ] Backup running-state file semantics remain correct.
+- [ ] Backup types and filenames still reflect purpose and timestamp.
+- [ ] Auto backups still use snapshots and keep only the latest 3 snapshots.
+- [ ] Non-auto backups still produce downloadable zip artifacts in the backups directory.
+- [ ] Download still requires password where specified.
+- [ ] Backup still blocks concurrent backup execution and honors low-storage protection.
+- [ ] Backup still performs save/off autosave/on autosave flow correctly.
+- [ ] Player-facing RCON backup announcements still exist.
+- [ ] Restore list still shows backups/snapshots with restore controls.
+- [ ] Restore pane still opens and exposes live restore logs.
+- [ ] Restore still creates pre-restore backup, moves old world to old-worlds storage, installs restored world, updates `server.properties`, and records the operation.
+- [ ] Restore rollback behavior for invalid/corrupt restore sources still works.
+- [ ] Restore remains disabled while the server is running or while backup is running.
 
-## P4 Client-Side Snappiness
+## P4 Cleanup
 
-- [ ] Home, backups, logs, crash, maintenance, instructions views remain responsive.
-- [ ] UI updates for stats/logs/actions are timely and do not block request threads.
-- [ ] Route handlers avoid new long blocking work in request path.
-- [ ] Shared shell behavior stays centralized (theme/nav/client identity/shared SSE ownership are not re-duplicated per page).
-- [ ] New client-side navigation/hydration work does not introduce duplicate timers, duplicate SSE owners, or hidden-page background churn.
+- [ ] Separate backup and stale-world cleanup rules still exist.
+- [ ] Age, space, count, and time-based cleanup rules still match the configured per-scope requirements.
+- [ ] Hard guards still prevent deleting files newer than 3 days where required and still protect the last backup/newest protected items.
+- [ ] Manual cleanup and manual rule-trigger flows still exist.
+- [ ] Dry run remains the default for manual cleanup actions.
+- [ ] Wet runs still require password plus explicit danger acknowledgement.
+- [ ] Cleanup history, last changed by, versions, next run, and missed runs still display correctly.
+- [ ] If actor name mapping is missing, cleanup UI still shows the IP instead of `-`.
 
-## P5 Information Dissemination
+## P5 Log Files And Live Logs
 
-- [ ] Live server time, server stats, Minecraft stats, backup stats, and maintenance stats remain available and fresh.
-- [ ] Live logs remain available for server console, backup activity, control activity, and control errors.
-- [ ] Nav alert signaling still works:
-- [ ] Home flashes red/yellow for crash/transition status.
-- [ ] Backups flashes when restore pane is open by another client.
-- [ ] Maintenance flashes for missed cleanup conditions.
-- [ ] Modals/notifications remain coherent for success, error, confirmation, and automatic warnings.
+- [ ] Log file lists still load from the correct directories.
+- [ ] Log files still provide both View and Download actions.
+- [ ] Viewer pane still opens and displays file content correctly.
+- [ ] Log categories still include Minecraft Logs, Crash Reports, Backup and Restore Logs, Control Panel Activity Logs, and Control Panel Errors/System Logs.
+- [ ] Live log views still include server console, backup activity, control panel activity, and control panel system/error logs.
+- [ ] Log cache behavior still follows the documented requirements, including pause/idle behavior and bounded retained line counts.
 
-## P6 Maintainability
+## P6 Instructions / Documentation View
 
-- [ ] New behavior is mapped to the correct layer and module.
-- [ ] Page/pane structure expectations remain represented in routes/templates/static behavior.
-- [ ] Cleanup and maintenance logic remains understandable and bounded.
-- [ ] Documentation/checklists remain updated when behavior changes.
+- [ ] Instructions content still loads from the configured markdown in the docs folder.
+- [ ] Markdown is still rendered into styled HTML correctly.
+- [ ] Side ToC is still autogenerated.
+- [ ] Built-in ToC hiding behavior in desktop mode still works when applicable.
 
-## P7 Record Keeping
+## P7 Global UI Rules
 
-- [ ] Boot and runtime critical events are still logged.
-- [ ] User actions include success/failure/password rejection telemetry.
-- [ ] Restore and cleanup actions preserve auditability (history, versions, last changed by, missed runs).
+- [ ] App shell/page/pane structure still follows the rules: nav pane, header/content/action panes, pane title rows, pane content cards.
+- [ ] Shared visual rules remain intact where applicable: pane/title consistency, spacing, button sizing, dropdown styling, nav/view switcher styling.
+- [ ] Global spacing between elements remains aligned with the 12px rule unless explicitly justified and documented.
+- [ ] Selected/opened files still highlight correctly.
+- [ ] Nav pane remains left-aligned, sticky, fixed-width, and present across pages as required.
 
-## P8 Architecture and App Structure
+## P8 Local UI Rules
 
-- [ ] Architecture tests pass with no exceptions.
-- [ ] `main.py` remains composition-only.
-- [ ] No OS logic outside platform/infrastructure adapters.
-- [ ] Services do not regress to mega mutable state dict parameters.
-- [ ] Worker lifecycle ownership remains centralized.
-- [ ] Shell-first rendering contract remains clear: lightweight route shells, client hydration, and page-specific data endpoints are still separated cleanly.
-- [ ] If a persistent-shell/client-router step was added, mount/unmount ownership and shared runtime ownership are explicit and bounded.
+- [ ] Home page still contains the required stat groups and live log pane structure.
+- [ ] Backup and Restore page still contains file list, sort/filter controls, and restore pane behavior.
+- [ ] Cleanup page still preserves its rules/history/manual split and expected controls.
+- [ ] Panel Settings still behaves as a protected page with the required settings panes and controls.
 
-## P9 Access Control
+## P9 Initial Setup And Env Behavior
 
-- [ ] Password-required actions still enforce password checks:
-- [ ] Stop service, privileged RCON submit, restore, maintenance rule edits/runs/manual delete, and protected debug actions.
-- [ ] Non-privileged actions remain intentionally no-password where specified (for example selected downloads).
-- [ ] Access checks cannot be bypassed through alternate routes or payload variants.
+- [ ] First-run missing-config behavior still routes to setup as required.
+- [ ] Setup still captures password, Minecraft root, backup directory, and timezone.
+- [ ] Setup still generates env config with defaults correctly.
+- [ ] Env file still stores runtime config, paths, refresh values, secret keys, and password hashes.
+- [ ] Typed passwords still do not remain in forms after submission.
+- [ ] Password throttling after three failed attempts still works and still notifies/logs as required.
 
 ## P10 Security
 
-- [ ] CSRF protections remain active on protected mutation paths.
-- [ ] Password handling remains unchanged or improved (no plaintext leaks).
-- [ ] IP-to-device display rule is preserved: prefer device name, show IP only when mapping unavailable.
-- [ ] Sensitive operational details are not over-exposed in client responses/logs.
+- [ ] Passwords remain hashed and salted.
+- [ ] Access control assumptions in the rules are still respected; no new bypass path is introduced.
+- [ ] CSRF protection remains enabled on protected mutation paths.
+- [ ] RCON password regeneration and server.properties enforcement still work.
+- [ ] Sensitive data is not exposed unnecessarily in responses, logs, or UI.
 
-## P11 Version Control / Delivery Hygiene
+## P11 Logging, Errors, And Notifications
 
-- [ ] Change is scoped, reviewable, and reversible.
-- [ ] CI evidence is attached in PR (`architecture`, `contracts`, `smoke`, `full tests`).
-- [ ] Rollback plan is documented for risky behavior changes.
-- [ ] If client-spec behavior changed, release note includes exact user-visible deltas.
+- [ ] Minecraft logs and backup logs still come from the correct external/runtime sources.
+- [ ] App actions are still logged with enough detail, including rejections, errors, and exceptions.
+- [ ] Error handling still logs failures and notifies clients through the correct modal/popup flows.
+- [ ] Crash behavior still logs, notifies clients, and moves server status to crashed.
+- [ ] Missed-run flows for cleanup and backups still notify clients and do not silently auto-catch-up when the rules say not to.
+- [ ] Reconnection still rehydrates clients with the latest data.
+- [ ] Nav alert behavior still matches the rules for Home, Backup & Restore, and Cleanup.
+- [ ] Alert modal types and audio cues still match the expected variants and triggers.
+
+## P12 Conflict Resolution
+
+- [ ] Mutual exclusion rules among backup, restore, and cleanup still hold.
+- [ ] Priority rules still hold: backup > restore > cleanup.
+- [ ] Queue/reject semantics for simultaneous jobs still match the documented requirements.
+- [ ] Conflicting file actions still resolve in favor of restore where specified.
+
+## P13 Future Plan Guardrail
+
+- [ ] PR does not accidentally claim future-plan items are complete unless they actually are.
+- [ ] If a PR touches future-plan areas, the current documented behavior remains clear and unchanged unless intentionally updated.
+
+## P14 Implemented Behavior Not Explicitly Listed Above
+
+- [ ] Client registry and heartbeat tracking still work.
+- [ ] Idle log buffering and drain-on-client-connect still work.
+- [ ] Dedicated restore SSE stream still works.
+- [ ] Cleanup scheduler tick persistence and missed-run metadata still work.
+- [ ] Cleanup history persistence remains intact.
+- [ ] Cleanup blast-radius caps remain enforced.
+- [ ] Server-side priority/guard enforcement for cleanup still works.
+- [ ] Storage guard still blocks risky start/backup/restore actions and still supports emergency shutdown.
+
+## PR Evidence
+
+- [ ] Reviewer checked code paths against `doc/project requirements.txt`.
+- [ ] Reviewer checked touched areas against `ARCHITECTURE.md` where applicable.
+- [ ] Reviewer verified user-visible behavior changes are reflected in docs/rules if needed.
+- [ ] Reviewer attached or referenced relevant smoke/unit/integration/manual verification evidence.
+- [ ] Reviewer noted any intentional deviations from `doc/project requirements.txt` or `ARCHITECTURE.md`.

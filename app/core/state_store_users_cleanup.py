@@ -48,6 +48,27 @@ def load_fallmap(db_path):
     return mapping
 
 
+def replace_fallmap(db_path, mapping):
+    """Replace the device_fallmap table with the provided IP -> device name mapping."""
+    with profiling.timed("sqlite.fallmap.replace"):
+        with _connect(db_path) as conn:
+            _create_tables(conn)
+            conn.execute("DELETE FROM device_fallmap")
+            for ip, name in (mapping or {}).items():
+                ip_text = str(ip or "").strip()
+                name_text = str(name or "").strip()
+                if not ip_text or not name_text:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO device_fallmap (ip, device_name, updated_at)
+                    VALUES (?, ?, datetime('now'))
+                    """,
+                    (ip_text, name_text),
+                )
+            conn.commit()
+
+
 def load_cleanup_config(db_path):
     """Load cleanup config document from SQLite."""
     with profiling.timed("sqlite.cleanup.load_config"):

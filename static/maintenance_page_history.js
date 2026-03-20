@@ -6,6 +6,11 @@
         const state = ctx.state || {};
         const helpers = ctx.helpers || {};
 
+        function isAcknowledged(entry) {
+            if (!entry || typeof entry !== "object") return false;
+            return !!(entry.acknowledged || entry.acknowledged_at || entry.acknowledgedAt);
+        }
+
         function getMissedRuns() {
             return getMissedRunsForScope(state.currentScope);
         }
@@ -44,6 +49,7 @@
                 : (state.config || {});
             const meta = (scopeConfig && typeof scopeConfig === "object" ? scopeConfig.meta : null) || state.config?.meta || {};
             const missedRuns = getMissedRuns();
+            const pendingMissed = missedRuns.filter((entry) => !isAcknowledged(entry));
             const lastRun = dom.historyLastRun;
             const lastChangedBy = dom.historyLastChangedBy;
             const missedRunsCount = dom.historyMissedRuns;
@@ -60,10 +66,10 @@
                 const at = helpers.formatAuditTimestamp?.(meta.last_changed_at || "-") || "-";
                 lastChangedBy.textContent = `${by} @ ${at}`;
             }
-            if (missedRunsCount) missedRunsCount.textContent = String(missedRuns.length);
+            if (missedRunsCount) missedRunsCount.textContent = String(pendingMissed.length);
             if (ackBtn) {
-                ackBtn.disabled = missedRuns.length === 0;
-                ackBtn.hidden = missedRuns.length === 0;
+                ackBtn.disabled = pendingMissed.length === 0;
+                ackBtn.hidden = pendingMissed.length === 0;
             }
 
             if (dom.historyCardList) {
@@ -113,16 +119,24 @@
                             dom.acknowledgeButtonHome.appendChild(ackBtn);
                         }
                     } else {
+                        let attachedAck = false;
                         missedRuns.forEach((entry, idx) => {
                             const at = typeof entry === "string" ? entry : (entry?.at || entry?.run_at || "-");
                             const reason = typeof entry === "string" ? "missed" : (entry?.reason || entry?.trigger || "missed");
+                            const acknowledged = isAcknowledged(entry);
+                            const acknowledgedAt = typeof entry === "object" ? (entry.acknowledged_at || entry.acknowledgedAt || "") : "";
+                            const ackText = acknowledged
+                                ? `Acknowledged${acknowledgedAt ? ` | ${helpers.formatAuditTimestamp?.(acknowledgedAt) || acknowledgedAt}` : ""}`
+                                : "";
                             const item = document.createElement("article");
                             item.className = "maintenance-card";
                             item.innerHTML = `
                                 <h3 class="maintenance-card-title">Missed Run #${idx + 1}</h3>
                                 <p class="maintenance-card-meta">${helpers.formatAuditTimestamp?.(at) || at} | ${reason}</p>
+                                ${ackText ? `<p class="maintenance-card-meta">${ackText}</p>` : ""}
                             `;
-                            if (idx === 0 && ackBtn) {
+                            if (!acknowledged && !attachedAck && ackBtn) {
+                                attachedAck = true;
                                 item.appendChild(ackBtn);
                             }
                             dom.historyCardList.appendChild(item);

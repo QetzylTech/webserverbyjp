@@ -11,6 +11,8 @@
 window.__MCWEB_SHELL_CONFIG = {
     currentPage: {{ current_page | tojson }},
     currentTitle: {{ page_title | tojson }},
+    csrfToken: {{ csrf_token | tojson }},
+    passwordRequired: {{ password_required | tojson }},
 };
 window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
 </script>
@@ -45,6 +47,18 @@ window.__MCWEB_LAST_METRICS_SNAPSHOT = {{ initial_metrics_snapshot | tojson }};
 <div class="layout">
     {% include "partials/nav.html" %}
     <div id="mcweb-app-content" class="content" data-current-page="{{ current_page }}">{{- initial_page_html|safe -}}</div>
+</div>
+<div id="panel-settings-password-modal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="panel-settings-password-title">
+        <h3 id="panel-settings-password-title" class="modal-title">Panel Settings</h3>
+        <p id="panel-settings-password-text" class="modal-text">Enter superadmin password to continue.</p>
+        <input id="panel-settings-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Superadmin password">
+        <p id="panel-settings-password-error" class="modal-text modal-error" hidden></p>
+        <div class="modal-actions">
+            <button id="panel-settings-password-cancel" class="btn-secondary" type="button">Cancel</button>
+            <button id="panel-settings-password-submit" class="btn-backup" type="button">Continue</button>
+        </div>
+    </div>
 </div>
 <script src="{{ url_for('static', filename='custom_select.js', v=static_version('custom_select.js')) }}"></script>
 <script src="{{ url_for('static', filename='http_client.js', v=static_version('http_client.js')) }}"></script>

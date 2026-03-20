@@ -107,9 +107,11 @@
             completeOk: document.getElementById("maintenance-complete-ok"),
             ackSuggestModal: document.getElementById("maintenance-ack-suggest-modal"),
             ackSuggestDryRunInput: document.getElementById("maintenance-ack-suggest-dry-run"),
+            ackSuggestWarning: document.getElementById("maintenance-ack-suggest-warning"),
             ackSuggestDestructiveConfirmWrap: document.getElementById("maintenance-ack-suggest-destructive-confirm-wrap"),
             ackSuggestDestructiveConfirmInput: document.getElementById("maintenance-ack-suggest-destructive-confirm"),
-            ackSuggestCancel: document.getElementById("maintenance-ack-suggest-cancel"),
+            ackSuggestClose: document.getElementById("maintenance-ack-suggest-close"),
+            ackSuggestAcknowledge: document.getElementById("maintenance-ack-suggest-acknowledge"),
             ackSuggestRunBtn: document.getElementById("maintenance-ack-suggest-run"),
         };
         const csrfToken = dom.csrfInput ? String(dom.csrfInput.value || "") : "";
@@ -137,12 +139,14 @@
             nextRunAt: parseDataAttr(dom.bootstrap, "nextRun", ""),
             deviceMap: parseDataAttr(dom.bootstrap, "deviceMap", {}),
             manualSelectedPaths: new Set(),
+            autoSelectMissedChecked: false,
             rulesEditMode: false,
             rulesDraft: null,
             pendingProtectedAction: null,
             pendingDryRunActionKey: "",
             pendingRunRulesDryRunOverride: null,
             actionBusy: false,
+            passwordRequired: (window.__MCWEB_SHELL_CONFIG || {}).passwordRequired !== false,
         };
         const persistedView = shell && typeof shell.getMaintenanceViewState === "function"
             ? shell.getMaintenanceViewState()
@@ -365,6 +369,72 @@
             renderActionDescription();
         }
 
+        function isAcknowledgedMissedRun(entry) {
+            if (!entry || typeof entry !== "object") return false;
+            return !!(entry.acknowledged || entry.acknowledged_at || entry.acknowledgedAt);
+        }
+
+        function getMissedRunsForScope(scopeName) {
+            const runs = Array.isArray(state.nonNormal?.missed_runs) ? state.nonNormal.missed_runs : null;
+            if (!runs) return null;
+            const targetScope = String(scopeName || "").trim().toLowerCase() || "backups";
+            return runs.filter((entry) => {
+                if (!entry || typeof entry !== "object") return true;
+                const explicitScope = String(entry.scope || "").trim().toLowerCase();
+                if (explicitScope === "backups" || explicitScope === "stale_worlds") {
+                    return explicitScope === targetScope;
+                }
+                const scheduleId = String(entry.schedule_id || "").trim().toLowerCase();
+                if (scheduleId.startsWith("backups:")) return targetScope === "backups";
+                if (scheduleId.startsWith("stale_worlds:")) return targetScope === "stale_worlds";
+                return true;
+            });
+        }
+
+        function getPendingMissedRunsForScope(scopeName) {
+            const runs = getMissedRunsForScope(scopeName);
+            if (!runs) return null;
+            return runs.filter((entry) => !isAcknowledgedMissedRun(entry));
+        }
+
+        function maybeAutoSelectMissedRuns(options = {}) {
+            if (state.autoSelectMissedChecked) return;
+            const pendingBackups = getPendingMissedRunsForScope("backups");
+            if (pendingBackups === null) return;
+            const pendingStale = getPendingMissedRunsForScope("stale_worlds") || [];
+            const currentPending = getPendingMissedRunsForScope(state.currentScope) || [];
+            const hasPending = pendingBackups.length > 0 || pendingStale.length > 0;
+            state.autoSelectMissedChecked = true;
+            if (!hasPending) return;
+            let targetScope = state.currentScope;
+            if (currentPending.length === 0) {
+                targetScope = pendingBackups.length > 0 ? "backups" : "stale_worlds";
+            }
+            const scopeChanged = targetScope !== state.currentScope;
+            if (targetScope !== state.currentScope) {
+                state.currentScope = targetScope;
+                if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                    shell.updateMaintenanceViewState({ currentScope: state.currentScope });
+                }
+            }
+            if (state.currentActionView === "history" && state.historyViewMode === "missed") return;
+            state.currentActionView = "history";
+            state.historyViewMode = "missed";
+            if (shell && typeof shell.updateMaintenanceViewState === "function") {
+                shell.updateMaintenanceViewState({
+                    currentActionView: state.currentActionView,
+                    historyViewMode: state.historyViewMode,
+                });
+            }
+            if (options.syncUi) {
+                if (scopeChanged) {
+                    syncScopeButtons();
+                    refreshState({ force: true, silent: true });
+                }
+                syncActionView();
+            }
+        }
+
         function syncRuleRunState() {
             const dryRun = dom.ruleDryRunInput ? !!dom.ruleDryRunInput.checked : true;
             if (dom.ruleDestructiveConfirmWrap) {
@@ -410,6 +480,7 @@
             if (payload.storage) state.storage = payload.storage;
             if (payload.next_run_at !== undefined) state.nextRunAt = payload.next_run_at;
             if (payload.device_map) state.deviceMap = payload.device_map;
+            maybeAutoSelectMissedRuns({ syncUi: true });
             renderStats();
             actions.renderRules();
             actions.renderFileList();
@@ -700,12 +771,17 @@
                 });
             }
 
-            if (dom.ackSuggestCancel) {
-                listen(dom.ackSuggestCancel, "click", () => {
+            if (dom.ackSuggestClose) {
+                listen(dom.ackSuggestClose, "click", () => {
                     if (modalsController && typeof modalsController.closeAckSuggestModal === "function") {
                         modalsController.closeAckSuggestModal();
                     }
                 });
+            }
+            if (dom.ackSuggestAcknowledge) {
+                if (coreController && typeof coreController.handleAckSuggestAcknowledge === "function") {
+                    listen(dom.ackSuggestAcknowledge, "click", coreController.handleAckSuggestAcknowledge);
+                }
             }
             if (dom.ackSuggestModal) {
                 listen(dom.ackSuggestModal, "click", (event) => {
@@ -757,6 +833,7 @@
         }
 
         wireEventListeners();
+        maybeAutoSelectMissedRuns();
         syncScopeButtons();
         syncActionView();
         actions.renderRules();

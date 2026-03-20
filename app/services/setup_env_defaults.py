@@ -8,6 +8,7 @@ ENV_DEFAULTS = {
     "SERVICE": "minecraft",
     "DISPLAY_TZ": "Asia/Manila",
     "DOC_README_URL": "/doc/server_setup_doc.md",
+    "MCWEB_REQUIRE_PASSWORD": "true",
     "MINECRAFT_ROOT_DIR": ports.service_control.default_minecraft_root(),
     "BACKUP_DIR": ports.service_control.default_backup_dir(),
     "BACKUP_INTERVAL_HOURS": "3",

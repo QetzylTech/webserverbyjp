@@ -3,7 +3,7 @@
     if (!contentRoot) return;
 
     const FRAGMENT_HEADER = "X-MCWEB-Fragment";
-    const shellPaths = new Set(["/", "/readme", "/backups", "/crash-logs", "/minecraft-logs", "/maintenance"]);
+    const shellPaths = new Set(["/", "/readme", "/backups", "/crash-logs", "/minecraft-logs", "/maintenance", "/panel-settings"]);
     const CACHE_TTL_MS = 5 * 60 * 1000;
     const README_DEFAULT_PATH = "/doc/server_setup_doc.md";
     const HOME_LOG_LIMITS = {
@@ -888,6 +888,33 @@
         });
     }
 
+    function bindPanelSettingsPasswordModal() {
+        const modal = document.getElementById("panel-settings-password-modal");
+        const cancelBtn = document.getElementById("panel-settings-password-cancel");
+        const submitBtn = document.getElementById("panel-settings-password-submit");
+        const input = document.getElementById("panel-settings-password-input");
+        if (!modal) return;
+        if (cancelBtn) {
+            cancelBtn.addEventListener("click", () => closePanelSettingsPasswordModal());
+        }
+        if (submitBtn) {
+            submitBtn.addEventListener("click", () => {
+                submitPanelSettingsPassword();
+            });
+        }
+        if (input) {
+            input.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitPanelSettingsPassword();
+                }
+            });
+        }
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal) closePanelSettingsPasswordModal();
+        });
+    }
+
     function getPersistentClientId(storageKey = "mcweb.restorePaneClientId") {
         try {
             const existing = String(window.localStorage.getItem(storageKey) || "").trim();
@@ -1012,6 +1039,164 @@
         return "";
     }
 
+    const PANEL_SETTINGS_RELOAD_ACCESS_KEY = "mcweb.panelSettingsReloadAccess";
+    let panelSettingsAccessCallback = null;
+    let panelSettingsAccessPendingHref = "";
+    let panelSettingsAccessGranted = false;
+
+    function _panelSettingsStorage() {
+        try {
+            return window.sessionStorage;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function getNavigationType() {
+        try {
+            const entries = typeof window.performance?.getEntriesByType === "function"
+                ? window.performance.getEntriesByType("navigation")
+                : [];
+            if (Array.isArray(entries) && entries[0] && typeof entries[0].type === "string") {
+                return entries[0].type;
+            }
+        } catch (_) {
+            // Ignore Performance API lookup failures.
+        }
+        try {
+            if (window.performance?.navigation?.type === 1) {
+                return "reload";
+            }
+        } catch (_) {
+            // Ignore legacy Performance API lookup failures.
+        }
+        return "navigate";
+    }
+
+    function consumePanelSettingsReloadGrant() {
+        const storage = _panelSettingsStorage();
+        if (!storage) return false;
+        const raw = String(storage.getItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY) || "").trim();
+        storage.removeItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY);
+        return raw === "1"
+            && getNavigationType() === "reload"
+            && window.location.pathname === "/panel-settings";
+    }
+
+    function isPanelSettingsAccessFresh() {
+        return !!panelSettingsAccessGranted;
+    }
+
+    function markPanelSettingsAccessGranted() {
+        panelSettingsAccessGranted = true;
+        const storage = _panelSettingsStorage();
+        if (!storage) return;
+        storage.removeItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY);
+    }
+
+    function clearPanelSettingsAccess() {
+        panelSettingsAccessGranted = false;
+        const storage = _panelSettingsStorage();
+        if (!storage) return;
+        storage.removeItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY);
+    }
+
+    function rememberPanelSettingsAccessForReload() {
+        const storage = _panelSettingsStorage();
+        if (!storage) return;
+        if (panelSettingsAccessGranted && currentPath === "/panel-settings") {
+            storage.setItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY, "1");
+            return;
+        }
+        storage.removeItem(PANEL_SETTINGS_RELOAD_ACCESS_KEY);
+    }
+
+    function closePanelSettingsPasswordModal() {
+        const modal = document.getElementById("panel-settings-password-modal");
+        const input = document.getElementById("panel-settings-password-input");
+        const errorText = document.getElementById("panel-settings-password-error");
+        if (!modal) return;
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        if (input) input.value = "";
+        if (errorText) {
+            errorText.textContent = "";
+            errorText.hidden = true;
+        }
+        panelSettingsAccessCallback = null;
+        panelSettingsAccessPendingHref = "";
+    }
+
+    function openPanelSettingsPasswordModal({ href, onSuccess } = {}) {
+        const modal = document.getElementById("panel-settings-password-modal");
+        const input = document.getElementById("panel-settings-password-input");
+        const errorText = document.getElementById("panel-settings-password-error");
+        if (!modal || !input) return;
+        panelSettingsAccessCallback = typeof onSuccess === "function" ? onSuccess : null;
+        panelSettingsAccessPendingHref = String(href || "").trim();
+        if (errorText) {
+            errorText.textContent = "";
+            errorText.hidden = true;
+        }
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        input.value = "";
+        input.focus();
+    }
+
+    async function submitPanelSettingsPassword() {
+        const input = document.getElementById("panel-settings-password-input");
+        const errorText = document.getElementById("panel-settings-password-error");
+        const password = (input && input.value ? String(input.value) : "").trim();
+        if (!password) return;
+        const token = resolveCsrfToken();
+        try {
+            const result = await postJson("/panel-settings/confirm-password", { sudo_password: password }, { csrfToken: token });
+            const payload = result.payload || {};
+            if (!result.response.ok || payload.ok === false) {
+                const message = String(payload.message || "Password incorrect.").trim() || "Password incorrect.";
+                if (errorText) {
+                    errorText.textContent = message;
+                    errorText.hidden = false;
+                }
+                return;
+            }
+            markPanelSettingsAccessGranted();
+            const callback = panelSettingsAccessCallback;
+            const href = panelSettingsAccessPendingHref;
+            closePanelSettingsPasswordModal();
+            if (typeof callback === "function") {
+                callback(password);
+            } else if (href) {
+                navigateTo(href);
+            }
+        } catch (_) {
+            if (errorText) {
+                errorText.textContent = "Failed to verify password. Try again.";
+                errorText.hidden = false;
+            }
+        }
+    }
+
+    function requestPanelSettingsAccess(options = {}) {
+        const href = String(options.href || "").trim();
+        const onSuccess = typeof options.onSuccess === "function" ? options.onSuccess : null;
+        const forcePrompt = !!options.forcePrompt;
+        if (!forcePrompt && isPanelSettingsAccessFresh()) {
+            if (onSuccess) {
+                onSuccess();
+                return true;
+            }
+            if (href) {
+                navigateTo(href);
+                return true;
+            }
+            return true;
+        }
+        openPanelSettingsPasswordModal({ href, onSuccess });
+        return false;
+    }
+
     async function runBackupFromPrompt(csrfToken) {
         const token = String(csrfToken || resolveCsrfToken() || "").trim();
         if (!token) {
@@ -1085,13 +1270,13 @@
             button.textContent = String(action.label || (action.action === "dismiss" ? "OK" : "OK"));
             const style = String(action.style || "").trim().toLowerCase();
             if (style === "primary") {
-                button.className = "modal-btn-submit";
+                button.className = "btn-backup";
             } else if (style === "secondary") {
-                button.className = "btn-start";
+                button.className = "btn-secondary";
             } else if (style === "danger") {
                 button.className = "btn-stop";
             } else if (finalActions.length === 1 || index === 0) {
-                button.className = "modal-btn-submit";
+                button.className = "btn-backup";
             }
             button.addEventListener("click", () => {
                 closeGlobalNotification(modal);
@@ -1633,6 +1818,41 @@
         return capHomeLogLines(shellState.homeLogs.buffers[sourceKey], homeLogLimit(sourceKey));
     }
 
+    function refreshAllStates() {
+        const activeHomeLog = shellState.homeLogs.activeSource;
+        stopMetricsStream();
+        stopNotificationsStream();
+        stopAllHomeLogStreams();
+
+        shellState.metricsSnapshot = null;
+        shellState.deviceMapEntry = null;
+        shellState.viewedFileCache.clear();
+        shellState.viewedFilePromises.clear();
+        shellState.maintenanceStateCache.clear();
+        shellState.maintenanceStatePromises.clear();
+        shellState.filePageListCache.clear();
+        shellState.filePageListPromises.clear();
+        shellState.logFileListCache.clear();
+        shellState.logFileListPromises.clear();
+
+        Object.keys(HOME_LOG_PATHS).forEach((key) => {
+            shellState.homeLogs.buffers[key] = [];
+            shellState.homeLogs.pending[key] = [];
+            if (shellState.homeLogs.flushTimers[key]) {
+                window.clearTimeout(shellState.homeLogs.flushTimers[key]);
+                shellState.homeLogs.flushTimers[key] = null;
+            }
+            setHomeLogSnapshot(key, "", { replace: true });
+        });
+
+        startMetricsStream();
+        startNotificationsStream();
+        if (activeHomeLog) {
+            activateHomeLogStream(activeHomeLog);
+        }
+        navigateTo(window.location.href, { replaceHistory: true });
+    }
+
     function subscribeHomeLogs(listener) {
         if (typeof listener !== "function") return () => {};
         shellState.homeLogSubscribers.add(listener);
@@ -1793,6 +2013,9 @@
         activateHomeLogStream,
         stopAllHomeLogStreams,
         setHomeLogSnapshot,
+        refreshAllStates,
+        requestPanelSettingsAccess,
+        isPanelSettingsAccessFresh,
     });
 
     async function mountCurrentContent(pathname, title, options = {}) {
@@ -1828,6 +2051,9 @@
         if (typeof window.MCWebEnhanceCustomSelects === "function") {
             window.MCWebEnhanceCustomSelects(contentRoot);
         }
+        if (pathname === "/panel-settings" && !panelSettingsAccessGranted) {
+            requestPanelSettingsAccess({ forcePrompt: true });
+        }
         maybeRunPendingPromptAction();
     }
 
@@ -1839,6 +2065,7 @@
     }
     async function navigateTo(url, options = {}) {
         const nextUrl = new URL(url, window.location.href);
+        const previousPath = currentPath;
         navigationToken += 1;
         const token = navigationToken;
         if (navigationController) {
@@ -1887,6 +2114,9 @@
             if (!isLatestNavigationToken(token)) {
                 return;
             }
+            if (previousPath === "/panel-settings" && nextUrl.pathname !== "/panel-settings") {
+                clearPanelSettingsAccess();
+            }
             currentPath = nextUrl.pathname;
             const target = nextUrl.pathname + nextUrl.search + nextUrl.hash;
             if (options.replaceHistory) {
@@ -1919,6 +2149,14 @@
         const nextUrl = new URL(anchor.href, window.location.href);
         if (nextUrl.pathname === currentPath && !nextUrl.search && !nextUrl.hash) return;
         event.preventDefault();
+        if (nextUrl.pathname === "/maintenance" && anchor.classList.contains("nav-attention")) {
+            updateMaintenanceViewState({ currentActionView: "history", historyViewMode: "missed" });
+        }
+        const requiresPassword = String(anchor.getAttribute("data-requires-password") || "") === "1";
+        if (requiresPassword) {
+            requestPanelSettingsAccess({ href: nextUrl.toString() });
+            return;
+        }
         navigateTo(nextUrl.toString());
     });
 
@@ -1937,6 +2175,7 @@
     });
 
     window.addEventListener("beforeunload", () => {
+        rememberPanelSettingsAccessForReload();
         if (isPrimaryTab) {
             try {
                 window.localStorage.removeItem(PRIMARY_STORAGE_KEY);
@@ -1949,7 +2188,9 @@
 
     startThemePreferenceWatcher();
     startSidebarNav();
+    bindPanelSettingsPasswordModal();
     bindSoundUnlock();
+    panelSettingsAccessGranted = consumePanelSettingsReloadGrant();
     if (shellState.metricsSnapshot) {
         applyNavAttentionPayload(shellState.metricsSnapshot);
     }

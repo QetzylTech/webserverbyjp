@@ -1,0 +1,278 @@
+Program Requirements
+
+- Enforce and test all behaviors (smoke, unit, integration, acceptance).
+
+1. Live Metrics
+
+Server side: Data to be broadcasted to all conencted flask app clients in json format via sse. 
+- Broadcast to all clients: Ram usage, cpu usage per core, cpu frequency, storage utilization, minecraft server status, rcon players online, tick time, auto stop timer, backup status, last backup, next backup, backups folder, live server console logs, live backup activity logs, live control panel activity (actions) log, live control panel logs (errors/system) logs, backup files count, stale worlds count, cleanup last run, cleanup rule version, schedule version, rule last changed by, rules and schedule next run date and time, rules and schedules missed run count.
+- Since everything is broadcast to clients, there should be no individual polling from the clients.
+Server side: Cadence by state
+- When minecraft server is off and there are 0 flask app clients connected, all metrics and logs are paused. Server fetches and broadcasts nothing.
+- When minecraft server is on and there are 0 flask app clients connected, all metrics are paused, logs are read every 15s and cached until a client connects so the client receives something instantly, storage is computed every 15s.
+- When there are 1 or more flask app clients connected, regardless of minecraft server status, all data are broadcast by the server at 1hz to all clients. Live logs are broadcast as they come (independent of the 1hz cadence).
+
+Server side: Caching and storage refresh
+- File lists and counts are cached so that the clients immediately receives something upon connecting, then gets updated by regular server updates. 
+- Storage related data like file count, file lists, and cleanup rules display are read once at boot and updated once every 15 seconds or when clients connect or an action or event triggers a change. It is paused if server is off and 0 flask app clients connected.
+
+Server side: Log behavior
+- Live Minecraft server logs are paused when server is off and 0 flask app clients are connected. Data is cached so the first client gets something immediately.
+- Live logs update normally when server is on
+- Live backup logs update in realtime when backup status is queued or running.
+- Control panel logs only update when a client is connected or server is on.
+- Only te latest 500 lines of non rcon noise log is kept in cache and sent to the client.
+
+Client side: UI behavior
+- Update the UI as fast as possible to display data as soon as it is received. Alternative is if this is just an event listener waiting for data to arrive instead of an active refresh rate.
+- CSS and JS are cached. Clients ave the app installed as a webservice so when clients open the pages but there is no connection to the server, the ui still load but doesn't load data and just says no connection. Page is repopulated as soon as connection is established.
+- If the client opens the app in multiple tabs, just one of those tabs gets the data and it in turn just forwards the data to the other tabs. Basically I want multitabs to still act like a single tab.
+- Even when there is no connection to the server, accessing the url should still show the ui and allow page navigation, just without the data and with a banner saying that there is no connection. As soon as server is available, rehydrate the page.
+- Entire Client is a shell. All metrics and processess are shell owned. Pages own nothing.
+2. Server Runs and Status
+
+Start and status rules
+- Only trigger is pressing the start button. No password required.
+- Pressing start triggers status queued.
+- Starting status shows up when start is pressed but logs have not yet returned the started-up message, Dedicated server took x seconds to load.
+- Server status is running when the started-up message is seen in the logs.
+- If the flask app boots while the server is already running, status is running.
+- Pressing stop and confirming password shows shutting down status.
+- Status becomes off when the server is not running.
+- Pressing the start button disables it for 10 seconds (10 second cooldown). Regardless of cooldown, pressing the start button twice should not send duplicate start commands.
+
+Stop triggers
+- Stop is pressed and password entered.
+- Server is running but has 0 players for 3 minutes.
+- Storage capacity left is 10% remaining  or when the estimated storage required to complete the backup exceeds available storage (Emergency Shutdown).
+
+Button enablement
+- Start button is only clickable when server is off.
+- Stop button is only clickable when server is not off.
+- Backups button is not clickable when status is starting or shutting down.
+- Start and backup buttons are not clickable when remaining storage capacity is 10%  or when the estimated storage required to complete the backup exceeds available storage
+
+3. Backup and Restore
+Backups
+- Backups have 4 triggers: end of every session when the server is shutdown, backup button is pressed, backup interval is reached, backup restoration is initiated.
+- Running a backup script causes the script to write to a file true to indicate that it is running and then write false to indicate otherwise. The flask app accesses this file to update te backup status.
+- All backups except auto backups are done by zipping the files and and putting them in the backups directory.
+- Auto backups are done through snapshots and only the latest 3 snapshots are kept. Snapshots are also kept in the backups directory.
+- Backup filenames reflect purpose: session end, manual, emergency, auto. Backup filenames also have a timestamp.
+- All backups can be downloaded but require a password.
+- Backup cannot run when a backup is in progress. Prevent simultaneous backup triggers.
+- Backup, wen triggered, saves the world, sturns off auto saving, zips or snapshots the world, and then reenable world saving. 
+- Backup alerts the server players through rcon about backup starting,  ending successfully, or failed due to a reason.
+- Backup will not run when storage is below 10% or when the estimated storage required to complete the backup exceeds available storage
+
+Restore flow
+- List of all backups and snapshots in the backups directory are shown. Restore buttons are present beside the download buttons.
+- Clicking restore opens the restore pane.
+- Once initiated, the restore creates a pre-restore backup zip of the current world (recorded in a database).
+- Old world files are moved to the old worlds folder, renamed, and recorded to a database.
+- The backup being restored is extracted or copied to the root directory where the old world once was.
+- The copied world folder is renamed to a new world and recorded to a database.
+- server.properties is updated to reflect the new world folder.
+- There is no dedicated undo. To roll back, manually restore using the pre-restore backup via the normal restore flow.
+- A live log stream for the restore should be visible in the restore pane.
+- Old worlds folder can become stale over time and may need cleanup.
+- Restore is disabled when minecraft server is running or when there is an ongoing backup running.
+- When Restoring from an invalid or corrupted backup, all changes for that restore reqest is reverted.
+- Restore will not run when storage is below 10%
+
+4. Cleanup
+Eventually, old backups and stale worlds should be deleted. These are the cleanup rules:
+- Separate rules for backups and stale worlds.
+- Backup  Rules:
+    - Age Rule: Minimum age to start deleting (Days) <int set by user>; hard guard: must be older than 3 days
+    - Space Rule: Max disk usage before deleting starts (% used) <int set by user>
+    - Count Rule: Newest Session backups to keep  <int count set by user>; hard guard:  minimum of 3 and hard guard set to prevent deleting last  of any backup type.
+    - Newest Manual backups to keep  <int count set by user>; hard guard:  minimum of 3 and hard guard set to prevent deleting last  of any backup type.
+    - Newest Prerestore backups to keep  <int count set by user>; hard guard:  minimum of 3 and hard guard set to prevent deleting last  of any backup type.
+    - Newest Emergency backups to keep  <int count set by user>; hard guard:  minimum of 3 and hard guard set to prevent deleting last  of any backup type.
+    - Time Based Rule: Enable or Disabled; Time of cleanup <time set by user>; Repeat <choice: daily, weekly on day, monthly on day>
+- Stale World Rules:
+    - Age Rule: Minimum age to start deleting (Days) <int set by user>; hard guard: must be older than 3 days
+    - Space Rule: Max disk usage before deleting starts (% used) <int set by user>
+    - Count Rule: Newest Session backups to keep  <int count set by user>; hard guard:  minimum of 3 and hard guard set to prevent deleting last  of any backup type.
+    - Time Based Rule: Enable or Disabled; Time of cleanup <time set by user>; Repeat <choice: daily, weekly on day, monthly on day>
+- Cleanup triggers
+    - Trigger a cleanup if scheduled cleanup is enabled in the rules.
+    - Trigger a cleanup if manual trigger is pressed in the rule pane.
+    - Trigger a cleanup if manual cleanup is pressed after selecting files and entering password
+    - All manual cleanup triggers are dry run  by default, no  password. Wet runs, actual delete require password and acknowledgement of the dangers.
+5. Log files
+    - Log file list read from log files directories.
+    - Log files are listed and each file has a view and download button.
+    - Pressing view button on log file opens viewer pane and loads contents of the log file.
+    - Log file list is toggleable between Minecraft Logs, Crash Reports,  Backup and Restore Logs, Control Panel Activity Logs, Control Panel Errors/ System Logs
+6. Instructions
+    - Content is loaded from specified markdown files in docs folder.
+    - Markdown file is parsed and a css and html is generated for that document.
+    - A clickable Side ToC is autogenerated based on the contents of the markdown file. If a built in ToC is detected, hide the built in ToC in desktop mode.
+7. Global UI Rules
+    - Overall structure:
+        - Flask App Shell per client contains multiple pages.
+        - Each page contains panes of different types (Nav Pane, Header Pane, Content Pane, Action Pane). United by class pane and specific pane subclass, each pane gets an id.
+        - Each pane contains: Pane Title Row at the top of the pane; Pane content area/ card.
+        - Pane Title Row Contains The Pane Title, Controls and inputs if present. Rounded Corners.
+        - Pane content area/ cards show the actual content of the pane. Rounded Corners. They can be any  of these:
+            - File Lists with buttons
+            - File content viewer
+            - Rule Editor
+            - Live Log viewer
+            - Markdown derived content
+            - Navigation
+            - Stat/ Metrics Boxes
+    - Globals/ Shared Designs
+        - Body background color, shared with pane content area color, textbox input colors, normal navigation button color
+        - Panes backround colors are shared
+        - Fonts
+            - All font faces are arial. Fallback font is helvetica first, then roboto
+            - All pane titles regardless of pane type share a global size and color.
+        - Space in between elements are 12px
+        - Action Button and dropdown colors
+            - Red: Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
+            - Blue: Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
+            - Torquise: : Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
+        - Navigation/ view switcher button colors
+            - Normal (Body Background color), Hovered (Nav Highlight color), Clicked (Clicked color), Highlighted (Normal Blue Button Color)
+    - Files
+        - Selected and opened files are highlighted in the file list. Unhighlight upon closing.
+    - Buttons
+        - Min width is 80px
+        - Height is 40 px
+        - Button text is white
+        - Rounded Corners
+    - Dropdowns
+        - Inherit buttonn styles
+        - Dropdown selection is styled like a pane - white container, buttons looking like the nav buttons.
+    - Nav Pane
+        - Aligned left, sticky, Fixxed width. Present on all pages
+
+8. Local UI Rules
+    -Homepage contains:
+        - Nav Pane on the left
+        - Header Pane on the upper part of the page contains the following stat boxes
+            Server Status contains:
+                RAM: 
+                CPU: 
+                CPU freq: 
+                Storage: 
+            Minecraft Status contains:
+                Server Status: <Off, queued, running, shutting down, crashed>
+                Players online: <int>
+                Tick time: <float tps>
+                Auto-stop in: 
+            Backup Stats contains:
+                Backup status:  <idle, qeued, running>
+                Last backup:
+                Next backup: 
+                Backups folder: 
+        - Live Log Pane below the header pane contains:
+            Live log dropdown contains:
+                Live Server console
+                Live Backup Activity
+                Live Control Panel Activity (Actions)
+                Live Control Panel Logs (Errors/ Systems)
+            Rcon command input and submit
+            Live log views
+    - Backup and Restore Page Contains
+        - Nav Pane on the left
+        - File List Pane
+            File List with download and restore per file
+            Sort dropdown
+            Filter selection
+        - Restore Pane
+            Slides out and contains restore and  cancel buttons and restore status live logs.
+9. Initial Setup
+    - Upon installation, when the app starts for the first time, it is expected that data files and configs are missing. When that is detected,  the config is shown.
+    - Config contains:
+        Password setup and confirmation
+        Selection of Minecraft Server directory
+        Selection of Backup directory
+        Timezone <Unix Epoch> all time related aspects of te app are based on this (Timestamps, scheduling)
+    - Config generates the env file with default values.
+10. Security
+    - Assumptions:
+        - Password distribution is done in a secure manner and given only to autorized clients.
+        - Access control is assumed to be handled by the invite only private vpn.
+    - CSRF Protection enabled
+    - RCON password is regenerated and written to server.properties  per server start. Expected RCON settings (Enable rcon, rcon port) are also written to server.properties if misconfigured or not present.
+    - Password is hashed and salted.
+11. Logging
+    - Minecraft Logs and Backup Logs are generated from external scripts.
+    - All actions in app are recorded
+        - Server start,  stop, manual backup, manual cleanup, restoration
+        - Errors, exceptions, action rejections
+        - Logs are detailed, not just generic error or something went wrong messages.
+12. Env File
+    - Stores runntime configs. Generated during initial setup but can be edited manually externally.
+    - Stores:
+        Backup directory
+        Minecraft Server directory
+        Refresh rates used by the metrics.
+        Secret keys
+        Password Hashes
+        Typed Passwords should not remain in the form after submission. Need to retype it.
+        Password retries paused by 10 seconds when there are 3 failed password attempts. Log this and inform other clients throug a popup.
+13. Error handling and Notification System
+    - All errors are logged and clients are notified through popups.
+    - Server crashes are logged and clients are notified through popups. Upon server crash, set the server status to crashed and stop or kill the minecraft server process.
+    - Missed runs for backup intervals and cleanup:
+        - Missed cleanups are not run automatically in order to catch up. Inform the client via a message and te message would as to close the message or perform the missed run.
+        - Missed  backups follow the same flow. If missed, do not try to catch up. Just inform and prompt for the next action.
+    - Client Reconnection
+        - Clients get rehydrated with the latest data.
+    - Device identification:
+        - Based on static ip address - dns mapping provided by the private vpn
+        - Actions initiated by clients are logged. IP address is logged but in the ui, all ip addresses are mapped to the domain/ device name connected to the ip address
+        - IP  list is in a csv file.
+    - Notification system:
+        - Nav bar also  acts as an alert indicator:
+            - Home button flashes orange when server is starting or shutting down
+            - Home button is solid torquise when server is running
+            - Home button flashes red when server has an emergency shutdown or crashed.`
+            - Backup & restore button flashes red when someone opens the restore pane. Stop flashing immediately upon closing the restore pane.
+            - Cleanup  button flashes red when a cleanup job is missed
+        - There is a popup modal with these variations:
+            - Action Successful acknowledgement (Completed successfully)
+            - Action accepted (Initiated successfully)
+            - Action Rejected (Password Verification Failed)
+            - Password input prompt
+            - Cleanup dry run list
+            - Error (Action failed, exception, backup or snapshot failures, other errors; has more details button)
+            - Warnings/ Prompts:
+                - Clicking should open the page and pane concerned 
+        - Alert chimes/ sounds
+            - startup sound from any page that signify that the server is now started (log gave started-up message, Dedicated server took x seconds to load)
+            - shutdown sound from any page when server starts shutting down.
+14. Conflict resolution
+    - Only one of {backup, restore, cleanup} can run at a time
+    - Some rules:
+        - A running server will block backup restoration
+        - Backups can only run when server is off or running
+        - A backup job will be prioritized over cleanup and restore jobs (backup > restore > cleanup)
+    - Simultaneous jobs are queued.
+    - Multiple clients initiate the same job:
+        - Backups: queue jobs
+        - Cleanup: reject subsequent jobs until current is finished
+        - Restore: reject subsequent jobs until current is finished
+        - Server start: give a cooldown from last trigger and ignore subsequent start triggers until server status returns to off
+        - Server Stop: Queue jobs. There is no harm in repeated stop calls. For ui consistency, just disable the stop button when the server status is not running
+        - 
+    - If jobs conflict (e.g restoring a file that is queued for deletion or deleting a file queued for restoration) the restoration taked precedence.
+
+15. Future Plans (I have no idea how to implement these yet.)
+    Convert the Initial setup page to a dedicated setup page that can be accessed anytime.
+    The current control method for the server is via systemctl for start and stop. I want to remove this and just have the app directly call and terminate the run.sh or server.jar file to avoid linux specific dependency.
+
+16. Implemented Behavior Not Explicitly Listed Above
+- Server-side client registry with heartbeats to track connected clients and detect abrupt disconnects.
+- Log streaming tracks file offsets and buffers lines when idle, then drains buffered lines on client connect.
+- Restore log stream is exposed via dedicated SSE channel /stream/restore_logs (separate from main logs).
+- Cleanup scheduler persists last tick per scope and records missed-run metadata in a non-normal state file.
+- Cleanup run history is persisted and attached to metrics/history views.
+- Cleanup blast-radius caps are enforced per run (max percent, absolute max, and minimum per run).
+- Server-side priority/guard enforcement for cleanup actions (reject when backup/restore running or queued).
+- Storage guard calculates free space percent and estimated job size to block start/backup/restore and trigger emergency shutdown.

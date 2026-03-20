@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from flask import has_request_context, request
 
 from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_run_with_lock
 from app.services.maintenance_conflicts import priority_conflict
@@ -27,6 +28,34 @@ from app.services.maintenance_state_store import (
 
 def normalize_scope(raw_scope):
     return _cleanup_normalize_scope(raw_scope)
+
+
+def _request_client_ip(state):
+    getter = None
+    if isinstance(state, dict):
+        getter = state.get('_get_client_ip')
+    else:
+        getter = getattr(state, '_get_client_ip', None)
+        if getter is None:
+            try:
+                getter = state['_get_client_ip']
+            except Exception:
+                getter = None
+    if callable(getter):
+        try:
+            return str(getter() or '').strip()
+        except Exception:
+            pass
+    if has_request_context():
+        forwarded = str(request.headers.get('X-Forwarded-For', '') or '').strip()
+        if forwarded:
+            first = forwarded.split(',', 1)[0].strip()
+            if first:
+                return first
+        remote_addr = str(request.remote_addr or '').strip()
+        if remote_addr:
+            return remote_addr
+    return ''
 
 
 
@@ -88,7 +117,19 @@ def save_rules(ctx, state, payload):
     ok_pw, err = _require_password(payload=payload, state=state, what='save_rules', why='manual_save', trigger='manual', scope=scope)
     if not ok_pw:
         return err
-    ok, parsed = _cleanup_validate_rules(payload.get('rules', {}))
+    raw_rules = payload.get('rules', {})
+    if scope == 'stale_worlds' and isinstance(raw_rules, dict):
+        count = raw_rules.get('count')
+        if isinstance(count, dict) and 'max_per_category' in count:
+            max_count = count.get('max_per_category')
+            for key in (
+                'session_backups_to_keep',
+                'manual_backups_to_keep',
+                'prerestore_backups_to_keep',
+                'emergency_backups_to_keep',
+            ):
+                count[key] = max_count
+    ok, parsed = _cleanup_validate_rules(raw_rules)
     if not ok:
         _cleanup_log(ctx, what='save_rules', why='manual_save', trigger='manual', result='validation_failure', details=f'scope={scope};error={parsed}')
         return _cleanup_error('validation_failure', parsed, status=400)
@@ -131,7 +172,7 @@ def save_rules(ctx, state, payload):
     meta = cfg.setdefault('meta', {})
     meta['rule_version'] = int(meta.get('rule_version', 0)) + 1
     meta['schedule_version'] = int(meta.get('schedule_version', 0)) + 1
-    meta['last_changed_by'] = _cleanup_get_client_ip(ctx)
+    meta['last_changed_by'] = _request_client_ip(state) or _cleanup_get_client_ip(ctx)
     meta['last_changed_at'] = _cleanup_now_iso(ctx)
     _cleanup_save_config(ctx, full_cfg)
     _cleanup_log(
@@ -320,6 +361,8 @@ def manual_delete(ctx, state, payload):
 
 def ack_non_normal(ctx, payload):
     scope = normalize_scope(payload.get('scope', 'backups'))
+    ack_at = _cleanup_now_iso(ctx)
+    ack_by = _cleanup_get_client_ip(ctx)
 
     def _entry_scope(entry):
         if not isinstance(entry, dict):
@@ -338,9 +381,20 @@ def ack_non_normal(ctx, payload):
     missed = data.get('missed_runs')
     if not isinstance(missed, list):
         missed = []
-    data['missed_runs'] = [item for item in missed if (_entry_scope(item) not in {'', scope})]
-    data['last_ack_at'] = _cleanup_now_iso(ctx)
-    data['last_ack_by'] = _cleanup_get_client_ip(ctx)
+    updated = []
+    for item in missed:
+        if not isinstance(item, dict):
+            updated.append(item)
+            continue
+        entry_scope = _entry_scope(item)
+        if entry_scope in {'', scope}:
+            item = dict(item)
+            item['acknowledged_at'] = ack_at
+            item['acknowledged_by'] = ack_by
+        updated.append(item)
+    data['missed_runs'] = updated
+    data['last_ack_at'] = ack_at
+    data['last_ack_by'] = ack_by
     _cleanup_atomic_write_json(_cleanup_non_normal_path(ctx), data)
     _cleanup_log(ctx, what='ack_non_normal', why='manual_ack', trigger='manual', result='ok', details=f'scope={scope}')
     return {'ok': True, 'non_normal': data, 'scope': scope}

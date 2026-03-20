@@ -91,8 +91,12 @@ def write_env_file(config_path, values):
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = dict(ENV_DEFAULTS)
-    for key in ("MCWEB_SECRET_KEY", "MCWEB_ADMIN_PASSWORD_HASH"):
-        payload[key] = str(values.get(key, "")).strip()
+    for key in ("MCWEB_SECRET_KEY", "MCWEB_ADMIN_PASSWORD_HASH", "MCWEB_SUPERADMIN_PASSWORD_HASH", "MCWEB_REQUIRE_PASSWORD"):
+        value = str(values.get(key, "")).strip()
+        if value or key in {"MCWEB_SECRET_KEY", "MCWEB_ADMIN_PASSWORD_HASH"}:
+            payload[key] = value
+    if not str(payload.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "")).strip():
+        payload["MCWEB_SUPERADMIN_PASSWORD_HASH"] = str(payload.get("MCWEB_ADMIN_PASSWORD_HASH", "")).strip()
     for key in (
         "SERVICE",
         "DISPLAY_TZ",

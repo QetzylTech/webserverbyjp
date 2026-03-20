@@ -468,14 +468,12 @@ def restore_operation(ctx, *, idempotency_key, client_key, sudo_password, filena
 
     try:
         client_ip = state.get("_get_client_ip")() if callable(state.get("_get_client_ip")) else ""
-        device_map = state.get("get_device_name_map")() if callable(state.get("get_device_name_map")) else {}
-        device_name = (device_map.get(client_ip, "") or "unmapped-device").strip()
         display_tz = state.get("DISPLAY_TZ")
         now = datetime.now(tz=display_tz) if display_tz else datetime.utcnow()
         stamp = now.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
         append_restore_event(
             ctx,
-            f"Restore requested for {filename} by {device_name} ({client_ip or 'unknown'}) at {stamp}.",
+            f"Restore requested for {filename} by {client_ip or 'unknown'} at {stamp}.",
         )
     except Exception:
         pass

@@ -22,6 +22,7 @@ _DIRECT_EXPORTS = {
     "set_service_status_intent": _start.set_service_status_intent,
     "get_service_status_intent": _start.get_service_status_intent,
     "validate_sudo_password": _start.validate_sudo_password,
+    "validate_admin_password": _start.validate_admin_password,
     "ensure_session_file": _restore_helpers.ensure_session_file,
     "read_session_start_time": _start.read_session_start_time,
     "clear_session_start_time": _restore_helpers.clear_session_start_time,

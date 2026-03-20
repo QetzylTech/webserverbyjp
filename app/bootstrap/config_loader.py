@@ -19,6 +19,7 @@ class AppConfig:
     raw_values: dict[str, str]
     service: str
     admin_password_hash: str
+    require_password: bool
     backup_dir: Path
     minecraft_root_dir: Path
     doc_readme_url: str
@@ -105,6 +106,7 @@ def load_web_config(app_dir: Path, *, default_backup_dir: Path, default_minecraf
         raw_values=values,
         service=web_cfg.get_str("SERVICE", "minecraft"),
         admin_password_hash=web_cfg.get_str("MCWEB_ADMIN_PASSWORD_HASH", ""),
+        require_password=_cfg_bool(web_cfg, "MCWEB_REQUIRE_PASSWORD", "true"),
         backup_dir=web_cfg.get_path("BACKUP_DIR", Path(default_backup_dir)),
         minecraft_root_dir=web_cfg.get_path("MINECRAFT_ROOT_DIR", Path(default_minecraft_root)),
         doc_readme_url=web_cfg.get_str("DOC_README_URL", "/doc/server_setup_doc.md"),

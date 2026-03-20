@@ -454,7 +454,15 @@ def get_cleanup_missed_run_count(ctx):
     data = _cleanup_load_non_normal(ctx)
     missed = data.get("missed_runs") if isinstance(data, dict) else None
     if isinstance(missed, list):
-        return len(missed)
+        pending = 0
+        for entry in missed:
+            if not isinstance(entry, dict):
+                pending += 1
+                continue
+            if entry.get("acknowledged") or entry.get("acknowledged_at") or entry.get("acknowledgedAt"):
+                continue
+            pending += 1
+        return pending
     return 0
 
 

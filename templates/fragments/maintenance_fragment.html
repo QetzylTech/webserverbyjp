@@ -127,8 +127,8 @@
             <p id="maintenance-password-text" class="modal-text">Enter sudo password to continue.</p>
             <input id="maintenance-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Sudo password">
             <div class="modal-actions">
-                <button id="maintenance-password-cancel" class="btn-backup" type="button">Cancel</button>
-                <button id="maintenance-password-submit" class="btn-stop" type="button">Continue</button>
+                <button id="maintenance-password-cancel" class="btn-secondary" type="button">Cancel</button>
+                <button id="maintenance-password-submit" class="btn-backup" type="button">Continue</button>
             </div>
         </div>
     </div>
@@ -155,7 +155,7 @@
             <label id="maintenance-dry-run-destructive-confirm-wrap" class="maintenance-check" hidden><input id="maintenance-dry-run-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
             <div class="modal-actions">
                 <button id="maintenance-dry-run-confirm-run" class="btn-stop" type="button" hidden disabled>Confirm</button>
-                <button id="maintenance-dry-run-ok" class="btn-backup" type="button">Cancel</button>
+                <button id="maintenance-dry-run-ok" class="btn-secondary" type="button">Cancel</button>
             </div>
         </div>
     </div>
@@ -176,13 +176,15 @@
 
     <div id="maintenance-ack-suggest-modal" class="modal-overlay" aria-hidden="true">
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="maintenance-ack-suggest-title">
-            <h3 id="maintenance-ack-suggest-title" class="modal-title">Missed Runs Acknowledged</h3>
-            <p class="modal-text">Suggested next step: run rule-based cleanup now.</p>
+            <h3 id="maintenance-ack-suggest-title" class="modal-title">Missed Run Actions</h3>
+            <p class="modal-text">Choose whether to just acknowledge the missed run or run cleanup now.</p>
             <label class="maintenance-check"><input id="maintenance-ack-suggest-dry-run" type="checkbox" checked> Dry run (no files are deleted)</label>
+            <p id="maintenance-ack-suggest-warning" class="modal-text" hidden>Running without a dry run will delete files.</p>
             <label id="maintenance-ack-suggest-destructive-confirm-wrap" class="maintenance-check" hidden><input id="maintenance-ack-suggest-destructive-confirm" type="checkbox"> I acknowledge that this action is destructive and cannot be undone.</label>
             <div class="modal-actions">
-                <button id="maintenance-ack-suggest-cancel" class="btn-backup" type="button">Cancel</button>
                 <button id="maintenance-ack-suggest-run" class="btn-start" type="button">Run Rule-Based Delete Now</button>
+                <button id="maintenance-ack-suggest-acknowledge" class="btn-stop" type="button">Acknowledge</button>
+                <button id="maintenance-ack-suggest-close" class="btn-backup" type="button">Close</button>
             </div>
         </div>
     </div>

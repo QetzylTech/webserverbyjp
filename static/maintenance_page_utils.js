@@ -42,13 +42,59 @@
         });
     }
 
+    function normalizeIpToken(value) {
+        let text = String(value || "").trim();
+        if (!text) return "";
+        if (text.includes(",")) {
+            text = text.split(",", 1)[0].trim();
+        }
+        if (text.startsWith("/")) {
+            text = text.slice(1).trim();
+        }
+        if (text.startsWith("[") && text.includes("]")) {
+            text = text.slice(1, text.indexOf("]")).trim();
+        }
+        const zoneIndex = text.indexOf("%");
+        if (zoneIndex > 0) {
+            text = text.slice(0, zoneIndex).trim();
+        }
+        if (/^::ffff:/i.test(text)) {
+            text = text.slice(7).trim();
+        }
+        if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(text)) {
+            text = text.replace(/:\d+$/, "");
+        }
+        return text;
+    }
+
+    function resolveDeviceName(rawValue, deviceMap) {
+        const raw = String(rawValue || "").trim();
+        const normalized = normalizeIpToken(raw);
+        const rawKey = raw.toLowerCase();
+        const normalizedKey = normalized.toLowerCase();
+        if (rawKey === "mcweb" || normalizedKey === "mcweb") {
+            return "system";
+        }
+        const map = (deviceMap && typeof deviceMap === "object") ? deviceMap : {};
+        const candidates = [raw, normalized];
+        if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
+            candidates.push(`::ffff:${normalized}`);
+        }
+        for (let i = 0; i < candidates.length; i += 1) {
+            const candidate = String(candidates[i] || "").trim();
+            if (!candidate) continue;
+            const deviceName = String(map[candidate] || "").trim();
+            if (deviceName) {
+                return deviceName.toLowerCase() === "mcweb" ? "system" : deviceName;
+            }
+        }
+        return normalized || raw;
+    }
+
     function formatAuditActor(rawActor, deviceMap) {
         const actor = String(rawActor || "").trim();
         if (!actor || actor === "-") return "-";
-        const map = (deviceMap && typeof deviceMap === "object") ? deviceMap : {};
-        const deviceName = String(map[actor] || "").trim();
-        if (deviceName) return deviceName;
-        return actor;
+        return resolveDeviceName(actor, deviceMap);
     }
 
     function reasonText(reasons) {

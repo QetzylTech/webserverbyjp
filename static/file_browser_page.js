@@ -14,6 +14,8 @@ function mountFileBrowserPage() {
         const __MCWEB_FILES_CONFIG = window.__MCWEB_FILES_CONFIG || {};
         const csrfToken = __MCWEB_FILES_CONFIG.csrfToken ?? "";
         const shell = window.MCWebShell || null;
+        const shellConfig = window.__MCWEB_SHELL_CONFIG || {};
+        const passwordRequired = shellConfig.passwordRequired !== false;
         const clientId = shell && typeof shell.getPersistentClientId === "function"
             ? shell.getPersistentClientId("mcweb.clientId")
             : "";
@@ -36,7 +38,105 @@ function mountFileBrowserPage() {
                 });
             }
         }
+        function normalizeIpToken(value) {
+            let text = String(value || "").trim();
+            if (!text) return "";
+            if (text.includes(",")) {
+                text = text.split(",", 1)[0].trim();
+            }
+            if (text.startsWith("/")) {
+                text = text.slice(1).trim();
+            }
+            if (text.startsWith("[") && text.includes("]")) {
+                text = text.slice(1, text.indexOf("]")).trim();
+            }
+            const zoneIndex = text.indexOf("%");
+            if (zoneIndex > 0) {
+                text = text.slice(0, zoneIndex).trim();
+            }
+            if (/^::ffff:/i.test(text)) {
+                text = text.slice(7).trim();
+            }
+            if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(text)) {
+                text = text.replace(/:\d+$/, "");
+            }
+            return text;
+        }
+
+        function buildDeviceNameLookup(map) {
+            const lookup = {};
+            const source = map && typeof map === "object" ? map : {};
+            Object.keys(source).forEach((key) => {
+                const name = String(source[key] || "").trim();
+                if (!name) return;
+                const rawKey = String(key || "").trim();
+                const normalizedKey = normalizeIpToken(rawKey);
+                if (rawKey && !lookup[rawKey]) {
+                    lookup[rawKey] = name;
+                }
+                if (normalizedKey && !lookup[normalizedKey]) {
+                    lookup[normalizedKey] = name;
+                }
+                if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalizedKey)) {
+                    const mappedIpv6 = `::ffff:${normalizedKey}`;
+                    if (!lookup[mappedIpv6]) {
+                        lookup[mappedIpv6] = name;
+                    }
+                }
+            });
+            return lookup;
+        }
+
+        let deviceNameLookup = {};
+
+        function ipReplacement(ipText) {
+            const rawIp = String(ipText || "").trim();
+            const ip = normalizeIpToken(rawIp);
+            if (!ip) return "";
+            const mapped = deviceNameLookup[rawIp] || deviceNameLookup[ip];
+            return mapped && mapped.trim() ? mapped.trim() : ip;
+        }
+
+        function replaceIpsWithDeviceNames(text) {
+            const raw = String(text || "");
+            const withIpv4 = raw.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, function (ip) {
+                return ipReplacement(ip);
+            });
+            return withIpv4.replace(/\b(?:[A-Fa-f0-9]{0,4}:){3,7}[A-Fa-f0-9]{0,4}\b/g, function (ip) {
+                return ipReplacement(ip);
+            });
+        }
+
+        async function loadDeviceNameMap() {
+            try {
+                if (shell && typeof shell.getDeviceNameMapSnapshot === "function") {
+                    const cached = shell.getDeviceNameMapSnapshot();
+                    if (cached && typeof cached === "object" && Object.keys(cached).length > 0) {
+                        deviceNameMap = cached;
+                        deviceNameLookup = buildDeviceNameLookup(deviceNameMap);
+                        if (restoreLogLines && restoreLogLines.length) {
+                            renderRestoreLogLines(restoreLogLines, { keepScroll: true });
+                        }
+                        return cached;
+                    }
+                }
+                const nextMap = shell && typeof shell.fetchDeviceNameMap === "function"
+                    ? await shell.fetchDeviceNameMap()
+                    : await fetch("/device-name-map", { cache: "no-store" })
+                        .then((response) => (response.ok ? response.json() : null))
+                        .then((payload) => (payload && payload.map ? payload.map : {}));
+                deviceNameMap = nextMap && typeof nextMap === "object" ? nextMap : {};
+                deviceNameLookup = buildDeviceNameLookup(deviceNameMap);
+                if (restoreLogLines && restoreLogLines.length) {
+                    renderRestoreLogLines(restoreLogLines, { keepScroll: true });
+                }
+                return deviceNameMap;
+            } catch (_) {
+                return deviceNameMap;
+            }
+        }
         const logUtils = window.MCWebLogUtils || {};
+        let deviceNameMap = {};
         const viewerRuntime = window.MCWebFileViewerRuntime || {};
         const dataRuntime = window.MCWebFilePageDataRuntime || {};
         const modalsRuntime = window.MCWebFilePageModals || {};
@@ -349,7 +449,11 @@ function mountFileBrowserPage() {
                     const url = downloadBtn.getAttribute("data-download-url") || "";
                     const filename = downloadBtn.getAttribute("data-filename") || "backup.zip";
                     if (!url) return;
-                    modals.openPasswordModal({ kind: "download", url, filename });
+                    if (passwordRequired) {
+                        modals.openPasswordModal({ kind: "download", url, filename });
+                    } else {
+                        runBackupDownload({ kind: "download", url, filename }, "");
+                    }
                     return;
                 }
                 const restoreBtn = target.closest(".file-restore-btn");
@@ -457,7 +561,7 @@ function mountFileBrowserPage() {
 
         function formatRestoreLogBatch(lines) {
             return (lines || [])
-                .map((line) => logUtils.formatLiveLogLine(String(line || ""), { highlightErrorLine: true }))
+                .map((line) => logUtils.formatLiveLogLine(replaceIpsWithDeviceNames(String(line || "")), { highlightErrorLine: true }))
                 .join("");
         }
 
@@ -924,7 +1028,8 @@ function mountFileBrowserPage() {
             const active = !!payload.restore_pane_attention;
             const openedBySelf = !!payload.restore_pane_opened_by_self;
             const filename = String(payload.restore_pane_filename || "").trim();
-            const openerName = String(payload.restore_pane_opened_by_name || "").trim();
+            const openerIp = String(payload.restore_pane_opened_by_ip || "").trim();
+            const openerName = openerIp ? ipReplacement(openerIp) : String(payload.restore_pane_opened_by_name || "").trim();
             remoteRestoreActive = active && !!filename && !openedBySelf;
             remoteRestoreFilename = remoteRestoreActive ? filename : "";
             remoteRestoreOpenedByName = remoteRestoreActive ? (openerName || "unknown") : "";
@@ -1030,6 +1135,21 @@ function mountFileBrowserPage() {
             if (!fileList) return;
             const items = Array.from(fileList.querySelectorAll("li:not(.list-state)"));
             sortItems(items, mode).forEach((item) => fileList.appendChild(item));
+            syncFirstVisibleFileRow();
+        }
+
+        function syncFirstVisibleFileRow() {
+            if (!fileList) return;
+            const items = Array.from(fileList.querySelectorAll("li:not(.list-state)"));
+            let firstVisibleApplied = false;
+            items.forEach((item) => {
+                const isVisible = item.style.display !== "none";
+                const shouldMark = isVisible && !firstVisibleApplied;
+                item.classList.toggle("file-row-first-visible", shouldMark);
+                if (shouldMark) {
+                    firstVisibleApplied = true;
+                }
+            });
         }
 
         function buildLogFileItemRow(item, payload) {
@@ -1049,19 +1169,19 @@ function mountFileBrowserPage() {
             const sizeText = escapeHtml(String(item?.size_text || ""));
             return `
 <li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
-    <span class="file-name">${nameHtml}</span>
-    <div class="file-actions">
-        <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
-        <button
-            class="file-action-btn file-view-btn"
-            type="button"
-            data-view-url="${viewUrl}"
-            data-download-url="${downloadUrl}"
-            data-filename="${nameHtml}"
-        >View</button>
-    </div>
-    <span class="meta">${modified} | ${sizeText}</span>
-</li>`.trim();
+      <span class="file-name">${nameHtml}</span>
+      <div class="file-actions">
+          <button
+              class="file-action-btn file-view-btn"
+              type="button"
+              data-view-url="${viewUrl}"
+              data-download-url="${downloadUrl}"
+              data-filename="${nameHtml}"
+          >View</button>
+          <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
+      </div>
+      <span class="meta">${modified} | ${sizeText}</span>
+  </li>`.trim();
         }
 
         function restoreListStateNodes(list) {
@@ -1200,41 +1320,41 @@ function mountFileBrowserPage() {
                 const lastRestoreAt = escapeHtml(String(item?.last_restore_at || ""));
                 return `
 <li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
-    <span class="file-name">${nameHtml}</span>
-    <div class="file-actions">
-        <button
-            class="file-action-btn file-download-btn"
-            type="button"
-            data-download-url="${downloadUrl}"
-            data-filename="${downloadName}"
-        >Download</button>
-        <button
-            class="file-action-btn file-restore-btn"
-            type="button"
-            data-filename="${restoreName}"
-            data-display-name="${nameHtml}"
-            data-last-restore-log="${lastRestoreLog}"
-            data-last-restore-at="${lastRestoreAt}"
-        >Restore</button>
-    </div>
-    <span class="meta">${modified} | ${sizeText}</span>
-</li>`.trim();
+      <span class="file-name">${nameHtml}</span>
+      <div class="file-actions">
+          <button
+              class="file-action-btn file-restore-btn"
+              type="button"
+              data-filename="${restoreName}"
+              data-display-name="${nameHtml}"
+              data-last-restore-log="${lastRestoreLog}"
+              data-last-restore-at="${lastRestoreAt}"
+          >Restore</button>
+          <button
+              class="file-action-btn file-download-btn"
+              type="button"
+              data-download-url="${downloadUrl}"
+              data-filename="${downloadName}"
+          >Download</button>
+      </div>
+      <span class="meta">${modified} | ${sizeText}</span>
+  </li>`.trim();
             }
             return `
 <li data-name="${nameLowerHtml}" data-filename="${nameHtml}" data-mtime="${String(mtime)}" data-size="${String(sizeBytes)}">
-    <span class="file-name">${nameHtml}</span>
-    <div class="file-actions">
-        <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
-        <button
-            class="file-action-btn file-view-btn"
-            type="button"
-            data-view-url="${viewUrl}"
-            data-download-url="${downloadUrl}"
-            data-filename="${nameHtml}"
-        >View</button>
-    </div>
-    <span class="meta">${modified} | ${sizeText}</span>
-</li>`.trim();
+      <span class="file-name">${nameHtml}</span>
+      <div class="file-actions">
+          <button
+              class="file-action-btn file-view-btn"
+              type="button"
+              data-view-url="${viewUrl}"
+              data-download-url="${downloadUrl}"
+              data-filename="${nameHtml}"
+          >View</button>
+          <a class="file-action-btn file-download-btn file-download-link" href="${downloadUrl}">Download</a>
+      </div>
+      <span class="meta">${modified} | ${sizeText}</span>
+  </li>`.trim();
         }
 
         function announceFileListInvalidation(detail = {}) {
@@ -1372,6 +1492,7 @@ function mountFileBrowserPage() {
                 const visibleCount = items.filter((item) => item.style.display !== "none").length;
                 listEmptyDynamic.style.display = visibleCount > 0 ? "none" : "block";
             }
+            syncFirstVisibleFileRow();
             persistFileViewState({
                 backupSortMode: selectedSort,
                 backupFilters: Object.fromEntries(
@@ -1381,7 +1502,7 @@ function mountFileBrowserPage() {
         }
 
         function formatViewerLogHtml(rawText) {
-            return logUtils.formatBracketAwareLogHtml(rawText, { highlightErrorLine: true });
+            return logUtils.formatBracketAwareLogHtml(replaceIpsWithDeviceNames(rawText), { highlightErrorLine: true });
         }
 
         const viewerController = (viewerRuntime && typeof viewerRuntime.createViewerController === "function")
@@ -1683,11 +1804,22 @@ function mountFileBrowserPage() {
                     return;
                 }
                 setDownloadError("");
-                modals.openPasswordModal({
-                    kind: "restore",
-                    filename: selectedRestoreFilename,
-                    displayName: selectedRestoreDisplayName,
-                });
+                if (passwordRequired) {
+                    modals.openPasswordModal({
+                        kind: "restore",
+                        filename: selectedRestoreFilename,
+                        displayName: selectedRestoreDisplayName,
+                    });
+                } else {
+                    runBackupRestore(
+                        {
+                            kind: "restore",
+                            filename: selectedRestoreFilename,
+                            displayName: selectedRestoreDisplayName,
+                        },
+                        "",
+                    );
+                }
             });
         }
         if (backupRestoreLastRun) {
@@ -1832,6 +1964,7 @@ function mountFileBrowserPage() {
         addScopedListener(document, "visibilitychange", handleVisibilityStateChange);
         addScopedListener(window, "pagehide", teardownFilePageLifecycle);
         ensureFileListClickBinding();
+        loadDeviceNameMap();
         logSourceToggles.forEach((btn) => {
             addScopedListener(btn, "click", async () => {
                 setDownloadError("");

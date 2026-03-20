@@ -107,11 +107,63 @@
             return LOG_SOURCE_BUFFER_LIMITS[source] || 200;
         }
 
+        function normalizeIpToken(value) {
+            let text = String(value || "").trim();
+            if (!text) return "";
+            if (text.includes(",")) {
+                text = text.split(",", 1)[0].trim();
+            }
+            if (text.startsWith("/")) {
+                text = text.slice(1).trim();
+            }
+            if (text.startsWith("[") && text.includes("]")) {
+                text = text.slice(1, text.indexOf("]")).trim();
+            }
+            const zoneIndex = text.indexOf("%");
+            if (zoneIndex > 0) {
+                text = text.slice(0, zoneIndex).trim();
+            }
+            if (/^::ffff:/i.test(text)) {
+                text = text.slice(7).trim();
+            }
+            if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(text)) {
+                text = text.replace(/:\d+$/, "");
+            }
+            return text;
+        }
+
+        function buildDeviceNameLookup(map) {
+            const lookup = {};
+            const source = map && typeof map === "object" ? map : {};
+            Object.keys(source).forEach(function (key) {
+                const name = String(source[key] || "").trim();
+                if (!name) return;
+                const rawKey = String(key || "").trim();
+                const normalizedKey = normalizeIpToken(rawKey);
+                if (rawKey && !lookup[rawKey]) {
+                    lookup[rawKey] = name;
+                }
+                if (normalizedKey && !lookup[normalizedKey]) {
+                    lookup[normalizedKey] = name;
+                }
+                if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalizedKey)) {
+                    const mappedIpv6 = `::ffff:${normalizedKey}`;
+                    if (!lookup[mappedIpv6]) {
+                        lookup[mappedIpv6] = name;
+                    }
+                }
+            });
+            return lookup;
+        }
+
+        let deviceNameLookup = {};
+
         function ipReplacement(ipText) {
-            const ip = String(ipText || "").trim();
-            if (!ip) return "unmapped-device";
-            const mapped = deviceNameMap[ip];
-            return mapped && mapped.trim() ? mapped.trim() : "unmapped-device";
+            const rawIp = String(ipText || "").trim();
+            const ip = normalizeIpToken(rawIp);
+            if (!ip) return "";
+            const mapped = deviceNameLookup[rawIp] || deviceNameLookup[ip];
+            return mapped && mapped.trim() ? mapped.trim() : ip;
         }
 
         function replaceIpsWithDeviceNames(text) {
@@ -327,6 +379,7 @@
                     const cachedMap = shell.getDeviceNameMapSnapshot();
                     if (cachedMap && typeof cachedMap === "object" && Object.keys(cachedMap).length > 0) {
                         deviceNameMap = cachedMap;
+                        deviceNameLookup = buildDeviceNameLookup(deviceNameMap);
                         rebuildBufferedEntries();
                         renderActiveLog();
                         return cachedMap;
@@ -338,6 +391,7 @@
                         .then(function (response) { return response.ok ? response.json() : null; })
                         .then(function (payload) { return payload && payload.map ? payload.map : {}; });
                 deviceNameMap = nextMap && typeof nextMap === "object" ? nextMap : {};
+                deviceNameLookup = buildDeviceNameLookup(deviceNameMap);
                 rebuildBufferedEntries();
                 renderActiveLog();
                 return deviceNameMap;

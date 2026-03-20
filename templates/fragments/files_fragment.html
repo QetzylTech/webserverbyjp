@@ -70,8 +70,8 @@
         <div class="pane-content">
             <div id="download-error" class="download-error"></div>
             <div class="file-action-token-template" hidden aria-hidden="true">
-                <button class="file-download-btn" type="button"></button>
                 <button class="file-restore-btn" type="button"></button>
+                <button class="file-download-btn" type="button"></button>
             </div>
             <ul class="list">
                 <li id="list-loading" class="list-state empty" style="display:none;">Loading...</li>
@@ -91,9 +91,9 @@
                         {% endif %}
                         <div id="backup-restore-controls" class="pane-head-actions-group pane-head-actions-group--restore pane-editor" hidden>
                             <div class="pane-action-cluster pane-action-cluster--restore">
+                                <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
                                 <button id="backup-restore-start" class="backup-restore-start" type="button">Restore</button>
                                 <button id="backup-restore-last-run" class="backup-restore-last-run btn-backup" type="button" hidden>View last run</button>
-                                <button id="backup-restore-cancel" class="backup-restore-cancel" type="button">Cancel</button>
                             </div>
                         </div>
                     </div>
@@ -110,8 +110,8 @@
             <p class="modal-text">Enter sudo password to download this backup.</p>
             <input id="download-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Password">
             <div class="modal-actions">
-                <button id="download-password-cancel" class="modal-btn-cancel" type="button">Cancel</button>
-                <button id="download-password-submit" class="modal-btn-submit" type="button">Continue</button>
+                <button id="download-password-cancel" class="btn-secondary" type="button">Cancel</button>
+                <button id="download-password-submit" class="btn-backup" type="button">Continue</button>
             </div>
         </div>
     </div>
@@ -121,7 +121,7 @@
             <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
             <p id="message-modal-text" class="modal-text"></p>
             <div class="modal-actions">
-                <button id="message-modal-ok" class="modal-btn-submit" type="button">OK</button>
+                <button id="message-modal-ok" class="btn-backup" type="button">OK</button>
             </div>
         </div>
     </div>
@@ -130,7 +130,7 @@
             <h3 id="success-modal-title" class="modal-title">Action Completed</h3>
             <p id="success-modal-text" class="modal-text"></p>
             <div class="modal-actions">
-                <button id="success-modal-ok" class="modal-btn-submit" type="button">OK</button>
+                <button id="success-modal-ok" class="btn-backup" type="button">OK</button>
             </div>
         </div>
     </div>
@@ -139,7 +139,7 @@
             <h3 id="error-modal-title" class="modal-title">Action Failed</h3>
             <p id="error-modal-text" class="modal-text"></p>
             <div class="modal-actions">
-                <button id="error-modal-ok" class="modal-btn-submit" type="button">OK</button>
+                <button id="error-modal-ok" class="btn-backup" type="button">OK</button>
             </div>
         </div>
     </div>

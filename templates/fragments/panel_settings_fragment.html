@@ -1,0 +1,183 @@
+﻿{% set current_settings = panel_settings or {} %}
+<main
+    id="mcweb-page-root"
+    class="content"
+    data-page-key="panel_settings"
+    data-page-title="Panel Settings"
+    data-page-styles='["{{ url_for('static', filename='panel_settings.css', v=static_version('panel_settings.css')) }}"]'
+    data-page-scripts='["{{ url_for('static', filename='dom_runtime_utils.js', v=static_version('dom_runtime_utils.js')) }}", "{{ url_for('static', filename='panel_settings.js', v=static_version('panel_settings.js')) }}"]'
+>
+<div class="wrap page-panes page-panes--settings">
+    <p id="panel-settings-status" class="settings-status" role="status" aria-live="polite"></p>
+
+    <section class="panel page-pane page-pane--settings" aria-labelledby="panel-security-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h2 id="panel-security-title" class="pane-title">Security</h2>
+            </div>
+        </div>
+        <div class="pane-content">
+            <div class="settings-section-separator" role="separator" aria-label="Admin password section">
+                <span class="settings-section-separator-text">Admin Password</span>
+            </div>
+            <div class="settings-grid settings-grid--two-col">
+                <label>
+                    <span class="settings-label">New admin password</span>
+                    <input id="panel-new-password" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                </label>
+                <label>
+                    <span class="settings-label">Confirm new password</span>
+                    <input id="panel-new-password-confirm" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Confirm new password">
+                </label>
+            </div>
+            <label class="settings-check">
+                <input id="panel-require-password" type="checkbox" {% if current_settings.require_password %}checked{% endif %}>
+                Require password for sensitive actions
+            </label>
+
+            <div class="settings-section-separator" role="separator" aria-label="Superadmin password section">
+                <span class="settings-section-separator-text">Superadmin Password</span>
+            </div>
+
+            <div class="settings-grid settings-grid--two-col">
+                <label>
+                    <span class="settings-label">New superadmin password</span>
+                    <input id="panel-new-superadmin-password" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                </label>
+                <label>
+                    <span class="settings-label">Confirm new superadmin password</span>
+                    <input id="panel-new-superadmin-password-confirm" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Confirm new superadmin password">
+                </label>
+            </div>
+            <div class="settings-actions">
+                <button id="panel-save-security" class="btn-backup" type="button" hidden>Save</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel page-pane page-pane--settings" aria-labelledby="panel-paths-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h2 id="panel-paths-title" class="pane-title">Paths</h2>
+            </div>
+        </div>
+        <div class="pane-content">
+            <div class="settings-grid settings-grid--two-col">
+                <label>
+                    <span class="settings-label">Minecraft world directory</span>
+                    <input id="panel-minecraft-root" class="ui-text-input" type="text" value="{{ current_settings.minecraft_root_dir or '' }}" required>
+                </label>
+                <label>
+                    <span class="settings-label">Backup directory</span>
+                    <input id="panel-backup-dir" class="ui-text-input" type="text" value="{{ current_settings.backup_dir or '' }}" required>
+                </label>
+            </div>
+            <label class="settings-check">
+                <input id="panel-create-backup-dir" type="checkbox" {% if current_settings.create_backup_dir %}checked{% endif %}>
+                Create backup directory if missing
+            </label>
+            <div class="settings-actions">
+                <button id="panel-save-paths" class="btn-backup" type="button" hidden>Save</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel page-pane page-pane--settings" aria-labelledby="panel-timezone-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h2 id="panel-timezone-title" class="pane-title">Timezone</h2>
+            </div>
+        </div>
+        <div class="pane-content">
+            <div class="settings-grid settings-grid--two-col">
+                <label class="settings-select">
+                    <span class="settings-label">Display timezone</span>
+                    <select id="panel-display-tz">
+                        {% for tz in timezone_options %}
+                        <option value="{{ tz.value }}" {% if tz.value == current_settings.display_tz %}selected{% endif %}>{{ tz.label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <div class="settings-actions">
+                <button id="panel-save-timezone" class="btn-backup" type="button" hidden>Save</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel page-pane page-pane--settings" aria-labelledby="panel-device-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h2 id="panel-device-title" class="pane-title">Device Name ↔ IP Mapping</h2>
+            </div>
+        </div>
+        <div class="pane-content">
+            <p class="settings-hint">Device names are used client-side to replace IP addresses in logs and activity views.</p>
+            <div class="settings-section-separator" role="separator" aria-label="Device mapping list section">
+                <span class="settings-section-separator-text">Mappings</span>
+            </div>
+            <div class="device-map-table-wrap">
+                <table class="device-map-table">
+                    <thead>
+                        <tr>
+                            <th>Device name</th>
+                            <th>IP address</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="panel-device-map-body"></tbody>
+                </table>
+                <button id="panel-add-device-row" class="btn-backup" type="button">Add Row</button>
+            </div>
+            <div class="settings-actions">
+                <button id="panel-save-device-map" class="btn-backup" type="button" hidden>Save</button>
+            </div>
+
+            <div class="settings-section-separator" role="separator" aria-label="Device mapping CSV import section">
+                <span class="settings-section-separator-text">CSV Import</span>
+            </div>
+            <div class="device-map-upload">
+                <div class="settings-grid">
+                    <label id="panel-device-csv-dropzone" class="settings-dropzone">
+                        <span class="settings-dropzone-text">Choose file or drag and drop to upload.</span>
+                        <input id="panel-device-csv" class="settings-dropzone-input" type="file" accept=".csv">
+                    </label>
+                    <label class="settings-select">
+                        <span class="settings-label">Import mode</span>
+                        <select id="panel-device-import-mode">
+                            <option value="append">Append to existing</option>
+                            <option value="overwrite">Overwrite existing</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="settings-actions">
+                    <button id="panel-upload-device-csv" class="btn-backup" type="button">Upload CSV</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel page-pane page-pane--settings" aria-labelledby="panel-app-title">
+        <div class="pane-head">
+            <div class="pane-head-row">
+                <h2 id="panel-app-title" class="pane-title">App Control</h2>
+            </div>
+        </div>
+        <div class="pane-content">
+            <p class="settings-hint">Restart the Flask app to reload configuration or recover from issues.</p>
+            <div class="settings-actions">
+                <button id="panel-refresh-states" class="btn-start" type="button">Refresh All States</button>
+                <button id="panel-reboot-app" class="btn-stop" type="button">Reboot Control Panel</button>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script type="application/json" id="panel-settings-config">
+{{ {
+    "csrfToken": csrf_token,
+    "deviceMap": device_map,
+    "passwordRequired": password_required,
+} | tojson }}
+</script>
+</main>

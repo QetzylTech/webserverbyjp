@@ -14,6 +14,7 @@ def build_state(app_config, *, app_dir, display_tz):
     backup_script = app_dir / "scripts" / "backup.sh"
     backup_dir = app_config.backup_dir
     minecraft_root_dir = app_config.minecraft_root_dir
+    require_sudo_password = bool(getattr(app_config, "require_password", True))
     world_dir = minecraft_root_dir / "config"
     crash_reports_dir = minecraft_root_dir / "crash-reports"
     minecraft_logs_dir = minecraft_root_dir / "logs"
@@ -215,6 +216,7 @@ def build_state(app_config, *, app_dir, display_tz):
         "FAVICON_URL": FAVICON_URL,
         "SERVICE": app_config.service,
         "ADMIN_PASSWORD_HASH": app_config.admin_password_hash,
+        "REQUIRE_SUDO_PASSWORD": require_sudo_password,
         "BACKUP_SCRIPT": backup_script,
         "BACKUP_DIR": backup_dir,
         "MINECRAFT_ROOT_DIR": minecraft_root_dir,

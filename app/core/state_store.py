@@ -17,6 +17,7 @@ _EXPORT_GROUPS = (
         (
             "upsert_user_record",
             "load_fallmap",
+            "replace_fallmap",
             "load_cleanup_config",
             "save_cleanup_config",
             "load_cleanup_history_runs",

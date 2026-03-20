@@ -35,7 +35,14 @@ def get_service_status_intent(ctx):
         return ctx.service_status_intent
 
 
-def validate_sudo_password(ctx, sudo_password):
+def _password_required(ctx):
+    try:
+        return bool(getattr(ctx, "REQUIRE_SUDO_PASSWORD", True))
+    except Exception:
+        return True
+
+
+def _validate_password(ctx, sudo_password):
     client_ip = ""
     getter = getattr(ctx, "_get_client_ip", None)
     if callable(getter):
@@ -96,6 +103,16 @@ def validate_sudo_password(ctx, sudo_password):
         except Exception:
             pass
     return False
+
+
+def validate_sudo_password(ctx, sudo_password):
+    if not _password_required(ctx):
+        return True
+    return _validate_password(ctx, sudo_password)
+
+
+def validate_admin_password(ctx, sudo_password):
+    return _validate_password(ctx, sudo_password)
 
 
 def read_session_start_time(ctx):

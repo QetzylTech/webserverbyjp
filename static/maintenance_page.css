@@ -143,6 +143,26 @@ body {
   flex: 0 0 auto;
 }
 
+.modal-card label.maintenance-check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  font-weight: 600;
+  width: 100%;
+  text-align: left;
+}
+
+.modal-card label.maintenance-check[hidden] {
+  display: none !important;
+}
+
+.modal-card label.maintenance-check input[type="checkbox"] {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
 .page-panes--maintenance .page-pane--list {
   grid-area: left;
   display: flex;
@@ -509,42 +529,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.55);
-  z-index: 1400;
-}
-
-.modal-overlay[aria-hidden="true"] {
-  display: none;
-}
-
-.modal-card {
-  width: min(640px, calc(100vw - 32px));
-  max-height: calc(100vh - 40px);
-  overflow: auto;
-  border-radius: 12px;
-  background: #fff;
-  color: #0f172a;
-  padding: 16px;
-}
-
-.modal-title {
-  margin: 0 0 8px;
-}
-
-.modal-text {
-  margin: 0 0 8px;
-}
-
-.modal-subtitle {
-  margin: 10px 0 6px;
-  font-size: 0.88rem;
-}
+  .modal-subtitle {
+    margin: 10px 0 6px;
+    font-size: 0.88rem;
+  }
 
 .modal-list {
   margin: 0;
@@ -552,25 +540,10 @@ body {
   font-size: 0.86rem;
 }
 
-.modal-list li {
-  margin: 2px 0;
-  line-height: 1.35;
-}
-
-.modal-details {
-  margin: 0;
-  white-space: pre-wrap;
-  font-size: 0.84rem;
-  background: var(--theme-control-surface);
-  border-radius: 10px;
-  padding: 10px;
-}
-
-.modal-actions {
-  margin-top: 12px;
-  display: flex;
-  justify-content: flex-end;
-}
+  .modal-list li {
+    margin: 2px 0;
+    line-height: 1.35;
+  }
 
 @media (max-width: 1100px) {
   body[data-page="maintenance"] {
@@ -679,17 +652,8 @@ html.theme-dark #rules-card-list .rule-inline-sentence select.rule-inline-contro
   border: 1px solid var(--border) !important;
 }
 
-html.theme-dark .modal-card {
-  background: var(--surface);
-  color: var(--text);
-}
-
 html.theme-dark .modal-list {
   color: #c9d1d9;
-}
-
-html.theme-dark .modal-details {
-  background: var(--pane-content-surface);
 }
 
 

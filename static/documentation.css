@@ -105,7 +105,7 @@ body {
   margin: 0;
   background: var(--surface);
   border-radius: var(--radius);
-  box-shadow: none;
+  box-shadow: var(--pane-shadow);
   min-height: calc(100dvh - 24px);
   display: flex;
   flex-direction: column;
@@ -700,7 +700,7 @@ article {
   background: var(--surface);
   border: none;
   border-radius: var(--radius);
-  box-shadow: none;
+  box-shadow: var(--pane-shadow);
   padding: 0;
   z-index: 1050;
   transform: translateX(calc(100% + 12px));

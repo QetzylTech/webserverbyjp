@@ -65,6 +65,7 @@ def _setup_values(submitted, existing_defaults, *, is_paths_only, password):
             else str(defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "")).strip()
         ),
         "MCWEB_SECRET_KEY": str(defaults.get("MCWEB_SECRET_KEY", "")).strip(),
+        "MCWEB_REQUIRE_PASSWORD": str(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")).strip(),
         "SERVICE": submitted["SERVICE"],
         "DISPLAY_TZ": submitted["DISPLAY_TZ"],
         "MINECRAFT_ROOT_DIR": submitted["MINECRAFT_ROOT_DIR"],

@@ -66,7 +66,7 @@
         background: rgba(30, 64, 175, 0.4);
     }
     .panel {
-        clip-path: inset(0 round 12px);
+        border-radius: 12px;
         height: 100%;
         min-height: 0;
         margin: 0;
@@ -203,6 +203,9 @@
         background: rgba(30, 64, 175, 0.08);
         box-shadow: inset 3px 0 0 #1e40af;
     }
+    .list li.file-row-first-visible {
+        border-top: 0;
+    }
     .list li.file-row-active-view {
         background: rgba(22, 101, 52, 0.12);
         box-shadow: inset 3px 0 0 #166534;
@@ -266,58 +269,6 @@
     }
     .download-error.open {
         display: block;
-    }
-    .modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.48);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 1600;
-        padding: 16px;
-    }
-    .modal-overlay.open {
-        display: flex;
-    }
-    .modal-card {
-        width: min(420px, 92vw);
-        background: var(--surface);
-        border-radius: 12px;
-        border: 0;
-        padding: 16px;
-        box-shadow: 0 18px 48px rgba(2, 6, 23, 0.28);
-    }
-    .modal-title {
-        margin: 0 0 8px;
-        font-size: 1.08rem;
-    }
-    .modal-text {
-        margin: 0 0 12px;
-        color: var(--muted);
-        font-size: 0.95rem;
-    }
-    .modal-image {
-        display: block;
-        width: 100%;
-        max-height: 180px;
-        object-fit: cover;
-        border-radius: 10px;
-        border: 0;
-        margin: 8px 0 12px;
-    }
-    .modal-input {
-        width: 100%;
-        padding: 10px;
-        border: 0;
-        border-radius: 10px;
-        font: inherit;
-        margin-bottom: 12px;
-    }
-    .modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
     }
     .meta {
         display: block;
@@ -497,8 +448,7 @@
         color: var(--text);
     }
 
-    html.theme-dark .panel,
-    html.theme-dark .modal-card {
+    html.theme-dark .panel {
         background: var(--surface);
         color: var(--text);
     }
@@ -506,8 +456,7 @@
     html.theme-dark .meta,
     html.theme-dark .empty,
     html.theme-dark .sort-label,
-    html.theme-dark .filter-label,
-    html.theme-dark .modal-text {
+    html.theme-dark .filter-label {
         color: var(--muted);
     }
     html.theme-dark .filter-check {
@@ -570,14 +519,6 @@
         color: #ffb4b4;
     }
 
-    html.theme-dark .modal-input {
-        background: var(--theme-control-surface);
-        border-color: var(--border);
-        color: var(--text);
-    }
-    html.theme-dark .modal-image {
-        border-color: var(--border);
-    }
 
     @media (max-width: 1100px) {
         .layout {

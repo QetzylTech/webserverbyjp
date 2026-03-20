@@ -13,6 +13,14 @@
 
         function requestPassword(actionKey, promptText, handler) {
             actionPendingHandler = typeof handler === "function" ? handler : null;
+            if (state && state.passwordRequired === false) {
+                const nextHandler = actionPendingHandler;
+                actionPendingHandler = null;
+                if (typeof nextHandler === "function") {
+                    nextHandler("");
+                }
+                return;
+            }
             if (modalsController && typeof modalsController.openPasswordModal === "function") {
                 modalsController.openPasswordModal(actionKey, promptText);
             }
@@ -161,6 +169,12 @@
         }
 
         async function handleAckNonNormal() {
+            if (modalsController && typeof modalsController.openAckSuggestModal === "function") {
+                modalsController.openAckSuggestModal();
+            }
+        }
+
+        async function handleAckSuggestAcknowledge() {
             try {
                 await withActionLock(async () => {
                     const payload = await actions.apiPost?.("/maintenance/api/ack-non-normal", {
@@ -169,8 +183,8 @@
                     if (payload && payload.non_normal) state.nonNormal = payload.non_normal;
                     actions.renderHistory?.();
                 });
-                if (modalsController && typeof modalsController.openAckSuggestModal === "function") {
-                    modalsController.openAckSuggestModal();
+                if (modalsController && typeof modalsController.closeAckSuggestModal === "function") {
+                    modalsController.closeAckSuggestModal();
                 }
             } catch (err) {
                 showErrorFromPayload(err, "Failed to acknowledge missed runs.");
@@ -259,6 +273,7 @@
             handleRunRulesClick,
             handleRunManualClick,
             handleAckNonNormal,
+            handleAckSuggestAcknowledge,
             handleFileListSelectionChange,
             handleDryRunConfirmClick,
             handleAckSuggestRun,

@@ -11,6 +11,7 @@ from app.routes.dashboard_file_routes import register_file_routes
 from app.routes.dashboard_metrics_routes import register_metrics_routes
 from app.routes.dashboard_notifications_routes import register_notification_routes
 from app.routes.dashboard_maintenance_api_routes import register_maintenance_routes
+from app.routes.panel_settings_routes import register_panel_settings_routes
 from app.commands.maintenance_commands import run_cleanup_event_if_enabled
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 from app.services import maintenance_state_store as maintenance_state_store_service
@@ -57,9 +58,7 @@ def register_routes(app, state):
         opened_by_self = bool(current_client_id and opener_client_id and current_client_id == opener_client_id)
         if not opened_by_self:
             opened_by_self = bool(current_ip and opener_ip and current_ip == opener_ip)
-        device_map = state["get_device_name_map"]()
-        opener_name = str(device_map.get(opener_ip, "") or "").strip()
-        opener_identity = opener_name or opener_ip or "unknown"
+        opener_identity = opener_ip or "unknown"
         observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
         home_attention = dashboard_queries_service.get_home_attention_level(observed)
         cleanup_missed_runs = 0
@@ -221,6 +220,7 @@ def register_routes(app, state):
     register_metrics_routes(app, state, get_nav_alert_state_from_request=_get_nav_alert_state_from_request)
     register_notification_routes(app, state)
     register_maintenance_routes(app, state)
+    register_panel_settings_routes(app, state)
     register_control_routes(
         app,
         state,

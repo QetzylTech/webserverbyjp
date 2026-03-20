@@ -1,6 +1,12 @@
 # Architecture Contract
 
-These rules are non-negotiable. CI is the enforcement source of truth.
+`doc/project requirements.txt` is the client-behavior source of truth. This file defines the implementation guardrails that support those requirements, and CI enforces this contract.
+
+## Document Contract
+
+- `doc/project requirements.txt` defines what the product must do.
+- `ARCHITECTURE.md` defines how the codebase should be structured while implementing those requirements.
+- PR review and CI should check both documents together; neither should silently drift from the other.
 
 ## Layer Dependency Rules
 
@@ -22,7 +28,7 @@ Disallowed:
 ## Frontend Runtime Rules
 
 - Shared shell behavior (theme, nav shell wiring, persistent client identity, shared metrics SSE ownership) must live in shared shell/bootstrap modules, not duplicated per page.
-- Page scripts should own page-specific mount/unmount logic only.
+- Page scripts should own page-specific mount/unmount and presentation logic only; shared metrics, logs, connection ownership, and multi-tab coordination remain shell-owned.
 - Live dissemination should prefer one shared client runtime owner per page shell, not duplicated SSE or polling owners for the same topic.
 - Shell-first hydration is the current contract: full page loads render `app_shell.html`, shell navigation fetches fragment responses, and page modules mount/unmount inside the persistent shell.
 - Theme/nav boot, metrics SSE ownership, and other cross-page runtime concerns stay in the shell; page modules must not duplicate them.
@@ -60,4 +66,5 @@ Disallowed:
 3. Architecture tests.
 4. Unit tests.
 5. Integration/smoke tests.
-6. Performance smoke tests.
+6. Acceptance tests.
+7. Performance smoke tests.

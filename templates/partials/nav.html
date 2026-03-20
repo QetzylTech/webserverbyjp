@@ -12,11 +12,11 @@
     <a id="nav-maintenance-link" class="nav-link {% if current_page == 'maintenance' %}active{% endif %}{% if cleanup_has_missed and current_page != 'maintenance' %} nav-attention{% endif %}" href="/maintenance">Cleanup</a>
     {% endif %}
     <hr class="nav-separator">
-    <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
-
-    <hr class="nav-separator">
+    <a id="nav-panel-settings-link" class="nav-link {% if current_page == 'panel_settings' %}active{% endif %}" href="/panel-settings" data-requires-password="1">Panel Settings</a>
     <a class="nav-link {% if current_page == 'readme' %}active{% endif %}" href="/readme">Instructions</a>
+    <hr class="nav-separator">
+    <a class="nav-link {% if current_page == 'minecraft_logs' %}active{% endif %}" href="/minecraft-logs">Log Files</a>
+    <hr class="nav-separator">
     <a class="nav-link" href="https://github.com/QetzylTech/Marites" target="_blank" rel="noopener noreferrer">Git Repo (Mod)</a>
     <a class="nav-link" href="https://github.com/QetzylTech/webserverbyjp" target="_blank" rel="noopener noreferrer">Git Repo (mcweb)</a>
-
 </nav>

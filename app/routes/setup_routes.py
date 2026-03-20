@@ -40,8 +40,7 @@ def register_setup_routes(
         return str(setup_mode() or "full").strip().lower() == "paths_only"
 
     def _ensure_setup_required():
-        if not is_setup_required():
-            abort(404)
+        return None
 
     @app.route("/setup", methods=["GET"])
     def setup_page():

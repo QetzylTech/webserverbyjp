@@ -58,6 +58,10 @@
             const isDryRun = !!dom.ackSuggestDryRunInput?.checked;
             const hasDestructiveConfirm = !!dom.ackSuggestDestructiveConfirmInput?.checked;
             if (dom.ackSuggestDestructiveConfirmWrap) dom.ackSuggestDestructiveConfirmWrap.hidden = isDryRun;
+            if (dom.ackSuggestWarning) dom.ackSuggestWarning.hidden = isDryRun;
+            if (isDryRun && dom.ackSuggestDestructiveConfirmInput) {
+                dom.ackSuggestDestructiveConfirmInput.checked = false;
+            }
             if (dom.ackSuggestRunBtn) {
                 dom.ackSuggestRunBtn.disabled = !isDryRun && !hasDestructiveConfirm;
                 dom.ackSuggestRunBtn.classList.toggle("btn-start", isDryRun);

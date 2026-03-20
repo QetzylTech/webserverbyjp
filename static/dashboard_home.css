@@ -47,7 +47,6 @@
         min-height: 0;
         height: auto;
         overflow: hidden;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
     }
 
     .pane-head {
@@ -185,7 +184,6 @@
         border-radius: 14px;
         background: var(--surface);
         overflow: hidden;
-        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
         display: flex;
         flex-direction: column;
         min-height: 0;
@@ -304,81 +302,11 @@
     .log-level-error { color: #b91c1c; }
     .log-muted { color: var(--muted); }
 
-    .modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.55);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-        padding: 16px;
-    }
-
-    .modal-overlay.open {
-        display: flex;
-    }
-
-    .modal-card {
-        width: min(420px, 100%);
-        background: var(--surface);
-        border: 0;
-        border-radius: 12px;
-        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.28);
-        padding: 14px;
-    }
     .modal-card-wide {
         width: min(960px, 100%);
     }
-
-    .modal-title {
-        margin: 0 0 8px 0;
-        font-size: 1rem;
-        color: var(--text);
-    }
-
-    .modal-text {
-        margin: 0 0 12px 0;
-        font-size: 0.9rem;
-        color: var(--theme-text-soft);
-    }
-
-    .modal-image {
-        width: 100%;
-        max-height: 220px;
-        object-fit: cover;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        margin: 0 0 12px 0;
-    }
-
-    .modal-input {
-        width: 100%;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 0.92rem;
-        margin-bottom: 12px;
-    }
-
-    .modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-    }
     .modal-more-btn {
         margin: 2px 0 10px;
-    }
-    .modal-details {
-        margin: 0 0 12px;
-        padding: 10px;
-        border-radius: 10px;
-        background: var(--pane-content-surface);
-        color: var(--text);
-        font-size: 0.82rem;
-        line-height: 1.4;
-        white-space: pre-wrap;
-        word-break: break-word;
     }
     html.theme-dark body {
         background: var(--pane-content-surface);
@@ -386,16 +314,12 @@
     }
 
     html.theme-dark .page-panes--home .page-pane--header,
-    html.theme-dark .panel,
-    html.theme-dark .modal-card {
+    html.theme-dark .panel {
         background: var(--surface);
         color: var(--text);
     }
 
     html.theme-dark .group-title,
-    html.theme-dark .modal-text {
-        color: var(--muted);
-    }
 
     html.theme-dark .stats-group {
         background: var(--pane-content-surface);
@@ -409,9 +333,6 @@
     html.theme-dark .status-row strong,
     html.theme-dark .page-panes--home .page-pane--header .pane-title,
     html.theme-dark .page-panes--home .page-pane--live .pane-title,
-    html.theme-dark .modal-title {
-        color: var(--text);
-    }
 
     html.theme-dark .page-panes--home .page-pane--live > .pane-head {
         background: var(--surface);
@@ -463,19 +384,7 @@
     html.theme-dark .log-level-error { color: #f87171; }
     html.theme-dark .log-muted { color: #94a3b8; }
 
-    html.theme-dark .modal-input {
-        background: var(--theme-control-surface);
-        border-color: var(--border);
-        color: var(--text);
-    }
 
-    html.theme-dark .modal-image {
-        border-color: var(--border);
-    }
-    html.theme-dark .modal-details {
-        background: var(--theme-control-surface);
-        color: var(--text);
-    }
 
     @media (max-width: 1300px) and (min-width: 901px) {
         .stats-groups {

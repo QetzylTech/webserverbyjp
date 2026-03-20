@@ -78,6 +78,6 @@ def configure_setup(
                 return None
             return redirect("/setup")
         if path == "/setup" or path.startswith("/setup"):
-            return abort(404)
+            return None
 
     return _setup_required, _setup_mode
