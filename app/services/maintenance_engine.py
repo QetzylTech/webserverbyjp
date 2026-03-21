@@ -111,4 +111,3 @@ def cleanup_lock_held() -> bool:
         return bool(_cleanup_run_lock.locked())
     except Exception:
         return False
-

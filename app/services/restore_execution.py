@@ -1,4 +1,4 @@
-﻿﻿"""Restore operations and progress orchestration for control plane."""
+﻿"""Restore operations and progress orchestration for control plane."""
 
 from datetime import datetime
 from pathlib import Path
