@@ -88,11 +88,15 @@ def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
 
     def _worker() -> None:
         result: dict[str, object] | None = None
+
+        def _progress(message: str) -> None:
+            append_restore_event(ctx, message)
+
         try:
             result = restore_world_backup(
                 ctx,
-                backup_filename,
-                progress_callback=lambda message: append_restore_event(ctx, message),
+                str(backup_filename or ""),
+                progress_callback=_progress,
             )
         except Exception as exc:
             log_exception = getattr(ctx, "log_mcweb_exception", None)
@@ -125,4 +129,3 @@ def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
 
 
 start_restore_worker = start_restore_job
-

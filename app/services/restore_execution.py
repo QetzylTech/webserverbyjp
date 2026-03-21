@@ -1,4 +1,4 @@
-﻿"""Restore operations and progress orchestration for control plane."""
+﻿﻿"""Restore operations and progress orchestration for control plane."""
 
 from datetime import datetime
 from pathlib import Path
@@ -213,7 +213,7 @@ def _prepare_restore_source(
     with zipfile.ZipFile(source_entry, "r") as zf:
         _safe_extract_zip(zf, extract_root, progress)
 
-    restore_source = _restore_source_from_extraction(ctx, extract_root)
+    restore_source = _restore_source_from_extraction(ctx, Path(extract_root))
     if restore_source is None:
         return extract_root, None, _restore_failure(
             ctx,
