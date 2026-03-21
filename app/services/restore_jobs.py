@@ -2,15 +2,13 @@
 
 from pathlib import Path
 import uuid
-from typing import Any, cast
+from typing import Any
 
 from app.core import state_store as state_store_service
 from app.services.restore_execution import SNAPSHOT_TOKEN_PREFIX, restore_world_backup
 from app.services.restore_log_utils import build_restore_log_filename
 from app.services.restore_status import _ensure_restore_status_state, append_restore_event
 from app.services.worker_scheduler import start_detached
-
-_restore_world_backup = cast(Any, restore_world_backup)
 
 
 def _resolve_restore_log_dir(ctx: Any) -> Path:
@@ -91,7 +89,7 @@ def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
     def _worker() -> None:
         result: dict[str, object] | None = None
         try:
-            result = _restore_world_backup(
+            result = restore_world_backup(
                 ctx,
                 backup_filename,
                 progress_callback=lambda message: append_restore_event(ctx, message),

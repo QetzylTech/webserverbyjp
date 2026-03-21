@@ -61,6 +61,12 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
         if not opened_by_self:
             opened_by_self = bool(current_ip and opener_ip and current_ip == opener_ip)
         opener_identity = opener_ip or "unknown"
+        try:
+            device_map = state["get_device_name_map"]()
+        except Exception:
+            device_map = {}
+        if isinstance(device_map, dict):
+            opener_identity = str(device_map.get(opener_ip, opener_identity) or opener_identity)
         observed = dashboard_queries_service.get_observed_state_model(state).get("observed", {})
         home_attention = dashboard_queries_service.get_home_attention_level(observed)
         cleanup_missed_runs = 0

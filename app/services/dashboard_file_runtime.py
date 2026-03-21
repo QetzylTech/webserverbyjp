@@ -104,7 +104,14 @@ def _item_mtime_sort_key(item: FilePageItem) -> SortableKey:
 
 def _build_restore_log_index(ctx: Any) -> dict[str, FilePageItem]:
     """Return latest restore log file per sanitized backup name."""
-    log_dir = Path(getattr(ctx, "MCWEB_LOG_DIR", "") or Path(ctx.MCWEB_LOG_FILE).parent)
+    log_dir_value = getattr(ctx, "MCWEB_LOG_DIR", None)
+    if log_dir_value:
+        log_dir = Path(log_dir_value)
+    else:
+        log_file_value = getattr(ctx, "MCWEB_LOG_FILE", None)
+        if not log_file_value:
+            return {}
+        log_dir = Path(log_file_value).parent
     index: dict[str, FilePageItem] = {}
     try:
         candidates = list(log_dir.glob("restore_*.log"))

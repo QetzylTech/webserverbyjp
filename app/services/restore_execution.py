@@ -31,23 +31,7 @@ from app.services.restore_workflow_helpers import (
 
 SNAPSHOT_TOKEN_PREFIX = "snapshot::"
 _state_store_service = cast(Any, state_store_service)
-_archive_old_world_dir_fn = cast(Any, _archive_old_world_dir)
-_compose_restore_world_name_fn = cast(Any, _compose_restore_world_name)
-_derive_restore_base_name_fn = cast(Any, _derive_restore_base_name)
-_detect_server_properties_path_fn = cast(Any, _detect_server_properties_path)
-_new_restore_code_fn = cast(Any, _new_restore_code)
-_parse_server_properties_kv_fn = cast(Any, _parse_server_properties_kv)
-_record_restore_history_fn = cast(Any, _record_restore_history)
-_restore_failed_fn = cast(Any, _restore_failed)
-_restore_source_from_extraction_fn = cast(Any, _restore_source_from_extraction)
-_sanitize_backup_name_component_fn = cast(Any, _sanitize_backup_name_component)
-_update_property_text_fn = cast(Any, _update_property_text)
-_clear_session_start_time_fn = cast(Any, clear_session_start_time)
-_is_backup_running_fn = cast(Any, is_backup_running)
-_reset_backup_schedule_state_fn = cast(Any, reset_backup_schedule_state)
-_start_service_fn = cast(Any, start_service)
-_stop_service_runtime_fn = cast(Any, stop_service_runtime)
-_write_session_start_time_fn = cast(Any, write_session_start_time)
+stop_service_systemd = stop_service_runtime
 
 
 def _safe_extract_zip(
@@ -148,11 +132,11 @@ def _emit_progress(progress_callback: Callable[[str], None] | None, message: str
 def _restart_service_after_failure(ctx: Any, restore_state: SimpleNamespace) -> bool:
     if not restore_state.was_active or not restore_state.service_stopped_for_restore:
         return True
-    restart_result = _start_service_fn(ctx)
+    restart_result = start_service(ctx)
     ctx.invalidate_status_cache()
     if restart_result.returncode != 0:
         return False
-    _write_session_start_time_fn(ctx)
+    write_session_start_time(ctx)
     restore_state.service_stopped_for_restore = False
     return True
 
@@ -166,7 +150,7 @@ def _restore_failure(
 ) -> dict[str, Any]:
     if not _restart_service_after_failure(ctx, restore_state):
         message = f"{message} Service restart after failed restore also failed."
-    return cast(dict[str, Any], _restore_failed_fn(message, error=error))
+    return cast(dict[str, Any], _restore_failed(message, error=error))
 
 
 def _resolve_selected_source(ctx: Any, selected_name: str) -> tuple[str | None, Path | None, str, str]:
@@ -200,7 +184,7 @@ def _load_restore_context(ctx: Any) -> tuple[Path | None, Path | None, str | Non
     if not world_dir.exists() or not world_dir.is_dir():
         return None, None, None, None, f"WORLD_DIR does not exist: {world_dir}"
 
-    props_path = _detect_server_properties_path_fn(ctx)
+    props_path = _detect_server_properties_path(ctx)
     if props_path is None:
         return None, None, None, None, "server.properties not found; cannot switch level-name."
     try:
@@ -208,7 +192,7 @@ def _load_restore_context(ctx: Any) -> tuple[Path | None, Path | None, str | Non
     except OSError:
         return None, None, None, None, "Failed to read server.properties."
 
-    props_kv = _parse_server_properties_kv_fn(props_text)
+    props_kv = _parse_server_properties_kv(props_text)
     old_level_name = (props_kv.get("level-name") or "").strip() or world_dir.name
     return world_dir, props_path, props_text, old_level_name, ""
 
@@ -229,7 +213,7 @@ def _prepare_restore_source(
     with zipfile.ZipFile(source_entry, "r") as zf:
         _safe_extract_zip(zf, extract_root, progress)
 
-    restore_source = _restore_source_from_extraction_fn(ctx, extract_root)
+    restore_source = _restore_source_from_extraction(ctx, extract_root)
     if restore_source is None:
         return extract_root, None, _restore_failure(
             ctx,
@@ -246,12 +230,12 @@ def _reserve_restore_names(
     restore_source_name: str,
     restore_source: Path | None,
 ) -> tuple[str, str, str, str]:
-    stored_id = _new_restore_code_fn(ctx)
-    active_id = _new_restore_code_fn(ctx)
+    stored_id = _new_restore_code(ctx)
+    active_id = _new_restore_code(ctx)
     while active_id == stored_id:
-        active_id = _new_restore_code_fn(ctx)
-    stored_world_name = _compose_restore_world_name_fn(old_level_name, "Gx", stored_id)
-    restore_base_name = _derive_restore_base_name_fn(restore_source_name, restore_source)
+        active_id = _new_restore_code(ctx)
+    stored_world_name = _compose_restore_world_name(old_level_name, "Gx", stored_id)
+    restore_base_name = _derive_restore_base_name(restore_source_name, restore_source)
     return stored_id, active_id, stored_world_name, restore_base_name
 
 
@@ -264,7 +248,7 @@ def _create_snapshot_for_restore(
     fail: Callable[..., dict[str, Any]],
 ) -> tuple[Path | None, dict[str, Any] | None]:
     stamp = datetime.now(tz=ctx.DISPLAY_TZ).strftime("%Y-%m-%d_%H-%M-%S")
-    snapshot_base = _sanitize_backup_name_component_fn(stored_world_name)
+    snapshot_base = _sanitize_backup_name_component(stored_world_name)
     pre_restore_snapshot = ctx.BACKUP_DIR / f"{snapshot_base}_{stamp}_prerestore.zip"
     progress("Creating pre-restore snapshot.")
     snapshot_ok, snapshot_err = _create_pre_restore_snapshot(world_dir, pre_restore_snapshot, progress)
@@ -287,11 +271,11 @@ def _next_restore_world_dir(
     world_parent: Path,
 ) -> tuple[str, Path]:
     while True:
-        new_world_name = _compose_restore_world_name_fn(restore_base_name, "Rx", active_id)
+        new_world_name = _compose_restore_world_name(restore_base_name, "Rx", active_id)
         new_world_dir = world_parent / new_world_name
         if not new_world_dir.exists():
             return active_id, new_world_dir
-        active_id = _new_restore_code_fn(ctx)
+        active_id = _new_restore_code(ctx)
         if active_id == stored_id:
             continue
 
@@ -323,7 +307,7 @@ def _switch_server_properties(
 ) -> dict[str, Any] | None:
     progress(f"Updating server.properties: level-name {old_level_name} -> {new_world_dir.name}")
     try:
-        next_props = _update_property_text_fn(props_text, "level-name", new_world_dir.name)
+        next_props = _update_property_text(props_text, "level-name", new_world_dir.name)
         props_path.write_text(next_props, encoding="utf-8")
     except OSError:
         try:
@@ -375,17 +359,17 @@ def _restart_after_success(
     progress: Callable[[str], None],
     fail: Callable[..., dict[str, Any]],
 ) -> tuple[bool, dict[str, Any] | None]:
-    _clear_session_start_time_fn(ctx)
-    _reset_backup_schedule_state_fn(ctx)
+    clear_session_start_time(ctx)
+    reset_backup_schedule_state(ctx)
     if not restore_state.was_active:
         return False, None
 
     progress("Restarting Minecraft service.")
-    restart_result = _start_service_fn(ctx)
+    restart_result = start_service(ctx)
     ctx.invalidate_status_cache()
     if restart_result.returncode != 0:
         return False, fail("Restore applied, but failed to restart the Minecraft service.")
-    _write_session_start_time_fn(ctx)
+    write_session_start_time(ctx)
     restore_state.service_stopped_for_restore = False
     progress("Minecraft service restarted.")
     return True, None
@@ -422,7 +406,7 @@ def restore_world_backup(
             return fail(error_message)
         assert safe_name is not None
         assert source_entry is not None
-        if _is_backup_running_fn(ctx):
+        if is_backup_running(ctx):
             return fail("Cannot restore while backup is running.")
 
         world_dir, props_path, props_text, old_level_name, error_message = _load_restore_context(ctx)
@@ -434,7 +418,7 @@ def restore_world_backup(
         assert old_level_name is not None
 
         restore_state.was_active = ctx.get_status() == "active"
-        if restore_state.was_active and not _stop_service_runtime_fn(ctx):
+        if restore_state.was_active and not stop_service_systemd(ctx):
             return fail("Could not stop service for restore.")
         if restore_state.was_active:
             restore_state.service_stopped_for_restore = True
@@ -499,7 +483,7 @@ def restore_world_backup(
         if failure is not None:
             return failure
 
-        if not _record_restore_history_fn(ctx, safe_name, world_dir, archived_old_world_dir, new_world_dir):
+        if not _record_restore_history(ctx, safe_name, world_dir, archived_old_world_dir, new_world_dir):
             ctx.log_mcweb_action(
                 "restore-backup",
                 command=safe_name,
@@ -547,18 +531,18 @@ def restore_world_backup(
     except zipfile.BadZipFile:
         if not restore_state.restore_succeeded:
             _restart_service_after_failure(ctx, restore_state)
-        return cast(dict[str, Any], _restore_failed_fn("Backup zip is invalid or corrupted."))
+        return cast(dict[str, Any], _restore_failed("Backup zip is invalid or corrupted."))
     except ValueError:
         if not restore_state.restore_succeeded:
             _restart_service_after_failure(ctx, restore_state)
-        return cast(dict[str, Any], _restore_failed_fn("Backup zip contains unsafe paths."))
+        return cast(dict[str, Any], _restore_failed("Backup zip contains unsafe paths."))
     except Exception as exc:
         log_exception = getattr(ctx, "log_mcweb_exception", None)
         if log_exception is not None:
             log_exception("restore_world_backup", exc)
         if not restore_state.restore_succeeded:
             _restart_service_after_failure(ctx, restore_state)
-        return cast(dict[str, Any], _restore_failed_fn("Restore failed due to an internal error."))
+        return cast(dict[str, Any], _restore_failed("Restore failed due to an internal error."))
     finally:
         if extract_root is not None:
             progress(f"Cleaning temporary extraction directory: {extract_root}")

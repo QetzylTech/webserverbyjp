@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 from types import SimpleNamespace
-from typing import Any, Callable, Iterator, cast
+from typing import Any, Callable, Iterator
 
 from app.core import state_store as state_store_service
 from app.ports import ports
@@ -13,7 +13,6 @@ from app.services.restore_workflow_helpers import is_backup_running
 _calls = SimpleNamespace(
     run_backup_script=ports.backup.run_backup_script,
 )
-_is_backup_running = cast(Any, is_backup_running)
 
 
 def _backup_snapshot_root(ctx: Any) -> Path:
@@ -62,7 +61,7 @@ def run_backup_script(
     if not backup_state.run_lock.acquire(blocking=False):
         return bool(count_skip_as_success)
     try:
-        if _is_backup_running(ctx, include_run_lock=False):
+        if is_backup_running(ctx, include_run_lock=False):
             with backup_state.lock:
                 backup_state.last_error = ""
             return bool(count_skip_as_success)
@@ -182,7 +181,7 @@ def get_backup_schedule_times(ctx: Any, service_status: object = None) -> dict[s
 
 def get_backup_status(ctx: Any) -> tuple[str, str]:
     """Return backup runtime status text and CSS class."""
-    if _is_backup_running(ctx):
+    if is_backup_running(ctx):
         return "Running", "stat-green"
     try:
         rows = state_store_service.list_operations_by_status(

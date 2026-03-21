@@ -301,6 +301,8 @@ def stop_operation(ctx: Any, *, idempotency_key: str, client_key: str, sudo_pass
         )
         result = state["graceful_stop_minecraft"]()
         service_stop_ok = bool((result or {}).get("service_stop_ok")) if isinstance(result, dict) else bool(result)
+        if isinstance(result, dict) and "service_stop_ok" not in result:
+            service_stop_ok = bool(result.get("systemd_ok"))
         backup_ok = bool((result or {}).get("backup_ok")) if isinstance(result, dict) else True
         if not (service_stop_ok and backup_ok):
             message = "Stop operation failed."
@@ -481,7 +483,10 @@ def restore_operation(
     if _cleanup_in_progress():
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Cleanup is running.")
         return _reject_invalid_state("Cleanup is running.")
-    if state["is_backup_running"]() or _has_pending_operation(state, "backup"):
+    is_backup_running = state.get("is_backup_running")
+    backup_running = bool(callable(is_backup_running) and is_backup_running())
+    backup_queued = bool(callable(is_backup_running) and _has_pending_operation(state, "backup"))
+    if backup_running or backup_queued:
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Backup is running or queued.")
         return _reject_invalid_state("Backup is running or queued.")
 

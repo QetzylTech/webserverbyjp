@@ -114,8 +114,11 @@ def is_backup_running(ctx: Any, include_run_lock: bool = True) -> bool:
                     return True
             except Exception:
                 pass
+    state_file = getattr(ctx, "BACKUP_STATE_FILE", None)
+    if not state_file:
+        return False
     try:
-        state_path = Path(ctx.BACKUP_STATE_FILE)
+        state_path = Path(state_file)
         ports.filesystem.ensure_dir(state_path.parent)
         raw = ports.filesystem.read_text(state_path, encoding="utf-8").strip().lower()
     except OSError:
