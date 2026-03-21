@@ -25,7 +25,12 @@ Roadmap / TODO
   - subfolders per Minecraft version
   - each version has a full server instance
   - manage/start each version independently (hardware-limited)
-
+- [ ] Add explain error button to log viewers
+  -  possible llm based explainer running client side
+- [ ] Add nginx reverse proxy with wol and boot animation
+  - if main flask app is online, do reverse proxy
+  - if main flask app is offline, send wol and show booting animation
+  - once main flask app is booted, apply reverse proxy
 
 1. Project layout
 
