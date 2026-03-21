@@ -14,12 +14,12 @@ def _get_state(ctx: Any) -> tuple[Any | None, dict[str, Any] | None]:
     return lock, state
 
 
-def _get_entry(state: dict[str, Any], client_ip: Any) -> tuple[str, dict[str, Any]]:
+def _get_entry(throttle_state: dict[str, Any], client_ip: Any) -> tuple[str, dict[str, Any]]:
     key = str(client_ip or "unknown").strip() or "unknown"
-    entry = state.get("by_ip", {}).get(key)
+    entry = throttle_state.get("by_ip", {}).get(key)
     if not isinstance(entry, dict):
         entry = {"count": 0, "blocked_until": 0.0}
-        state.setdefault("by_ip", {})[key] = entry
+        throttle_state.setdefault("by_ip", {})[key] = entry
     return key, entry
 
 

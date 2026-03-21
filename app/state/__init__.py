@@ -91,6 +91,7 @@ _STATE_CORE_KEYS = (
     "PROCESS_ROLE",
     "ADMIN_PASSWORD_HASH",
     "WORLD_DIR",
+    "WEB_CFG_VALUES",
     "backup_state",
     "backup_warning_at",
     "backup_warning_lock",

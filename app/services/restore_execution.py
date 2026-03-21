@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 import os
-import shutil
 import zipfile
 from typing import Any, Callable, cast
 
@@ -133,7 +132,7 @@ def _copy_world_tree(
         for filename in files:
             src_path = root_path / filename
             dest_path = dest_root / filename
-            shutil.copy2(src_path, dest_path)
+            ports.filesystem.copy2(src_path, dest_path)
             _emit_progress(progress, f"Copied file: {dest_path}")
 
 

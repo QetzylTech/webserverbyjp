@@ -179,6 +179,9 @@ class FilesystemAdapter:
     def move(self, src: Path | str, dst: Path | str) -> None:
         shutil.move(str(src), str(dst))
 
+    def copy2(self, src: Path | str, dst: Path | str) -> None:
+        shutil.copy2(str(src), str(dst))
+
     def copytree(self, src: Path | str, dst: Path | str) -> None:
         shutil.copytree(src, dst)
 

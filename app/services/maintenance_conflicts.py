@@ -6,18 +6,31 @@ from app.services.operation_state import has_pending_operation
 from app.services.restore_status import restore_running_from_getter
 
 
-def _restore_running(ctx: Any = None, state: Mapping[str, Any] | None = None) -> bool:
-    if isinstance(state, Mapping):
-        return restore_running_from_getter(state.get("get_restore_status"))
+def _restore_running(
+    ctx: Any = None,
+    operation_state: Mapping[str, Any] | None = None,
+    **legacy_kwargs: Any,
+) -> bool:
+    if operation_state is None and isinstance(legacy_kwargs.get("state"), Mapping):
+        operation_state = legacy_kwargs["state"]
+    if isinstance(operation_state, Mapping):
+        return restore_running_from_getter(operation_state.get("get_restore_status"))
     if ctx is None:
         return False
     return restore_running_from_getter(getattr(ctx, "get_restore_status", None))
 
 
-def priority_conflict(ctx: Any, *, state: Mapping[str, Any] | None = None) -> str:
+def priority_conflict(
+    ctx: Any,
+    *,
+    operation_state: Mapping[str, Any] | None = None,
+    **legacy_kwargs: Any,
+) -> str:
     """Return a conflict reason string if cleanup should be blocked."""
-    if isinstance(state, Mapping):
-        backup_running = state.get("is_backup_running", lambda: False)
+    if operation_state is None and isinstance(legacy_kwargs.get("state"), Mapping):
+        operation_state = legacy_kwargs["state"]
+    if isinstance(operation_state, Mapping):
+        backup_running = operation_state.get("is_backup_running", lambda: False)
         if callable(backup_running) and backup_running():
             return "backup_running"
     elif getattr(ctx, "is_backup_running", None) and ctx.is_backup_running():
@@ -25,7 +38,7 @@ def priority_conflict(ctx: Any, *, state: Mapping[str, Any] | None = None) -> st
 
     if has_pending_operation(ctx, "backup"):
         return "backup_queued"
-    if _restore_running(ctx, state=state):
+    if _restore_running(ctx, operation_state=operation_state):
         return "restore_running"
     if has_pending_operation(ctx, "restore"):
         return "restore_queued"

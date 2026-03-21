@@ -33,6 +33,7 @@ _SHUTTING_STATES = {"deactivating", "shutting_down"}
 _START_COOLDOWN_SECONDS = 10.0
 _state_store_service = cast(Any, state_store_service)
 _maintenance_engine_service = cast(Any, maintenance_engine_service)
+_has_pending_operation = cast(Any, has_pending_operation)
 
 
 def _event_id(value: object, default: int = 0) -> int:
@@ -363,7 +364,7 @@ def backup_operation(ctx: Any, *, idempotency_key: str, client_key: str) -> Any:
     if _cleanup_in_progress():
         state["log_mcweb_action"]("backup", rejection_message="Cleanup is running.")
         return _reject_invalid_state("Cleanup is running.")
-    if _restore_in_progress(ctx) or has_pending_operation(state, "restore"):
+    if _restore_in_progress(ctx) or _has_pending_operation(state, "restore"):
         state["log_mcweb_action"]("backup", rejection_message="Restore is running or queued.")
         return _reject_invalid_state("Restore is running or queued.")
     guard = state.get("storage_guard")
@@ -480,7 +481,7 @@ def restore_operation(
     if _cleanup_in_progress():
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Cleanup is running.")
         return _reject_invalid_state("Cleanup is running.")
-    if state["is_backup_running"]() or has_pending_operation(state, "backup"):
+    if state["is_backup_running"]() or _has_pending_operation(state, "backup"):
         state["log_mcweb_action"]("restore-backup", command=filename, rejection_message="Backup is running or queued.")
         return _reject_invalid_state("Backup is running or queued.")
 

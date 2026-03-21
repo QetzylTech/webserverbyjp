@@ -14,7 +14,6 @@ from typing import Any, cast
 from flask import jsonify, render_template, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from app.core.web_config import WebConfig
 from app.core import state_store as state_store_service
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 from app.services import setup_service as setup_service_service
@@ -75,18 +74,27 @@ def _panel_web_conf_path(state: Mapping[str, Any]) -> Path:
     return _panel_app_dir(state) / "mcweb.env"
 
 
+def _web_cfg_values(state: Mapping[str, Any]) -> dict[str, str]:
+    raw_values = _state_value(state, "WEB_CFG_VALUES", {})
+    if isinstance(raw_values, dict):
+        return raw_values
+    if isinstance(raw_values, Mapping):
+        return {str(key): str(value) for key, value in raw_values.items()}
+    return {}
+
+
 def _load_env_defaults(state: Mapping[str, Any]) -> tuple[dict[str, str], Path, Path]:
     app_dir = _panel_app_dir(state)
     web_conf_path = _panel_web_conf_path(state)
-    web_cfg = WebConfig(web_conf_path, app_dir)
-    defaults = setup_service_service.setup_form_defaults(web_cfg.values)
-    defaults["MCWEB_REQUIRE_PASSWORD"] = "true" if _to_bool(web_cfg.get_str("MCWEB_REQUIRE_PASSWORD", "true")) else "false"
+    raw_values = _web_cfg_values(state)
+    defaults = setup_service_service.setup_form_defaults(raw_values)
+    defaults["MCWEB_REQUIRE_PASSWORD"] = "true" if _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")) else "false"
     admin_hash = str(defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "") or "").strip()
-    superadmin_hash = str(web_cfg.get_str("MCWEB_SUPERADMIN_PASSWORD_HASH", admin_hash) or "").strip()
+    superadmin_hash = str(raw_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", admin_hash) or "").strip()
     if not superadmin_hash and admin_hash:
         superadmin_hash = admin_hash
     defaults["MCWEB_SUPERADMIN_PASSWORD_HASH"] = superadmin_hash
-    if admin_hash and web_cfg.get_str("MCWEB_SUPERADMIN_PASSWORD_HASH", "").strip() != superadmin_hash:
+    if admin_hash and str(raw_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "") or "").strip() != superadmin_hash:
         _save_env_values(state, defaults, web_conf_path)
     return defaults, web_conf_path, app_dir
 
@@ -146,6 +154,11 @@ def _save_env_values(state: Mapping[str, Any], values: Mapping[str, object], web
         except Exception:
             pass
         return False, "Failed to write configuration."
+    raw_values = _state_value(state, "WEB_CFG_VALUES")
+    if isinstance(raw_values, dict):
+        raw_values.clear()
+        for key, value in values.items():
+            raw_values[str(key)] = str(value).strip()
     return True, ""
 
 

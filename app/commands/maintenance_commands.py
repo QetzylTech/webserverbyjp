@@ -212,7 +212,7 @@ def _parse_dry_run(value: object) -> bool:
 
 def run_rules(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
-    conflict_reason = priority_conflict(ctx, state=state)
+    conflict_reason = priority_conflict(ctx, operation_state=state)
     if conflict_reason:
         _cleanup_log(ctx, what='run_rules', why='manual_apply', trigger='manual_rule', result='conflict', details=f"scope={scope};reason={conflict_reason}")
         return _cleanup_error('conflict', status=409)
@@ -296,7 +296,7 @@ def run_rules(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) ->
 
 def manual_delete(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -> CommandResult:
     scope = normalize_scope(payload.get('scope', 'backups'))
-    conflict_reason = priority_conflict(ctx, state=state)
+    conflict_reason = priority_conflict(ctx, operation_state=state)
     if conflict_reason:
         _cleanup_log(ctx, what='manual_delete', why='manual_selection', trigger='manual', result='conflict', details=f"scope={scope};reason={conflict_reason}")
         return _cleanup_error('conflict', status=409)

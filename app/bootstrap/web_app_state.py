@@ -221,6 +221,7 @@ def build_state(app_config: Any, *, app_dir: Path, display_tz: tzinfo) -> dict[s
         "SERVICE": app_config.service,
         "ADMIN_PASSWORD_HASH": app_config.admin_password_hash,
         "REQUIRE_SUDO_PASSWORD": require_sudo_password,
+        "WEB_CFG_VALUES": app_config.raw_values,
         "BACKUP_SCRIPT": backup_script,
         "BACKUP_DIR": backup_dir,
         "MINECRAFT_ROOT_DIR": minecraft_root_dir,
