@@ -301,7 +301,8 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
                     last_event_id = _event_id(latest_event.get("id", 0))
                     last_seq = last_event_id
             stream_state = state.get("log_stream_states", {}).get(source_key)
-            heartbeat_seconds = float(state.get("LOG_STREAM_HEARTBEAT_SECONDS", 5) or 5)
+            configured_heartbeat = float(state.get("LOG_STREAM_HEARTBEAT_SECONDS", 5) or 5)
+            heartbeat_seconds = max(0.5, min(configured_heartbeat, 1.0))
             poll_interval = min(0.5, heartbeat_seconds)
             last_keepalive = time.time()
             try:

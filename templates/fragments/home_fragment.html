@@ -99,24 +99,17 @@
 <div id="sudo-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sudo-modal-title">
         <h3 id="sudo-modal-title" class="modal-title">Password Required</h3>
-        <p class="modal-text">Enter sudo password to continue.</p>
+        <p id="sudo-modal-text" class="modal-text">Enter sudo password to continue.</p>
+        <img id="sudo-modal-image" class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image" hidden>
         <input id="sudo-modal-input" class="modal-input ui-text-input" type="password" placeholder="Sudo password">
+        <p id="sudo-modal-error" class="modal-text modal-error" hidden></p>
         <div class="modal-actions">
             <button id="sudo-modal-cancel" class="btn-secondary" type="button">Cancel</button>
             <button id="sudo-modal-submit" class="btn-backup" type="button">Continue</button>
         </div>
     </div>
 </div>
-<div id="message-modal" class="modal-overlay" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
-        <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
-        <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
-        <p id="message-modal-text" class="modal-text"></p>
-        <div class="modal-actions">
-            <button id="message-modal-ok" class="btn-backup" type="button">OK</button>
-        </div>
-    </div>
-</div>
+<div id="message-modal" class="modal-overlay" aria-hidden="true" hidden></div>
 <div id="success-modal" class="modal-overlay" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="success-modal-title">
         <h3 id="success-modal-title" class="modal-title">Action Completed</h3>

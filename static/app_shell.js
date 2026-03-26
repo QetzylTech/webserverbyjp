@@ -40,6 +40,7 @@
     let isPrimaryTab = false;
     let primaryHeartbeatTimer = null;
     let primaryCheckTimer = null;
+    let shellScrollPersistTimer = null;
     const loadedScriptUrls = new Set();
     const loadingScriptPromises = new Map();
     const pageModules = window.MCWebPageModules || {
@@ -103,6 +104,12 @@
         };
     }
 
+    function createDefaultPageViewState() {
+        return {
+            scrollByUrl: {},
+        };
+    }
+
     function readPersistedViewState() {
         try {
             const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
@@ -129,6 +136,7 @@
             fileViews: shellState.fileViews,
             maintenanceView: shellState.maintenanceView,
             docsView: shellState.docsView,
+            pageView: shellState.pageView,
         });
     }
 
@@ -188,6 +196,7 @@
             },
             activeSource: "",
         },
+        pageView: createDefaultPageViewState(),
     };
     const persistedViewState = readPersistedViewState();
     if (persistedViewState && typeof persistedViewState === "object") {
@@ -207,6 +216,9 @@
         }
         if (persistedViewState.docsView && typeof persistedViewState.docsView === "object") {
             Object.assign(shellState.docsView, persistedViewState.docsView);
+        }
+        if (persistedViewState.pageView && typeof persistedViewState.pageView === "object") {
+            Object.assign(shellState.pageView, persistedViewState.pageView);
         }
     }
     const soundState = {
@@ -784,6 +796,60 @@
         }
     }
 
+    function currentScrollStorageKey(url) {
+        try {
+            const target = new URL(url || window.location.href, window.location.href);
+            return `${target.pathname}${target.search}`;
+        } catch (_) {
+            return String(currentPath || window.location.pathname || "/");
+        }
+    }
+
+    function getShellScrollTop() {
+        if (contentRoot && typeof contentRoot.scrollTop === "number") {
+            return Number(contentRoot.scrollTop || 0);
+        }
+        return Number(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0);
+    }
+
+    function setShellScrollTop(top) {
+        const nextTop = Math.max(0, Number(top) || 0);
+        if (contentRoot && typeof contentRoot.scrollTo === "function") {
+            contentRoot.scrollTo({ top: nextTop, behavior: "auto" });
+            contentRoot.scrollTop = nextTop;
+            return;
+        }
+        window.scrollTo(0, nextTop);
+    }
+
+    function persistCurrentPageScroll(url) {
+        const key = currentScrollStorageKey(url);
+        if (!key) return;
+        const patch = {};
+        patch[key] = getShellScrollTop();
+        updatePageViewState({ scrollByUrl: patch });
+    }
+
+    function restorePageScroll(url) {
+        const key = currentScrollStorageKey(url);
+        const pageState = getPageViewState();
+        const scrollByUrl = pageState && typeof pageState.scrollByUrl === "object" ? pageState.scrollByUrl : {};
+        const nextTop = Number(scrollByUrl[key] || 0);
+        if (!Number.isFinite(nextTop) || nextTop <= 0) {
+            setShellScrollTop(0);
+            return;
+        }
+        setShellScrollTop(nextTop);
+    }
+
+    function schedulePersistCurrentPageScroll() {
+        if (shellScrollPersistTimer) return;
+        shellScrollPersistTimer = window.setTimeout(() => {
+            shellScrollPersistTimer = null;
+            persistCurrentPageScroll(window.location.href);
+        }, 120);
+    }
+
     function isLatestNavigationToken(token) {
         return token === navigationToken;
     }
@@ -1115,10 +1181,12 @@
         const modal = document.getElementById("panel-settings-password-modal");
         const input = document.getElementById("panel-settings-password-input");
         const errorText = document.getElementById("panel-settings-password-error");
+        const image = document.getElementById("panel-settings-password-image");
         if (!modal) return;
         modal.classList.remove("open");
         modal.setAttribute("aria-hidden", "true");
         if (input) input.value = "";
+        if (image) image.hidden = true;
         if (errorText) {
             errorText.textContent = "";
             errorText.hidden = true;
@@ -1131,9 +1199,15 @@
         const modal = document.getElementById("panel-settings-password-modal");
         const input = document.getElementById("panel-settings-password-input");
         const errorText = document.getElementById("panel-settings-password-error");
+        const title = document.getElementById("panel-settings-password-title");
+        const text = document.getElementById("panel-settings-password-text");
+        const image = document.getElementById("panel-settings-password-image");
         if (!modal || !input) return;
         panelSettingsAccessCallback = typeof onSuccess === "function" ? onSuccess : null;
         panelSettingsAccessPendingHref = String(href || "").trim();
+        if (title) title.textContent = "Panel Settings";
+        if (text) text.textContent = "Enter superadmin password to continue.";
+        if (image) image.hidden = true;
         if (errorText) {
             errorText.textContent = "";
             errorText.hidden = true;
@@ -1147,6 +1221,9 @@
     async function submitPanelSettingsPassword() {
         const input = document.getElementById("panel-settings-password-input");
         const errorText = document.getElementById("panel-settings-password-error");
+        const title = document.getElementById("panel-settings-password-title");
+        const text = document.getElementById("panel-settings-password-text");
+        const image = document.getElementById("panel-settings-password-image");
         const password = (input && input.value ? String(input.value) : "").trim();
         if (!password) return;
         const token = resolveCsrfToken();
@@ -1155,9 +1232,16 @@
             const payload = result.payload || {};
             if (!result.response.ok || payload.ok === false) {
                 const message = String(payload.message || "Password incorrect.").trim() || "Password incorrect.";
+                if (title) title.textContent = "Panel Settings";
+                if (text) text.textContent = "Password incorrect. Enter superadmin password to try again.";
+                if (image) image.hidden = false;
                 if (errorText) {
                     errorText.textContent = message;
                     errorText.hidden = false;
+                }
+                if (input) {
+                    input.focus();
+                    input.select();
                 }
                 return;
             }
@@ -1171,10 +1255,14 @@
                 navigateTo(href);
             }
         } catch (_) {
+            if (title) title.textContent = "Panel Settings";
+            if (text) text.textContent = "Enter superadmin password to continue.";
+            if (image) image.hidden = true;
             if (errorText) {
                 errorText.textContent = "Failed to verify password. Try again.";
                 errorText.hidden = false;
             }
+            if (input) input.focus();
         }
     }
 
@@ -1984,6 +2072,25 @@
         persistViewState();
         return getDocsViewState();
     }
+
+    function getPageViewState() {
+        const state = shellState.pageView || createDefaultPageViewState();
+        shellState.pageView = state;
+        return {
+            scrollByUrl: state.scrollByUrl ? Object.assign({}, state.scrollByUrl) : {},
+        };
+    }
+
+    function updatePageViewState(patch = {}) {
+        if (!patch || typeof patch !== "object") return getPageViewState();
+        const state = shellState.pageView || createDefaultPageViewState();
+        shellState.pageView = state;
+        if (patch.scrollByUrl && typeof patch.scrollByUrl === "object") {
+            Object.assign(state.scrollByUrl, patch.scrollByUrl);
+        }
+        persistViewState();
+        return getPageViewState();
+    }
     // Public shell API for page runtimes. Shell boot concerns like theme and nav
     // stay internal; pages consume shared caches, live metrics, and view state.
     window.MCWebShell = Object.assign({}, window.MCWebShell || {}, {
@@ -2010,6 +2117,8 @@
         updateMaintenanceViewState,
         getDocsViewState,
         updateDocsViewState,
+        getPageViewState,
+        updatePageViewState,
         activateHomeLogStream,
         stopAllHomeLogStreams,
         setHomeLogSnapshot,
@@ -2055,6 +2164,9 @@
             requestPanelSettingsAccess({ forcePrompt: true });
         }
         maybeRunPendingPromptAction();
+        if (!window.location.hash) {
+            window.requestAnimationFrame(() => restorePageScroll(window.location.href));
+        }
     }
 
     function handleNavigationFailure(nextUrl, reason) {
@@ -2066,6 +2178,7 @@
     async function navigateTo(url, options = {}) {
         const nextUrl = new URL(url, window.location.href);
         const previousPath = currentPath;
+        persistCurrentPageScroll(window.location.href);
         navigationToken += 1;
         const token = navigationToken;
         if (navigationController) {
@@ -2102,8 +2215,8 @@
             if (!isLatestNavigationToken(token)) {
                 return;
             }
-            pageModules.unmount(contentRoot.dataset.currentPage || document.body.dataset.page || "");
             dispatchSyntheticPageHide();
+            pageModules.unmount(contentRoot.dataset.currentPage || document.body.dataset.page || "");
             contentRoot.innerHTML = html;
             pruneContentRootWhitespace();
             await mountCurrentContent(
@@ -2128,7 +2241,7 @@
                 const anchor = document.getElementById(nextUrl.hash.slice(1));
                 if (anchor) anchor.scrollIntoView();
             } else {
-                window.scrollTo(0, 0);
+                window.requestAnimationFrame(() => restorePageScroll(nextUrl.toString()));
             }
         }).catch((error) => {
             if (error && error.name === "AbortError") {
@@ -2166,6 +2279,7 @@
 
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
+            persistCurrentPageScroll(window.location.href);
             return;
         }
         startPrimaryElection();
@@ -2174,7 +2288,12 @@
         }
     });
 
+    contentRoot.addEventListener("scroll", () => {
+        schedulePersistCurrentPageScroll();
+    }, { passive: true });
+
     window.addEventListener("beforeunload", () => {
+        persistCurrentPageScroll(window.location.href);
         rememberPanelSettingsAccessForReload();
         if (isPrimaryTab) {
             try {

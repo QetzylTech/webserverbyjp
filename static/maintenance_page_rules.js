@@ -169,7 +169,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Minimum age to start deleting (Days)</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-text-input" type="number" min="3" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
+                            ? `<input class="ui-card-input" type="number" min="3" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
                             : `<span class="rule-inline-value">${ageDays}</span>`
                         }
                     </p>
@@ -179,7 +179,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Max disk usage before deleting starts (% used)</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-text-input" type="number" min="50" max="100" step="1" value="${usedTrigger}" data-rule-field="space.used_trigger_percent" ${inputDisabled}>`
+                            ? `<input class="ui-card-input" type="number" min="50" max="100" step="1" value="${usedTrigger}" data-rule-field="space.used_trigger_percent" ${inputDisabled}>`
                             : `<span class="rule-inline-value">${usedTrigger}%</span>`
                         }
                     </p>
@@ -191,7 +191,7 @@
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest stale world entries to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-text-input" type="number" min="3" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${maxPerCategory}</span>`
                                 }
                             </p>
@@ -200,21 +200,21 @@
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Session backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-text-input" type="number" min="3" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${sessionKeep}</span>`
                                 }
                             </p>
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Manual backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-text-input" type="number" min="3" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${manualKeep}</span>`
                                 }
                             </p>
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Prerestore backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-text-input" type="number" min="3" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${prerestoreKeep}</span>`
                                 }
                             </p>
@@ -233,7 +233,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Time of cleanup</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-text-input rule-inline-control" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${!timeEnabled ? "disabled" : inputDisabled}>`
+                            ? `<input class="ui-card-input rule-inline-control" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${!timeEnabled ? "disabled" : inputDisabled}>`
                             : `<span class="rule-inline-value rule-inline-value-wide">${backupTime}</span>`
                         }
                     </p>
@@ -274,7 +274,7 @@
                         ? `
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Date (1-31):</span>
-                                <input class="ui-text-input rule-inline-control" type="number" min="1" max="31" step="1" value="${monthlyDate}" data-rule-field="time_based.monthly_date" ${inputDisabled}>
+                                <input class="ui-card-input rule-inline-control" type="number" min="1" max="31" step="1" value="${monthlyDate}" data-rule-field="time_based.monthly_date" ${inputDisabled}>
                             </p>
                         `
                         : ""
@@ -283,7 +283,7 @@
                         ? `
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Every N day(s):</span>
-                                <input class="ui-text-input rule-inline-control" type="number" min="1" max="365" step="1" value="${everyNDays}" data-rule-field="time_based.every_n_days" ${inputDisabled}>
+                                <input class="ui-card-input rule-inline-control" type="number" min="1" max="365" step="1" value="${everyNDays}" data-rule-field="time_based.every_n_days" ${inputDisabled}>
                             </p>
                         `
                         : ""

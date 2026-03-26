@@ -181,6 +181,48 @@ class PerformanceOptimizationTests(unittest.TestCase):
 
             self.assertEqual(observed.get("service_status_raw"), "starting")
 
+    def test_observed_state_keeps_off_when_stale_stop_operation_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            class Ctx:
+                APP_STATE_DB_PATH = root / "state.sqlite3"
+                WORLD_DIR = root / "world"
+                BACKUP_DIR = root / "backups"
+                AUTO_SNAPSHOT_DIR = root / "backups" / "snapshots"
+                OFF_STATES = {"inactive", "failed"}
+
+                @staticmethod
+                def get_status():
+                    return "inactive"
+
+                @staticmethod
+                def get_service_status_intent():
+                    return "shutting"
+
+                @staticmethod
+                def get_players_online():
+                    return "0"
+
+                @staticmethod
+                def get_service_status_display(status, _players):
+                    return str(status)
+
+                @staticmethod
+                def get_service_status_class(_status):
+                    return "stat-green"
+
+            def _latest(_db_path, op_type):
+                if op_type == "stop":
+                    return {"status": "in_progress"}
+                return {"status": "observed"}
+
+            runtime_service.invalidate_observed_state_cache(None)
+            with patch.object(runtime_service.state_store_service, "get_latest_operation_for_type", side_effect=_latest):
+                observed = runtime_service.get_observed_state(Ctx())
+
+            self.assertEqual(observed.get("service_status_raw"), "inactive")
+
     def test_cleanup_load_config_cache_and_save_invalidation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

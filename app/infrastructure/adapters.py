@@ -135,8 +135,13 @@ class PlatformMetricsAdapter:
     def __init__(self) -> None:
         self._metrics = get_metrics()
 
-    def get_cpu_usage_per_core(self) -> str:
-        return str(self._metrics.get_cpu_usage_per_core())
+    def get_cpu_usage_per_core(self) -> list[object]:
+        values = self._metrics.get_cpu_usage_per_core()
+        if isinstance(values, list):
+            return list(values)
+        if isinstance(values, tuple):
+            return list(values)
+        return [values]
 
     def get_ram_usage(self) -> str:
         return str(self._metrics.get_ram_usage())

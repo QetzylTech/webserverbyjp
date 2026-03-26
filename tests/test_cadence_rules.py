@@ -1,5 +1,7 @@
 import threading
+import tempfile
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -76,6 +78,46 @@ def test_publish_log_stream_line_appends_db_with_clients(monkeypatch):
 
     assert calls["append"] == 1
     assert appended["lines"] == ["hello"]
+
+
+def test_minecraft_log_source_prefers_latest_file_when_present(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        logs_dir = Path(tmp)
+        (logs_dir / "latest.log").write_text("line\n", encoding="utf-8")
+        monkeypatch.setattr(log_stream_service.ports.log, "minecraft_log_stream_mode", lambda: "journal")
+        ctx = SimpleNamespace(
+            LOG_SOURCE_KEYS=("minecraft",),
+            MINECRAFT_LOGS_DIR=logs_dir,
+            MINECRAFT_LOG_TEXT_LIMIT=1000,
+            SERVICE="minecraft",
+        )
+
+        settings = log_stream_service.log_source_settings(ctx, "minecraft")
+
+    assert settings is not None
+    assert settings["type"] == "file_poll"
+    assert settings["path"] == logs_dir / "latest.log"
+
+
+def test_increment_log_stream_clients_notifies_waiters():
+    state = _make_log_state(clients=0)
+    ctx = SimpleNamespace(
+        LOG_SOURCE_KEYS=("minecraft",),
+        log_stream_states={"minecraft": state},
+    )
+    wake = {"notified": False}
+
+    def waiter():
+        with state["cond"]:
+            state["cond"].wait(timeout=1.0)
+            wake["notified"] = True
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    log_stream_service.increment_log_stream_clients(ctx, "minecraft")
+    thread.join(timeout=2.0)
+
+    assert wake["notified"] is True
 
 
 def test_idle_storage_refresh_respects_interval(monkeypatch):

@@ -467,8 +467,7 @@ function mountFileBrowserPage() {
                     const filename = restoreBtn.getAttribute("data-filename") || "";
                     const displayName = restoreBtn.getAttribute("data-display-name") || filename;
                     if (!filename) return;
-                    selectedRestoreLastLog = String(restoreBtn.getAttribute("data-last-restore-log") || "").trim();
-                    restoreLastLogVisible = false;
+                    setSelectedRestoreLastLog(restoreBtn.getAttribute("data-last-restore-log") || "");
                     openBackupRestorePane(filename, "local", displayName);
                 }
             });
@@ -502,8 +501,7 @@ function mountFileBrowserPage() {
             selectedRestoreFilename = filename || "";
             selectedRestoreDisplayName = displayName || selectedRestoreFilename;
             restorePaneForcedByRemote = source === "remote";
-            restoreLastLogVisible = false;
-            selectedRestoreLastLog = resolveLastRestoreLogFromSelection();
+            setSelectedRestoreLastLog(resolveLastRestoreLogFromSelection());
             setActiveRestoreFilename(selectedRestoreDisplayName);
             if (restorePaneForcedByRemote) {
                 stopRestorePaneAlertHeartbeat();
@@ -613,6 +611,12 @@ function mountFileBrowserPage() {
             }
             backupRestoreLastRun.hidden = false;
             backupRestoreLastRun.textContent = restoreLastLogVisible ? "Hide last restore" : "View last run";
+        }
+
+        function setSelectedRestoreLastLog(filename) {
+            selectedRestoreLastLog = String(filename || "").trim();
+            restoreLastLogVisible = false;
+            syncRestoreLastRunButton();
         }
 
         async function showLastRestoreLog() {
@@ -847,10 +851,14 @@ function mountFileBrowserPage() {
                 scheduleRestoreOperationPoll(1300);
                 return;
             }
-                        const operation = payload.operation || {};
+            const operation = payload.operation || {};
             const status = String(operation.status || "").trim().toLowerCase();
             const opData = operation.data && typeof operation.data === "object" ? operation.data : {};
             const restoreJobId = String(opData.restore_job_id || "").trim();
+            const restoreLogFile = String(opData.restore_log_file || "").trim();
+            if (restoreLogFile) {
+                setSelectedRestoreLastLog(restoreLogFile);
+            }
             if (restoreJobId && restorePollJobId !== restoreJobId) {
                 startRestoreProgressPanel(restoreJobId, "Restore Progress", "Restore started.", { preserveContent: true });
             }
@@ -881,6 +889,9 @@ function mountFileBrowserPage() {
                     if (seqValue > restoreStreamSeq) restoreStreamSeq = seqValue;
                     appendRestoreLine(eventItem.at || "", eventItem.message || "");
                 });
+            }
+            if (payload.log_file) {
+                setSelectedRestoreLastLog(payload.log_file);
             }
 
             syncRestoreAvailabilityUi();
@@ -1681,7 +1692,11 @@ function mountFileBrowserPage() {
 
             const jobId = (payload && payload.job_id) ? payload.job_id : "";
             const opId = (payload && payload.op_id) ? payload.op_id : "";
+            const restoreLogFile = (payload && payload.log_file) ? payload.log_file : "";
             const restoreDisplay = restoreRequest.displayName || restoreRequest.filename || "selected backup";
+            if (restoreLogFile) {
+                setSelectedRestoreLastLog(restoreLogFile);
+            }
             startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreDisplay}.`, { preserveContent: true });
             if (opId) {
                 restoreOperationOpId = String(opId || "").trim();

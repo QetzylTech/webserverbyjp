@@ -9,6 +9,8 @@
     --theme-control-surface: #eef2ff;
     --theme-control-surface-disabled: #e2e8f0;
     --ui-input-bg: #eef2ff;
+    --ui-title-input-bg: #eef2ff;
+    --ui-card-input-bg: #ffffff;
     --ui-blue: #1e3a8a;
     --ui-blue-hover: #1e40af;
     --ui-blue-disabled: #94a3b8;
@@ -68,6 +70,8 @@ html.theme-dark {
     --theme-control-surface: #1f2733;
     --theme-control-surface-disabled: #2a3342;
     --ui-input-bg: #161b22;
+    --ui-title-input-bg: #161b22;
+    --ui-card-input-bg: #0d1117;
     --pane-content-surface: #161b22;
     background: #161b22;
     color-scheme: dark;
@@ -525,20 +529,34 @@ textarea:disabled {
 }
 
 /* Explicit reusable text-input style for forms that need consistent sizing. */
-.ui-text-input {
+.ui-text-input,
+.ui-title-input {
     height: var(--btn-height) !important;
     border: 0 !important;
     border-radius: 10px !important;
-    background: var(--ui-input-bg) !important;
+    background: var(--ui-title-input-bg) !important;
     box-shadow: none !important;
     padding: 0 12px !important;
     font-size: 0.95rem;
     color: inherit;
 }
 
-.ui-text-input:focus {
+.ui-text-input:focus,
+.ui-title-input:focus,
+.ui-card-input:focus {
     outline: none;
     box-shadow: none !important;
+}
+
+.ui-card-input {
+    height: var(--btn-height) !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    background: var(--ui-card-input-bg) !important;
+    box-shadow: none !important;
+    padding: 0 12px !important;
+    font-size: 0.95rem;
+    color: inherit;
 }
 
 /* Shared stat-card style used by Home and Maintenance headers. */
@@ -638,6 +656,10 @@ textarea:disabled {
     border-radius: 10px;
     border: 1px solid var(--border);
     margin: 0 0 12px 0;
+}
+
+.modal-image[hidden] {
+    display: none !important;
 }
 
 .modal-input {

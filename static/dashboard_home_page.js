@@ -397,7 +397,18 @@
         pendingSudoForm = form;
         const modal = document.getElementById("sudo-modal");
         const input = document.getElementById("sudo-modal-input");
+        const title = document.getElementById("sudo-modal-title");
+        const text = document.getElementById("sudo-modal-text");
+        const image = document.getElementById("sudo-modal-image");
+        const errorText = document.getElementById("sudo-modal-error");
         if (!modal || !input) return;
+        if (title) title.textContent = "Password Required";
+        if (text) text.textContent = "Enter sudo password to continue.";
+        if (image) image.hidden = true;
+        if (errorText) {
+            errorText.textContent = "";
+            errorText.hidden = true;
+        }
         input.value = "";
         modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
@@ -407,6 +418,10 @@
     function closeSudoModal() {
         const modal = document.getElementById("sudo-modal");
         const input = document.getElementById("sudo-modal-input");
+        const title = document.getElementById("sudo-modal-title");
+        const text = document.getElementById("sudo-modal-text");
+        const image = document.getElementById("sudo-modal-image");
+        const errorText = document.getElementById("sudo-modal-error");
         if (modal) {
             modal.classList.remove("open");
             modal.setAttribute("aria-hidden", "true");
@@ -416,18 +431,35 @@
             modal.style.display = "";
         }
         if (input) input.value = "";
+        if (title) title.textContent = "Password Required";
+        if (text) text.textContent = "Enter sudo password to continue.";
+        if (image) image.hidden = true;
+        if (errorText) {
+            errorText.textContent = "";
+            errorText.hidden = true;
+        }
         pendingSudoForm = null;
     }
 
-    function showMessageModal(message) {
-        // Never stack the rejection modal on top of the password modal.
-        closeSudoModal();
-        const modal = document.getElementById("message-modal");
-        const text = document.getElementById("message-modal-text");
-        if (!modal || !text) return;
-        text.textContent = message || "";
+    function showSudoModalError(message) {
+        const modal = document.getElementById("sudo-modal");
+        const input = document.getElementById("sudo-modal-input");
+        const title = document.getElementById("sudo-modal-title");
+        const text = document.getElementById("sudo-modal-text");
+        const image = document.getElementById("sudo-modal-image");
+        const errorText = document.getElementById("sudo-modal-error");
+        if (!modal || !input) return;
+        if (title) title.textContent = "Action Rejected";
+        if (text) text.textContent = "Password incorrect. Whatever you were trying to do is cancelled.";
+        if (image) image.hidden = false;
+        if (errorText) {
+            errorText.textContent = message || "Password incorrect.";
+            errorText.hidden = false;
+        }
         modal.setAttribute("aria-hidden", "false");
         modal.classList.add("open");
+        input.focus();
+        input.select();
     }
 
     function showSuccessModal(message) {
@@ -822,7 +854,7 @@
                     setBackupStatusOverride("");
                 }
                 if (isPasswordRejected) {
-                    showMessageModal(message);
+                    showSudoModalError(message);
                 } else {
                     showErrorModal(message, {
                         errorCode: payload && payload.error ? String(payload.error) : "",
@@ -961,7 +993,6 @@
                 const password = (modalInput.value || "").trim();
                 if (!password) return;
                 const form = pendingSudoForm;
-                closeSudoModal();
                 await submitFormAjax(form, password);
             });
         }
@@ -974,13 +1005,6 @@
             });
         }
 
-        const messageOk = document.getElementById("message-modal-ok");
-        if (messageOk) {
-            addScopedListener(messageOk, "click", () => {
-                const modal = document.getElementById("message-modal");
-                if (modal) modal.classList.remove("open");
-            });
-        }
         const successOk = document.getElementById("success-modal-ok");
         const successModal = document.getElementById("success-modal");
         if (successModal) {
@@ -1018,7 +1042,7 @@
         }
         if (alertMessage) {
             if (alertMessageCode === "password_incorrect") {
-                showMessageModal(alertMessage);
+                showSudoModalError(alertMessage);
             } else {
                 showErrorModal(alertMessage, {
                     errorCode: alertMessageCode,

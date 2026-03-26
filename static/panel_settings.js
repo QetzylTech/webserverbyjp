@@ -118,27 +118,68 @@
             setSaveVisibility(saveTimezoneBtn, isTimezoneDirty());
         }
 
-        function serializeDeviceMap(map) {
-            const entries = Object.entries(map || {}).map(([ip, name]) => ({
-                ip: String(ip || "").trim(),
-                name: String(name || "").trim(),
-            }));
-            entries.sort((a, b) => a.ip.localeCompare(b.ip) || a.name.localeCompare(b.name));
-            return JSON.stringify(entries);
+        function parseAddressLines(value) {
+            return Array.from(new Set(String(value || "")
+                .split(/\r?\n|,/)
+                .map((part) => String(part || "").trim())
+                .filter(Boolean))).sort();
+        }
+
+        function normalizeMachine(machine) {
+            return {
+                machine_name: String(machine?.machine_name || machine?.name || "").trim(),
+                addresses: Array.from(new Set((Array.isArray(machine?.addresses) ? machine.addresses : [])
+                    .map((value) => String(value || "").trim())
+                    .filter(Boolean))).sort(),
+                last_seen: String(machine?.last_seen || "").trim() || "-",
+                owner: String(machine?.owner || "").trim() || "-",
+            };
+        }
+
+        function buildDeviceMachines(map) {
+            const grouped = new Map();
+            Object.entries(map || {}).forEach(([ip, name]) => {
+                const cleanIp = String(ip || "").trim();
+                const cleanName = String(name || "").trim();
+                if (!cleanIp || !cleanName) return;
+                const key = cleanName.toLowerCase();
+                if (!grouped.has(key)) {
+                    grouped.set(key, {
+                        machine_name: cleanName,
+                        addresses: [],
+                        last_seen: "-",
+                        owner: "-",
+                    });
+                }
+                grouped.get(key).addresses.push(cleanIp);
+            });
+            return Array.from(grouped.values()).map(normalizeMachine).sort((a, b) => {
+                return a.machine_name.localeCompare(b.machine_name) || a.addresses.join(",").localeCompare(b.addresses.join(","));
+            });
+        }
+
+        function flattenDeviceMachines(items) {
+            const rows = [];
+            (Array.isArray(items) ? items : []).map(normalizeMachine).forEach((machine) => {
+                machine.addresses.forEach((ip) => {
+                    rows.push({ name: machine.machine_name, ip, owner: machine.owner === "-" ? "" : machine.owner });
+                });
+            });
+            return rows;
         }
 
         function serializeDeviceRows(rows) {
             const normalized = (rows || []).map((row) => ({
                 ip: String(row.ip || "").trim(),
                 name: String(row.name || "").trim(),
+                owner: String(row.owner || "").trim(),
             }));
-            normalized.sort((a, b) => a.ip.localeCompare(b.ip) || a.name.localeCompare(b.name));
+            normalized.sort((a, b) => a.ip.localeCompare(b.ip) || a.name.localeCompare(b.name) || a.owner.localeCompare(b.owner));
             return JSON.stringify(normalized);
         }
 
         function isDeviceMapDirty() {
-            const snapshot = serializeDeviceRows(collectDeviceMapRows());
-            return snapshot !== deviceMapBaseline;
+            return serializeDeviceRows(collectDeviceMapRows()) !== deviceMapBaseline;
         }
 
         function syncDeviceMapSaveVisibility() {
@@ -149,79 +190,195 @@
             return selectedCsvFile || csvInput?.files?.[0] || null;
         }
 
-        function renderDeviceMapRows(map, options = {}) {
-            if (!deviceMapBody) return;
-            if (options.updateBaseline !== false) {
-                deviceMapBaseline = serializeDeviceMap(map);
+        function updateSummaryFromSnapshot(card, snapshot) {
+            const nameEl = card.querySelector("[data-device-machine-name]");
+            const lastSeenEl = card.querySelector("[data-device-last-seen]");
+            const ownerEl = card.querySelector("[data-device-owner]");
+            const addressesEl = card.querySelector("[data-device-addresses]");
+            if (nameEl) nameEl.textContent = snapshot.machine_name || "Unnamed machine";
+            if (lastSeenEl) lastSeenEl.textContent = snapshot.last_seen || "-";
+            if (ownerEl) ownerEl.textContent = snapshot.owner || "-";
+            if (addressesEl) {
+                addressesEl.innerHTML = "";
+                if (!snapshot.addresses.length) {
+                    const empty = document.createElement("span");
+                    empty.className = "device-machine-muted";
+                    empty.textContent = "No addresses";
+                    addressesEl.appendChild(empty);
+                } else {
+                    snapshot.addresses.forEach((address) => {
+                        const pill = document.createElement("span");
+                        pill.className = "device-machine-address-pill";
+                        pill.textContent = address;
+                        addressesEl.appendChild(pill);
+                    });
+                }
             }
-            deviceMapBody.innerHTML = "";
-            const entries = Object.entries(map || {}).sort((a, b) => a[0].localeCompare(b[0]));
-            if (!entries.length) {
-                addDeviceRow("", "");
-                syncDeviceMapSaveVisibility();
-                return;
-            }
-            entries.forEach(([ip, name]) => addDeviceRow(name, ip));
-            syncDeviceMapSaveVisibility();
         }
 
-        function addDeviceRow(name, ip) {
+        function readCardSnapshot(card) {
+            const base = normalizeMachine(JSON.parse(card.dataset.machineSnapshot || "{}"));
+            const nameInput = card.querySelector("[data-device-edit-name]");
+            const ownerInput = card.querySelector("[data-device-edit-owner]");
+            const addressInput = card.querySelector("[data-device-edit-addresses]");
+            return {
+                machine_name: String(nameInput?.value || "").trim(),
+                addresses: parseAddressLines(addressInput?.value || ""),
+                last_seen: base.last_seen,
+                owner: String(ownerInput?.value || "").trim() || "-",
+            };
+        }
+
+        function setCardEditing(card, isEditing) {
+            const editor = card.querySelector("[data-device-editor]");
+            const editBtn = card.querySelector("[data-device-edit]");
+            const deleteBtn = card.querySelector("[data-device-delete]");
+            if (editor) editor.hidden = !isEditing;
+            if (editBtn) editBtn.textContent = isEditing ? "Save" : "Edit";
+            if (deleteBtn) {
+                deleteBtn.textContent = isEditing ? "Cancel" : "Delete";
+                deleteBtn.className = isEditing ? "btn-secondary" : "btn-stop";
+            }
+            card.dataset.editing = isEditing ? "true" : "false";
+        }
+
+        function addDeviceRow(machine, options = {}) {
             if (!deviceMapBody) return;
-            const row = document.createElement("tr");
-            const nameCell = document.createElement("td");
-            const ipCell = document.createElement("td");
-            const actionCell = document.createElement("td");
+            const snapshot = normalizeMachine(machine);
+            const card = document.createElement("article");
+            card.className = "device-machine-card";
+            card.setAttribute("role", "listitem");
+            card.dataset.machineSnapshot = JSON.stringify(snapshot);
+            card.dataset.isNew = options.isNew ? "true" : "false";
+            card.dataset.editing = "false";
+            card.innerHTML = `
+                <div class="device-machine-summary">
+                    <div class="device-machine-cell device-machine-name" data-device-machine-name></div>
+                    <div class="device-machine-cell device-machine-addresses" data-device-addresses></div>
+                    <div class="device-machine-cell device-machine-muted" data-device-last-seen></div>
+                    <div class="device-machine-cell device-machine-muted" data-device-owner></div>
+                    <div class="device-machine-cell device-machine-actions">
+                        <button type="button" class="btn-backup" data-device-edit>Edit</button>
+                        <button type="button" class="btn-stop" data-device-delete>Delete</button>
+                    </div>
+                </div>
+                <div class="device-machine-editor" data-device-editor hidden>
+                    <div class="device-machine-editor-grid">
+                        <label>
+                            <span class="settings-label">Machine name</span>
+                            <input class="ui-card-input" type="text" data-device-edit-name>
+                        </label>
+                        <label>
+                            <span class="settings-label">Owner</span>
+                            <input class="ui-card-input" type="text" data-device-edit-owner>
+                        </label>
+                    </div>
+                    <label>
+                        <span class="settings-label">Addresses</span>
+                        <textarea class="ui-card-input" data-device-edit-addresses placeholder="One IP per line or comma-separated"></textarea>
+                    </label>
+                    <p class="device-machine-editor-note">Save commits the row locally. Use Save Mappings to persist all machine changes.</p>
+                </div>
+            `;
 
-            const nameInput = document.createElement("input");
-            nameInput.className = "ui-text-input";
-            nameInput.type = "text";
-            nameInput.value = name || "";
+            const nameInput = card.querySelector("[data-device-edit-name]");
+            const ownerInput = card.querySelector("[data-device-edit-owner]");
+            const addressInput = card.querySelector("[data-device-edit-addresses]");
+            const editBtn = card.querySelector("[data-device-edit]");
+            const deleteBtn = card.querySelector("[data-device-delete]");
 
-            const ipInput = document.createElement("input");
-            ipInput.className = "ui-text-input";
-            ipInput.type = "text";
-            ipInput.value = ip || "";
+            if (nameInput) nameInput.value = snapshot.machine_name;
+            if (ownerInput) ownerInput.value = snapshot.owner;
+            if (addressInput) addressInput.value = snapshot.addresses.join("\n");
+            updateSummaryFromSnapshot(card, snapshot);
 
-            const removeBtn = document.createElement("button");
-            removeBtn.type = "button";
-            removeBtn.className = "btn-stop";
-            removeBtn.textContent = "Remove";
-            removeBtn.addEventListener("click", () => {
-                row.remove();
+            editBtn?.addEventListener("click", () => {
+                const isEditing = card.dataset.editing === "true";
+                if (!isEditing) {
+                    setCardEditing(card, true);
+                    nameInput?.focus();
+                    return;
+                }
+                const nextSnapshot = readCardSnapshot(card);
+                card.dataset.machineSnapshot = JSON.stringify(nextSnapshot);
+                updateSummaryFromSnapshot(card, nextSnapshot);
+                setCardEditing(card, false);
                 syncDeviceMapSaveVisibility();
             });
 
-            nameCell.appendChild(nameInput);
-            ipCell.appendChild(ipInput);
-            actionCell.appendChild(removeBtn);
+            deleteBtn?.addEventListener("click", () => {
+                const isEditing = card.dataset.editing === "true";
+                if (isEditing) {
+                    if (card.dataset.isNew === "true") {
+                        card.remove();
+                    } else {
+                        const original = normalizeMachine(JSON.parse(card.dataset.machineSnapshot || "{}"));
+                        if (nameInput) nameInput.value = original.machine_name;
+                        if (ownerInput) ownerInput.value = original.owner;
+                        if (addressInput) addressInput.value = original.addresses.join("\n");
+                        updateSummaryFromSnapshot(card, original);
+                        setCardEditing(card, false);
+                    }
+                    syncDeviceMapSaveVisibility();
+                    return;
+                }
+                card.remove();
+                syncDeviceMapSaveVisibility();
+            });
 
-            row.appendChild(nameCell);
-            row.appendChild(ipCell);
-            row.appendChild(actionCell);
-            deviceMapBody.appendChild(row);
+            [nameInput, ownerInput, addressInput].forEach((input) => {
+                input?.addEventListener("input", syncDeviceMapSaveVisibility);
+            });
 
-            nameInput.addEventListener("input", syncDeviceMapSaveVisibility);
-            ipInput.addEventListener("input", syncDeviceMapSaveVisibility);
+            deviceMapBody.appendChild(card);
+
+            if (options.isNew) {
+                setCardEditing(card, true);
+                nameInput?.focus();
+            }
+        }
+
+        function renderDeviceMapRows(map, options = {}) {
+            if (!deviceMapBody) return;
+            const nextMachines = Array.isArray(config.deviceMachines) && config.deviceMachines.length
+                ? config.deviceMachines.map(normalizeMachine)
+                : buildDeviceMachines(map);
+            if (options.updateBaseline !== false) {
+                deviceMapBaseline = serializeDeviceRows(flattenDeviceMachines(nextMachines));
+            }
+            deviceMapBody.innerHTML = "";
+            if (!nextMachines.length) {
+                addDeviceRow({ machine_name: "", addresses: [], last_seen: "-", owner: "-" }, { isNew: true });
+                syncDeviceMapSaveVisibility();
+                return;
+            }
+            nextMachines.forEach((machine) => addDeviceRow(machine));
+            syncDeviceMapSaveVisibility();
         }
 
         function collectDeviceMapRows() {
             const rows = [];
             if (!deviceMapBody) return rows;
-            deviceMapBody.querySelectorAll("tr").forEach((row) => {
-                const inputs = row.querySelectorAll("input");
-                const name = String(inputs[0]?.value || "").trim();
-                const ip = String(inputs[1]?.value || "").trim();
-                if (!name && !ip) return;
-                rows.push({ name, ip });
+            deviceMapBody.querySelectorAll(".device-machine-card").forEach((card) => {
+                const snapshot = card.dataset.editing === "true"
+                    ? readCardSnapshot(card)
+                    : normalizeMachine(JSON.parse(card.dataset.machineSnapshot || "{}"));
+                if (!snapshot.machine_name && !snapshot.addresses.length) return;
+                snapshot.addresses.forEach((ip) => rows.push({ name: snapshot.machine_name, ip, owner: snapshot.owner === "-" ? "" : snapshot.owner }));
             });
             return rows;
         }
 
         function validateDeviceMapRows(rows) {
+            const seenIps = new Set();
             for (const row of rows) {
                 if (!row.name || !row.ip) {
-                    return "Each device row needs both a name and an IP address.";
+                    return "Each machine needs a name and at least one IP address.";
                 }
+                if (seenIps.has(row.ip)) {
+                    return `Duplicate IP detected: ${row.ip}`;
+                }
+                seenIps.add(row.ip);
             }
             return "";
         }
@@ -338,6 +495,7 @@
                     return;
                 }
                 config.deviceMap = body.device_map || {};
+                config.deviceMachines = Array.isArray(body.device_machines) ? body.device_machines.map(normalizeMachine) : buildDeviceMachines(config.deviceMap);
                 renderDeviceMapRows(config.deviceMap);
                 setStatus(body.message || "Device map saved.", "ok");
             });
@@ -374,7 +532,7 @@
             });
         }
 
-        function showDeviceMapImportPreview(changes, totalIncoming = 0) {
+        function showDeviceMapImportPreview(changes) {
             const modal = document.createElement("div");
             modal.className = "modal-overlay open";
             modal.setAttribute("aria-hidden", "false");
@@ -446,16 +604,17 @@
                     const prev = String(previousMap[ip] || "");
                     const next = String(nextMap[ip] || "");
                     if (!prev && next) {
-                        acc.push(`${next} — ${ip}`);
+                        acc.push(`${next} - ${ip}`);
                     } else if (prev && next && prev !== next) {
-                        acc.push(`${next} — ${ip} (was ${prev})`);
+                        acc.push(`${next} - ${ip} (was ${prev})`);
                     }
                     return acc;
                 }, []);
                 config.deviceMap = nextMap;
+                config.deviceMachines = Array.isArray(body.device_machines) ? body.device_machines.map(normalizeMachine) : buildDeviceMachines(nextMap);
                 renderDeviceMapRows(config.deviceMap);
                 setStatus(body.message || "Device map imported.", "ok");
-                showDeviceMapImportPreview(changes, body.incoming || 0);
+                showDeviceMapImportPreview(changes);
             });
         }
 
@@ -475,7 +634,7 @@
         if (refreshStatesBtn) refreshStatesBtn.addEventListener("click", refreshAllStates);
         if (addDeviceRowBtn) {
             addDeviceRowBtn.addEventListener("click", () => {
-                addDeviceRow("", "");
+                addDeviceRow({ machine_name: "", addresses: [], last_seen: "-", owner: "-" }, { isNew: true });
                 syncDeviceMapSaveVisibility();
             });
         }
@@ -520,6 +679,9 @@
             });
         }
 
+        if (!Array.isArray(config.deviceMachines) || !config.deviceMachines.length) {
+            config.deviceMachines = buildDeviceMachines(config.deviceMap || {});
+        }
         renderDeviceMapRows(config.deviceMap || {});
         syncSecuritySaveVisibility();
         syncPathsSaveVisibility();

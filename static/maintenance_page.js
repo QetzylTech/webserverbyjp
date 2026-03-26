@@ -84,8 +84,11 @@
             bootstrap: document.getElementById("maintenance-bootstrap-data"),
             csrfInput: document.getElementById("maintenance-csrf-token"),
             passwordModal: document.getElementById("maintenance-password-modal"),
+            passwordTitle: document.getElementById("maintenance-password-title"),
             passwordText: document.getElementById("maintenance-password-text"),
+            passwordImage: document.getElementById("maintenance-password-image"),
             passwordInput: document.getElementById("maintenance-password-input"),
+            passwordError: document.getElementById("maintenance-password-error"),
             passwordCancel: document.getElementById("maintenance-password-cancel"),
             passwordSubmit: document.getElementById("maintenance-password-submit"),
             errorModal: document.getElementById("maintenance-error-modal"),
@@ -589,6 +592,7 @@
                     coreController?.requestPassword("open_rules_edit", "Enter sudo password to edit cleanup rules.", async (password) => {
                         try {
                             await coreController?.confirmPassword?.("open_rules_edit", password);
+                            modalsController?.closePasswordModal?.();
                             if (rulesController && typeof rulesController.beginRulesEdit === "function") {
                                 rulesController.beginRulesEdit();
                             }
@@ -613,6 +617,7 @@
                     coreController?.requestPassword("save_rules", "Enter sudo password to save cleanup rules.", async (password) => {
                         try {
                             await rulesController.saveRulesEdit(password);
+                            modalsController?.closePasswordModal?.();
                             syncPaneHeadActions();
                             renderActionDescription();
                         } catch (err) {
@@ -699,9 +704,6 @@
                     if (!dom.passwordInput) return;
                     const password = (dom.passwordInput.value || "").trim();
                     if (!password) return;
-                    if (modalsController && typeof modalsController.closePasswordModal === "function") {
-                        modalsController.closePasswordModal();
-                    }
                     coreController?.handlePasswordSubmit?.(password);
                 });
             }

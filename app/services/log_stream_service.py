@@ -43,6 +43,10 @@ def _file_source_settings(source: str, context: str, path: Path, text_limit: int
     }
 
 
+def _minecraft_live_log_path(ctx: Any) -> Path:
+    return Path(getattr(ctx, "MINECRAFT_LOGS_DIR", Path())) / "latest.log"
+
+
 def is_rcon_noise_line(line: object) -> bool:
     lower = str(line or "").lower()
     if "thread rcon client" in lower:
@@ -65,12 +69,21 @@ def log_source_settings(ctx: Any, source: object) -> LogSourceSettings | None:
         return None
     if normalized == "minecraft":
         stream_mode = str(ports.log.minecraft_log_stream_mode() or "journal").strip().lower()
+        latest_log_path = _minecraft_live_log_path(ctx)
+        if stream_mode == "journal" and latest_log_path.exists():
+            return {
+                "source": normalized,
+                "type": "file_poll",
+                "context": "minecraft_log_stream",
+                "path": latest_log_path,
+                "text_limit": ctx.MINECRAFT_LOG_TEXT_LIMIT,
+            }
         if stream_mode == "file_poll":
             return {
                 "source": normalized,
                 "type": "file_poll",
                 "context": "minecraft_log_stream",
-                "path": ctx.MINECRAFT_LOGS_DIR / "latest.log",
+                "path": latest_log_path,
                 "text_limit": ctx.MINECRAFT_LOG_TEXT_LIMIT,
             }
         return {
@@ -296,6 +309,14 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
             stream_state["file_offset"] = int(offset)
             stream_state["follow_initialized"] = bool(initialized)
 
+    def _wait_for_clients_or_timeout(stream_state: dict[str, Any], timeout_seconds: float) -> None:
+        timeout_value = max(0.1, float(timeout_seconds or 0.1))
+        with stream_state["cond"]:
+            stream_state["cond"].wait_for(
+                lambda: int(stream_state.get("clients", 0) or 0) > 0,
+                timeout=timeout_value,
+            )
+
     def _read_file_updates(stream_state: dict[str, Any], path: Path, *, allow_break_on_no_clients: bool) -> None:
         nonlocal file_poll_offset, follow_from_end_initialized
         if not path.exists():
@@ -342,6 +363,7 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
         with stream_state["lifecycle_lock"]:
             client_count = stream_state["clients"]
         if client_count <= 0:
+            idle_poll_seconds = float(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0) or 15.0)
             if settings["type"] in {"file", "file_poll"}:
                 if not _allow_background_follow():
                     try:
@@ -349,20 +371,20 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                     except Exception:
                         service_status = ""
                     if service_status in off_states:
-                        time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                        _wait_for_clients_or_timeout(stream_state, idle_poll_seconds)
                         continue
                 _read_file_updates(
                     stream_state,
                     _settings_path(settings["path"]),
                     allow_break_on_no_clients=False,
                 )
-                time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                _wait_for_clients_or_timeout(stream_state, idle_poll_seconds)
                 continue
             if _allow_background_follow():
                 _refresh_idle_log_cache()
-                time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+                _wait_for_clients_or_timeout(stream_state, idle_poll_seconds)
                 continue
-            time.sleep(getattr(ctx, "LOG_FETCHER_IDLE_POLL_SECONDS", 15.0))
+            _wait_for_clients_or_timeout(stream_state, idle_poll_seconds)
             continue
 
         proc = None
@@ -445,6 +467,8 @@ def increment_log_stream_clients(ctx: Any, source: object) -> None:
         return
     with stream_state["lifecycle_lock"]:
         stream_state["clients"] += 1
+    with stream_state["cond"]:
+        stream_state["cond"].notify_all()
 
 
 def decrement_log_stream_clients(ctx: Any, source: object) -> None:
@@ -457,5 +481,7 @@ def decrement_log_stream_clients(ctx: Any, source: object) -> None:
     with stream_state["lifecycle_lock"]:
         stream_state["clients"] = max(0, stream_state["clients"] - 1)
         proc = stream_state["proc"]
+    with stream_state["cond"]:
+        stream_state["cond"].notify_all()
     ports.log.terminate_process(proc)
 

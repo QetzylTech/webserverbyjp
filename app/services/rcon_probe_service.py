@@ -25,6 +25,11 @@ def is_rcon_startup_ready(ctx: Any, service_status: str | None = None) -> bool:
     return True
 
 
+def _mark_rcon_startup_ready(ctx: Any) -> None:
+    with ctx.rcon_startup_lock:
+        ctx.rcon_startup_ready = True
+
+
 def clean_rcon_output(text: object) -> str:
     cleaned = str(text or "")
     cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", cleaned)
@@ -148,6 +153,21 @@ def probe_tick_rate(ctx: Any) -> str | None:
     return None
 
 
+def _probe_startup_readiness(ctx: Any) -> str | None:
+    try:
+        list_result = run_mcrcon(ctx, "list", timeout=8)
+    except Exception as exc:
+        ctx.log_mcweb_exception("_probe_startup_readiness/list", exc)
+        return None
+    if getattr(list_result, "returncode", 1) != 0:
+        return None
+    _mark_rcon_startup_ready(ctx)
+    parsed = parse_players_online((list_result.stdout or "") + (list_result.stderr or ""))
+    if parsed is not None:
+        return parsed
+    return "0"
+
+
 def probe_minecraft_runtime_metrics(ctx: Any, force: bool = False) -> tuple[str, str]:
     service_status = ctx.get_status()
     if service_status != "active":
@@ -160,9 +180,13 @@ def probe_minecraft_runtime_metrics(ctx: Any, force: bool = False) -> tuple[str,
         return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
     now = time.time()
     startup_ready = is_rcon_startup_ready(ctx, service_status=service_status)
+    startup_players_online = None
+    intent = str(ctx.get_service_status_intent() or "").strip().lower()
+    if not startup_ready and intent == "starting":
+        startup_players_online = _probe_startup_readiness(ctx)
+        startup_ready = startup_players_online is not None
     if not startup_ready:
         with ctx.mc_query_lock:
-            intent = ctx.get_service_status_intent()
             if intent == "starting":
                 ctx.mc_cached_players_online = "unknown"
             else:
@@ -174,16 +198,17 @@ def probe_minecraft_runtime_metrics(ctx: Any, force: bool = False) -> tuple[str,
         probe_interval = ctx.MC_QUERY_INTERVAL_SECONDS
         if not force and (now - ctx.mc_last_query_at) < probe_interval:
             return ctx.mc_cached_players_online, ctx.mc_cached_tick_rate
-    players_online = "unknown"
+    players_online = startup_players_online if startup_players_online is not None else "unknown"
     tick_rate = "--"
-    try:
-        list_result = run_mcrcon(ctx, "list", timeout=8)
-        if list_result.returncode == 0:
-            parsed = parse_players_online((list_result.stdout or "") + (list_result.stderr or ""))
-            if parsed is not None:
-                players_online = parsed
-    except Exception as exc:
-        ctx.log_mcweb_exception("_probe_minecraft_runtime_metrics/list", exc)
+    if startup_players_online is None:
+        try:
+            list_result = run_mcrcon(ctx, "list", timeout=8)
+            if list_result.returncode == 0:
+                parsed = parse_players_online((list_result.stdout or "") + (list_result.stderr or ""))
+                if parsed is not None:
+                    players_online = parsed
+        except Exception as exc:
+            ctx.log_mcweb_exception("_probe_minecraft_runtime_metrics/list", exc)
     try:
         tick_rate_val = probe_tick_rate(ctx)
         if tick_rate_val:

@@ -31,8 +31,17 @@ def register_notification_routes(app: Any, state: Mapping[str, Any]) -> None:
 
     @app.route("/notifications-stream")
     def notifications_stream() -> Response:
-        since_raw = request.args.get("since", "") or request.headers.get("Last-Event-ID", "") or "0"
-        last_event_id = _coerce_event_id(since_raw)
+        explicit_since = request.args.get("since", "") or request.headers.get("Last-Event-ID", "")
+        last_event_id = _coerce_event_id(explicit_since)
+        if not explicit_since:
+            db_path = state.get("APP_STATE_DB_PATH")
+            if db_path is not None:
+                try:
+                    latest_event = state_store_service.get_latest_event(db_path, topic="ui_notification")
+                except Exception:
+                    latest_event = None
+                if isinstance(latest_event, dict):
+                    last_event_id = _coerce_event_id(latest_event.get("id"), last_event_id)
 
         def generate() -> Iterator[str]:
             nonlocal last_event_id
@@ -52,11 +61,11 @@ def register_notification_routes(app: Any, state: Mapping[str, Any]) -> None:
                         for row in rows:
                             payload = row.get("payload", {}) if isinstance(row, dict) else {}
                             notification = payload.get("notification") if isinstance(payload, dict) else None
-                            if isinstance(notification, dict):
-                                data = json.dumps(notification, separators=(",", ":"))
-                                yield f"event: notification\ndata: {data}\n\n"
                             row_id = row.get("id", last_event_id) if isinstance(row, dict) else last_event_id
                             last_event_id = _coerce_event_id(row_id, last_event_id)
+                            if isinstance(notification, dict):
+                                data = json.dumps(notification, separators=(",", ":"))
+                                yield f"id: {last_event_id}\nevent: notification\ndata: {data}\n\n"
                         continue
                 yield ": keepalive\n\n"
                 time.sleep(2.0)

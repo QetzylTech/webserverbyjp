@@ -59,6 +59,7 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS device_fallmap (
             ip TEXT PRIMARY KEY,
             device_name TEXT NOT NULL,
+            owner TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
@@ -197,6 +198,9 @@ def _create_tables(conn: sqlite3.Connection) -> None:
     if "checkpoint" not in existing_cols:
         conn.execute("ALTER TABLE operations ADD COLUMN checkpoint TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_operations_idempotency_key ON operations(idempotency_key)")
+    device_fallmap_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(device_fallmap)").fetchall()}
+    if "owner" not in device_fallmap_cols:
+        conn.execute("ALTER TABLE device_fallmap ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
 
 
 def initialize_state_db(

@@ -123,6 +123,7 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                 state["metrics_stream_client_count"] += 1
                 state["metrics_cache_cond"].notify_all()
             last_event_id = 0
+            last_cache_seq = 0
             db_path = state.get("APP_STATE_DB_PATH")
             if db_path is not None:
                 try:
@@ -133,9 +134,17 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                     latest_payload = latest_event.get("payload", {})
                     latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
                     last_event_id = _coerce_event_id(latest_event.get("id", 0))
+                    last_cache_seq = last_event_id
                     if isinstance(latest_snapshot, dict):
                         payload = json.dumps(_attach_nav_attention(latest_snapshot), separators=(",", ":"))
                         yield f"data: {payload}\n\n"
+            if not last_event_id:
+                with state["metrics_cache_cond"]:
+                    cache_payload = dict(state["metrics_cache_payload"]) if isinstance(state.get("metrics_cache_payload"), dict) else None
+                    last_cache_seq = _coerce_event_id(state.get("metrics_cache_seq", 0))
+                if isinstance(cache_payload, dict):
+                    payload = json.dumps(_attach_nav_attention(cache_payload), separators=(",", ":"))
+                    yield f"data: {payload}\n\n"
             try:
                 while True:
                     _refresh_metrics_snapshot_best_effort()
@@ -157,17 +166,32 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                                 if isinstance(snapshot, dict):
                                     payload = json.dumps(_attach_nav_attention(snapshot), separators=(",", ":"))
                                     yield f"data: {payload}\n\n"
-                                last_event_id = _coerce_event_id(
+                                row_id = _coerce_event_id(
                                     row.get("id", last_event_id) if isinstance(row, dict) else last_event_id,
                                     last_event_id,
                                 )
+                                last_event_id = max(last_event_id, row_id)
+                                last_cache_seq = max(last_cache_seq, row_id)
                             continue
+                    with state["metrics_cache_cond"]:
+                        cache_payload = dict(state["metrics_cache_payload"]) if isinstance(state.get("metrics_cache_payload"), dict) else None
+                        cache_seq = _coerce_event_id(state.get("metrics_cache_seq", 0), last_cache_seq)
+                    if isinstance(cache_payload, dict) and cache_seq > last_cache_seq:
+                        payload = json.dumps(_attach_nav_attention(cache_payload), separators=(",", ":"))
+                        yield f"data: {payload}\n\n"
+                        last_cache_seq = cache_seq
+                        last_event_id = max(last_event_id, cache_seq)
+                        continue
                     yield ": keepalive\n\n"
                     if client_id:
                         _client_registry.touch_client(state, client_id, channel="metrics_stream")
-                    heartbeat = float(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
-                    collect_interval = float(state.get("METRICS_COLLECT_INTERVAL_SECONDS", 1) or 1)
-                    time.sleep(min(heartbeat, collect_interval))
+                    configured_heartbeat = float(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
+                    heartbeat = max(0.5, min(configured_heartbeat, 1.0))
+                    with state["metrics_cache_cond"]:
+                        state["metrics_cache_cond"].wait_for(
+                            lambda: _coerce_event_id(state.get("metrics_cache_seq", 0), last_cache_seq) > last_cache_seq,
+                            timeout=heartbeat,
+                        )
             finally:
                 if client_id:
                     _client_registry.unregister_client(state, client_id, channel="metrics_stream")

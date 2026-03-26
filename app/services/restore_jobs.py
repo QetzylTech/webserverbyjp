@@ -61,6 +61,7 @@ def _record_restore_run(ctx: Any, job_id: object, backup_filename: object, resul
 
 def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
     state, lock = _ensure_restore_status_state(ctx)
+    log_file_name = ""
     with lock:
         if bool(state.get("running")):
             return {
@@ -78,8 +79,10 @@ def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
             )
             log_dir = _resolve_restore_log_dir(ctx)
             state["log_file"] = str(log_dir / log_name)
+            log_file_name = str(log_name)
         except Exception:
             state["log_file"] = None
+            log_file_name = ""
         state["job_id"] = job_id
         state["running"] = True
         state["result"] = None
@@ -124,8 +127,8 @@ def start_restore_job(ctx: Any, backup_filename: object) -> dict[str, object]:
                 "message": "Failed to start restore worker thread.",
             }
         append_restore_event(ctx, "Failed to start restore worker thread.")
-        return {"ok": False, "error": "thread_start_failed", "message": "Failed to start restore worker thread.", "job_id": job_id}
-    return {"ok": True, "job_id": job_id}
+        return {"ok": False, "error": "thread_start_failed", "message": "Failed to start restore worker thread.", "job_id": job_id, "log_file": log_file_name}
+    return {"ok": True, "job_id": job_id, "log_file": log_file_name}
 
 
 start_restore_worker = start_restore_job

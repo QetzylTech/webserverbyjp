@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 import re
 from zoneinfo import ZoneInfo
 
@@ -85,3 +86,46 @@ def test_metrics_snapshot_grouping(monkeypatch):
     assert snapshot["cleanup"]["missed_runs"] == snapshot["cleanup_missed_runs"]
     assert snapshot["cleanup"]["next_run"] == snapshot["cleanup_next_run"]
     assert snapshot["cleanup"]["stale_worlds_count"] == snapshot["stale_worlds_count"]
+
+
+def test_active_clients_bypass_slow_metrics_cache():
+    calls = {"cpu": 0, "ram": 0, "freq": 0, "storage": 0}
+
+    class Ctx:
+        slow_metrics_lock = type("DummyLock", (), {"__enter__": lambda self: self, "__exit__": lambda self, exc_type, exc, tb: False})()
+        slow_metrics_cache = {
+            "cpu_per_core": ["1.0"],
+            "ram_usage": "old-ram",
+            "cpu_frequency": "old-freq",
+            "storage_usage": "old-storage",
+            "backups_status": "old-backups",
+        }
+        slow_metrics_cache_status = "active"
+        slow_metrics_cache_at = 9_999_999_999.0
+        BACKUP_DIR = Path(".")
+
+        @staticmethod
+        def get_cpu_usage_per_core():
+            calls["cpu"] += 1
+            return ["20.0"]
+
+        @staticmethod
+        def get_ram_usage():
+            calls["ram"] += 1
+            return "new-ram"
+
+        @staticmethod
+        def get_cpu_frequency():
+            calls["freq"] += 1
+            return "new-freq"
+
+        @staticmethod
+        def get_storage_usage():
+            calls["storage"] += 1
+            return "new-storage"
+
+    snapshot = metrics_runtime.get_slow_metrics(Ctx(), "active", active_clients=True)
+
+    assert snapshot["cpu_per_core"] == ["20.0"]
+    assert snapshot["cpu_frequency"] == "new-freq"
+    assert calls == {"cpu": 1, "ram": 1, "freq": 1, "storage": 1}

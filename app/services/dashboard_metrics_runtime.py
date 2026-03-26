@@ -278,15 +278,7 @@ def _resolve_service_status_display(
 def slow_metrics_ttl_seconds(ctx: Any, service_status: object, *, active_clients: bool = False) -> float:
     """Return slow-metric cache TTL for current service state."""
     if active_clients:
-        try:
-            collect_interval = float(getattr(ctx, "METRICS_COLLECT_INTERVAL_SECONDS", 1.0) or 1.0)
-        except Exception:
-            collect_interval = 1.0
-        try:
-            configured = float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", collect_interval) or collect_interval)
-        except Exception:
-            configured = collect_interval
-        return min(collect_interval, configured)
+        return 0.0
     if service_status == "active":
         return float(getattr(ctx, "SLOW_METRICS_INTERVAL_ACTIVE_SECONDS", 5.0) or 5.0)
     return float(getattr(ctx, "SLOW_METRICS_INTERVAL_OFF_SECONDS", 15.0) or 15.0)
@@ -296,13 +288,14 @@ def get_slow_metrics(ctx: Any, service_status: object, *, active_clients: bool =
     """Return cached slow metrics or refresh when TTL expires."""
     now = time.time()
     ttl = slow_metrics_ttl_seconds(ctx, service_status, active_clients=active_clients)
-    with ctx.slow_metrics_lock:
-        if (
-            ctx.slow_metrics_cache
-            and ctx.slow_metrics_cache_status == service_status
-            and (now - ctx.slow_metrics_cache_at) <= ttl
-        ):
-            return dict(ctx.slow_metrics_cache)
+    if ttl > 0:
+        with ctx.slow_metrics_lock:
+            if (
+                ctx.slow_metrics_cache
+                and ctx.slow_metrics_cache_status == service_status
+                and (now - ctx.slow_metrics_cache_at) <= ttl
+            ):
+                return dict(ctx.slow_metrics_cache)
 
     snapshot: dict[str, Any] = {
         "cpu_per_core": ctx.get_cpu_usage_per_core(),
@@ -503,6 +496,7 @@ def metrics_collector_loop(ctx: Any) -> None:
     """Background metrics loop that idles when there are no consumers."""
     process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
     always_collect = process_role == "worker"
+    next_collect_at = time.monotonic()
     while True:
         if not always_collect:
             with ctx.metrics_cache_cond:
@@ -514,12 +508,16 @@ def metrics_collector_loop(ctx: Any) -> None:
                 should_collect = has_active_flask_app_clients(ctx)
             if not should_collect:
                 _maybe_refresh_idle_storage_cache(ctx)
+                next_collect_at = time.monotonic()
                 continue
         snapshot = collect_and_publish_metrics(ctx)
         interval = _metrics_interval_seconds(ctx, snapshot)
+        now_monotonic = time.monotonic()
+        next_collect_at = max(next_collect_at + interval, now_monotonic)
+        wait_seconds = max(0.0, next_collect_at - now_monotonic)
         with ctx.metrics_cache_cond:
             if always_collect or has_active_flask_app_clients(ctx):
-                ctx.metrics_cache_cond.wait(timeout=interval)
+                ctx.metrics_cache_cond.wait(timeout=wait_seconds)
 
 
 def ensure_metrics_collector_started(ctx: Any) -> None:

@@ -148,6 +148,8 @@ def get_restore_status(ctx: Any, since_seq: object = 0, job_id: object = None) -
                 }
             current_job_id = ""
         result = state.get("result")
+        current_log_file = str(state.get("log_file", "") or "").strip()
+        current_log_name = Path(current_log_file).name if current_log_file else ""
         if not events and db_path:
             try:
                 rows = state_store_service.list_events_since(
@@ -198,6 +200,7 @@ def get_restore_status(ctx: Any, since_seq: object = 0, job_id: object = None) -
             "running": bool(state.get("running")),
             "seq": seq_value,
             "events": events,
+            "log_file": current_log_name,
             "result": dict(result) if isinstance(result, dict) else result,
         }
 

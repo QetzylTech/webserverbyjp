@@ -14,8 +14,7 @@
             }
             if (dom.passwordText) {
                 if (actionRequest?.kind === "restore") {
-                    const restoreDisplay = actionRequest.displayName || actionRequest.filename || "selected backup";
-                    dom.passwordText.textContent = `Enter sudo password to restore ${restoreDisplay}. This will create a new world folder and switch level-name.`;
+                    dom.passwordText.textContent = "Enter sudo password to restore this backup.";
                 } else {
                     dom.passwordText.textContent = "Enter sudo password to download this backup.";
                 }

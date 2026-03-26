@@ -175,26 +175,48 @@ def _parse_device_rows(rows: list[object]) -> dict[str, str]:
     return mapping
 
 
-def _load_device_fallmap(state: Mapping[str, Any]) -> dict[str, str]:
+def _load_device_fallmap_rows(state: Mapping[str, Any]) -> list[dict[str, str]]:
     db_path = _state_value(state, "APP_STATE_DB_PATH")
     if not db_path:
-        return {}
+        return []
     try:
-        return state_store_service.load_fallmap(db_path)
+        rows = state_store_service.load_fallmap_rows(db_path)
     except Exception as exc:
         try:
             state["log_mcweb_exception"]("panel_settings/device_map_load", exc)
         except Exception:
             pass
-    return {}
+        return []
+    output: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        output.append(
+            {
+                "ip": str(row.get("ip", "") or "").strip(),
+                "device_name": str(row.get("device_name", "") or "").strip(),
+                "owner": str(row.get("owner", "") or "").strip(),
+            }
+        )
+    return output
 
 
-def _write_device_fallmap(state: Mapping[str, Any], mapping: dict[str, str]) -> bool:
+def _fallmap_rows_to_device_map(rows: list[dict[str, str]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for row in rows:
+        ip = str(row.get("ip", "") or "").strip()
+        name = str(row.get("device_name", "") or row.get("name", "") or "").strip()
+        if ip and name:
+            mapping[ip] = name
+    return mapping
+
+
+def _write_device_fallmap_rows(state: Mapping[str, Any], rows: list[dict[str, str]]) -> bool:
     db_path = _state_value(state, "APP_STATE_DB_PATH")
     if not db_path:
         return False
     try:
-        state_store_service.replace_fallmap(db_path, cast(Mapping[object, object], mapping))
+        state_store_service.replace_fallmap_rows(db_path, cast(list[object], rows))
         return True
     except Exception as exc:
         try:
@@ -202,6 +224,80 @@ def _write_device_fallmap(state: Mapping[str, Any], mapping: dict[str, str]) -> 
         except Exception:
             pass
     return False
+
+
+def _load_user_records(state: Mapping[str, Any]) -> list[dict[str, str]]:
+    db_path = _state_value(state, "APP_STATE_DB_PATH")
+    if not db_path:
+        return []
+    try:
+        rows = state_store_service.load_user_records(db_path)
+    except Exception as exc:
+        try:
+            state["log_mcweb_exception"]("panel_settings/user_records_load", exc)
+        except Exception:
+            pass
+        return []
+    normalized: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "ip": str(row.get("ip", "") or "").strip(),
+                "timestamp": str(row.get("timestamp", "") or "").strip(),
+                "device_name": str(row.get("device_name", "") or "").strip(),
+                "updated_at": str(row.get("updated_at", "") or "").strip(),
+            }
+        )
+    return normalized
+
+
+def _build_device_machine_rows(
+    fallmap_rows: list[dict[str, str]],
+    user_rows: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    activity_by_ip = {
+        str(row.get("ip", "") or "").strip(): row
+        for row in user_rows
+        if str(row.get("ip", "") or "").strip()
+    }
+    grouped: dict[str, dict[str, object]] = {}
+    for row in fallmap_rows or []:
+        ip_text = str(row.get("ip", "") or "").strip()
+        name_text = str(row.get("device_name", "") or row.get("name", "") or "").strip()
+        owner_text = str(row.get("owner", "") or "").strip()
+        if not ip_text or not name_text:
+            continue
+        machine = grouped.setdefault(name_text, {"addresses": [], "owner": ""})
+        cast(list[str], machine["addresses"]).append(ip_text)
+        if owner_text and not str(machine.get("owner", "") or "").strip():
+            machine["owner"] = owner_text
+
+    machines: list[dict[str, object]] = []
+    for machine_name, details in grouped.items():
+        addresses = sorted({str(ip or "").strip() for ip in cast(list[str], details.get("addresses", [])) if str(ip or "").strip()})
+        activity_rows = [activity_by_ip[ip] for ip in addresses if ip in activity_by_ip]
+        latest_row = (
+            max(activity_rows, key=lambda row: str(row.get("updated_at", "") or "").strip())
+            if activity_rows
+            else None
+        )
+        machines.append(
+            {
+                "machine_name": machine_name,
+                "addresses": addresses,
+                "last_seen": str((latest_row or {}).get("timestamp", "") or "").strip() or "-",
+                "owner": str(details.get("owner", "") or "").strip() or "-",
+            }
+        )
+    machines.sort(
+        key=lambda row: (
+            str(row.get("machine_name", "") or "").lower(),
+            ",".join(cast(list[str], row.get("addresses", []))),
+        )
+    )
+    return machines
 
 
 def _parse_csv_upload(file_storage: Any) -> tuple[dict[str, str], list[str]]:
@@ -233,24 +329,38 @@ def _parse_csv_upload(file_storage: Any) -> tuple[dict[str, str], list[str]]:
 
 
 def _merge_device_maps(
-    existing: dict[str, str],
+    existing: list[dict[str, str]],
     incoming: dict[str, str],
     *,
     mode: str,
     resolution: str,
-) -> tuple[dict[str, str], list[dict[str, str]]]:
-    base = {} if mode == "overwrite" else dict(existing)
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    existing_by_ip = {
+        str(row.get("ip", "") or "").strip(): {
+            "ip": str(row.get("ip", "") or "").strip(),
+            "device_name": str(row.get("device_name", "") or row.get("name", "") or "").strip(),
+            "owner": str(row.get("owner", "") or "").strip(),
+        }
+        for row in existing
+        if str(row.get("ip", "") or "").strip()
+    }
+    base = {} if mode == "overwrite" else dict(existing_by_ip)
     conflicts = []
     for ip, name in incoming.items():
-        if ip in base and base[ip] != name:
-            conflicts.append({"ip": ip, "existing": base[ip], "incoming": name})
+        existing_row = base.get(ip)
+        existing_name = str((existing_row or {}).get("device_name", "") or "").strip()
+        if existing_name and existing_name != name:
+            conflicts.append({"ip": ip, "existing": existing_name, "incoming": name})
             if resolution == "overwrite":
-                base[ip] = name
+                preserved_owner = str((existing_row or {}).get("owner", "") or "").strip()
+                base[ip] = {"ip": ip, "device_name": name, "owner": preserved_owner}
             elif resolution in {"skip", "use_existing"}:
                 continue
         else:
-            base[ip] = name
-    return base, conflicts
+            preserved_owner = str((existing_row or {}).get("owner", "") or "").strip()
+            base[ip] = {"ip": ip, "device_name": name, "owner": preserved_owner}
+    merged_rows = [base[ip] for ip in sorted(base)]
+    return merged_rows, conflicts
 
 
 def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
@@ -264,7 +374,9 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
             "create_backup_dir": False,
             "require_password": _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")),
         }
-        device_map = _load_device_fallmap(state)
+        fallmap_rows = _load_device_fallmap_rows(state)
+        device_map = _fallmap_rows_to_device_map(fallmap_rows)
+        device_machines = _build_device_machine_rows(fallmap_rows, _load_user_records(state))
         data_dir = _state_value(state, "DATA_DIR")
         if not data_dir:
             data_dir = _panel_app_dir(state) / "data"
@@ -281,6 +393,7 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
             panel_settings=panel_settings,
             timezone_options=setup_queries_service.build_timezone_options(panel_settings["display_tz"]),
             device_map=device_map,
+            device_machines=device_machines,
             device_map_sample_path=device_map_sample_path,
         )
 
@@ -409,9 +522,22 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
         raw_rows = payload.get("rows")
         rows: list[object] = raw_rows if isinstance(raw_rows, list) else []
         mapping = _parse_device_rows(rows)
-        if not _write_device_fallmap(state, mapping):
+        fallmap_rows = [
+            {
+                "ip": str(row.get("ip", "") or "").strip(),
+                "device_name": str(row.get("name", "") or "").strip(),
+                "owner": str(row.get("owner", "") or "").strip(),
+            }
+            for row in rows
+            if isinstance(row, dict)
+        ]
+        if not _write_device_fallmap_rows(state, fallmap_rows):
             return _json_fail("Failed to save device map.")
-        return _json_ok({"device_map": mapping, "message": "Device map saved."})
+        return _json_ok({
+            "device_map": mapping,
+            "device_machines": _build_device_machine_rows(fallmap_rows, _load_user_records(state)),
+            "message": "Device map saved.",
+        })
 
     @app.route("/panel-settings/device-map/import", methods=["POST"])
     def panel_settings_device_map_import() -> Any:
@@ -428,7 +554,7 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
         if parse_errors:
             return _json_fail("CSV parse error.", extra={"details": parse_errors})
 
-        existing = _load_device_fallmap(state)
+        existing = _load_device_fallmap_rows(state)
         merged, conflicts = _merge_device_maps(existing, incoming, mode=mode, resolution=resolution)
         if conflicts and not resolution:
             return _json_fail(
@@ -437,10 +563,12 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
                 error="conflict",
                 extra={"conflicts": conflicts, "incoming": len(incoming), "existing": len(existing)},
             )
-        if not _write_device_fallmap(state, merged):
+        if not _write_device_fallmap_rows(state, merged):
             return _json_fail("Failed to import device map.")
+        merged_map = _fallmap_rows_to_device_map(merged)
         return _json_ok({
-            "device_map": merged,
+            "device_map": merged_map,
+            "device_machines": _build_device_machine_rows(merged, _load_user_records(state)),
             "message": "Device map imported.",
             "conflicts": conflicts,
             "incoming": len(incoming),

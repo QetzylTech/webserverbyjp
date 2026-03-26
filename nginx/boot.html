@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Booting Up...</title>
+<link rel="stylesheet" href="../static/global.css"> <!-- corrected path -->
+<style>
+  body {
+    background-color: var(--canvas-bg);
+    color: var(--text);
+    font-family: Arial, Helvetica, Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+  }
+
+  .spinner {
+    border: 6px solid var(--border);       /* visible ring */
+    border-top: 6px solid var(--ui-blue);  /* accent highlight */
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1.5s linear infinite;
+    margin-bottom: 40px;
+  }
+
+  @keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .tooltip {
+    font-size: 1.2em;
+    text-align: center;
+    min-height: 40px;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+    color: var(--theme-text-soft);
+  }
+
+  .tooltip.show {
+    opacity: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div id="tooltip" class="tooltip">Booting...</div>
+
+<script>
+const messages = [
+  "Preparing for battle...",
+  "Hacking the pentagon...",
+  "Summoning the main character...",
+  "Charging the sigma energy...",
+  "LEEEERROOYY JJEEENKINSS!",
+  "Brewing coffee for the server...",
+  "Installing chaos.exe...",
+  "Polishing the rizz crystals...",
+  "Not everything you see on the internet is true - Abraham Lincoln",
+  "Are you sure you opened the right server?",
+  "This is taking a bit too long...",
+  "Better get some snacks",
+  "Never gonna give you up",
+  "Remember, switching to your sword is faster than reloading",
+  "Too close for missiles. Switching to guns. Wait. Wrong game"
+];
+
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+let shuffled = shuffle([...messages]);
+let index = 0;
+const tooltip = document.getElementById("tooltip");
+
+function showMessage() {
+  tooltip.classList.remove("show");
+  setTimeout(() => {
+    tooltip.textContent = shuffled[index];
+    tooltip.classList.add("show");
+    index = (index + 1) % shuffled.length;
+  }, 500);
+}
+
+showMessage();
+setInterval(showMessage, 5000);
+
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme(e) {
+  if (e.matches) {
+    document.documentElement.classList.add("theme-dark");
+  } else {
+    document.documentElement.classList.remove("theme-dark");
+  }
+}
+applyTheme(prefersDark);
+prefersDark.addEventListener("change", applyTheme);
+</script>
+</body>
+</html>

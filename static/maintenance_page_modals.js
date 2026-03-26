@@ -5,6 +5,18 @@
         const dom = ctx.dom || {};
         const state = ctx.state || {};
         const helpers = ctx.helpers || {};
+        const DEFAULT_PASSWORD_TITLE = "Password Required";
+        const DEFAULT_PASSWORD_TEXT = "Enter sudo password to continue.";
+
+        function resetPasswordModal(promptText) {
+            if (dom.passwordTitle) dom.passwordTitle.textContent = DEFAULT_PASSWORD_TITLE;
+            if (dom.passwordText) dom.passwordText.textContent = promptText || DEFAULT_PASSWORD_TEXT;
+            if (dom.passwordImage) dom.passwordImage.hidden = true;
+            if (dom.passwordError) {
+                dom.passwordError.textContent = "";
+                dom.passwordError.hidden = true;
+            }
+        }
 
         function showError(message, details) {
             if (!dom.errorModal || !dom.errorText || !dom.errorDetails) return;
@@ -152,11 +164,27 @@
 
         function openPasswordModal(actionKey, promptText) {
             state.pendingProtectedAction = actionKey;
-            if (dom.passwordText) dom.passwordText.textContent = promptText || "Enter sudo password to continue.";
+            resetPasswordModal(promptText);
             if (dom.passwordInput) dom.passwordInput.value = "";
             if (!dom.passwordModal) return;
             dom.passwordModal.setAttribute("aria-hidden", "false");
             if (dom.passwordInput) dom.passwordInput.focus();
+        }
+
+        function showPasswordError(message, promptText) {
+            if (dom.passwordTitle) dom.passwordTitle.textContent = "Action Rejected";
+            if (dom.passwordText) dom.passwordText.textContent = promptText || "Password incorrect. Enter sudo password to try again.";
+            if (dom.passwordImage) dom.passwordImage.hidden = false;
+            if (dom.passwordError) {
+                dom.passwordError.textContent = message || "Password incorrect.";
+                dom.passwordError.hidden = false;
+            }
+            if (!dom.passwordModal) return;
+            dom.passwordModal.setAttribute("aria-hidden", "false");
+            if (dom.passwordInput) {
+                dom.passwordInput.focus();
+                dom.passwordInput.select();
+            }
         }
 
         function closePasswordModal() {
@@ -164,6 +192,7 @@
             if (!dom.passwordModal) return;
             dom.passwordModal.setAttribute("aria-hidden", "true");
             if (dom.passwordInput) dom.passwordInput.value = "";
+            resetPasswordModal();
         }
 
         return {
@@ -178,6 +207,7 @@
             closeAckSuggestModal,
             syncAckSuggestModeState,
             openPasswordModal,
+            showPasswordError,
             closePasswordModal,
         };
     }

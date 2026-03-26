@@ -23,11 +23,11 @@
             <div class="settings-grid settings-grid--two-col">
                 <label>
                     <span class="settings-label">New admin password</span>
-                    <input id="panel-new-password" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                    <input id="panel-new-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
                 </label>
                 <label>
                     <span class="settings-label">Confirm new password</span>
-                    <input id="panel-new-password-confirm" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Confirm new password">
+                    <input id="panel-new-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new password">
                 </label>
             </div>
             <label class="settings-check">
@@ -42,11 +42,11 @@
             <div class="settings-grid settings-grid--two-col">
                 <label>
                     <span class="settings-label">New superadmin password</span>
-                    <input id="panel-new-superadmin-password" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                    <input id="panel-new-superadmin-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
                 </label>
                 <label>
                     <span class="settings-label">Confirm new superadmin password</span>
-                    <input id="panel-new-superadmin-password-confirm" class="ui-text-input" type="password" autocomplete="new-password" placeholder="Confirm new superadmin password">
+                    <input id="panel-new-superadmin-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new superadmin password">
                 </label>
             </div>
             <div class="settings-actions">
@@ -65,11 +65,11 @@
             <div class="settings-grid settings-grid--two-col">
                 <label>
                     <span class="settings-label">Minecraft world directory</span>
-                    <input id="panel-minecraft-root" class="ui-text-input" type="text" value="{{ current_settings.minecraft_root_dir or '' }}" required>
+                    <input id="panel-minecraft-root" class="ui-card-input" type="text" value="{{ current_settings.minecraft_root_dir or '' }}" required>
                 </label>
                 <label>
                     <span class="settings-label">Backup directory</span>
-                    <input id="panel-backup-dir" class="ui-text-input" type="text" value="{{ current_settings.backup_dir or '' }}" required>
+                    <input id="panel-backup-dir" class="ui-card-input" type="text" value="{{ current_settings.backup_dir or '' }}" required>
                 </label>
             </div>
             <label class="settings-check">
@@ -116,21 +116,19 @@
             <div class="settings-section-separator" role="separator" aria-label="Device mapping list section">
                 <span class="settings-section-separator-text">Mappings</span>
             </div>
-            <div class="device-map-table-wrap">
-                <table class="device-map-table">
-                    <thead>
-                        <tr>
-                            <th>Device name</th>
-                            <th>IP address</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="panel-device-map-body"></tbody>
-                </table>
-                <button id="panel-add-device-row" class="btn-backup" type="button">Add Row</button>
+            <div class="device-machine-list-wrap">
+                <div class="device-machine-list-head" aria-hidden="true">
+                    <span>Machine name</span>
+                    <span>Addresses</span>
+                    <span>Last seen</span>
+                    <span>Owner</span>
+                    <span>Actions</span>
+                </div>
+                <div id="panel-device-map-body" class="device-machine-list" role="list"></div>
+                <button id="panel-add-device-row" class="btn-backup" type="button">Add Machine</button>
             </div>
             <div class="settings-actions">
-                <button id="panel-save-device-map" class="btn-backup" type="button" hidden>Save</button>
+                <button id="panel-save-device-map" class="btn-backup" type="button" hidden>Save Mappings</button>
             </div>
 
             <div class="settings-section-separator" role="separator" aria-label="Device mapping CSV import section">
@@ -177,6 +175,7 @@
 {{ {
     "csrfToken": csrf_token,
     "deviceMap": device_map,
+    "deviceMachines": device_machines,
     "passwordRequired": password_required,
 } | tojson }}
 </script>

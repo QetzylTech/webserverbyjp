@@ -103,6 +103,24 @@ class OperationReconcilerTests(unittest.TestCase):
         self.assertEqual(item["status"], "observed")
         self.assertIsNone(ctx._intent_state["value"])
 
+    def test_reconcile_stop_timeout_clears_stale_shutdown_intent(self):
+        db_path = self._db_path("test_ops_reconcile")
+        state_store_service.create_operation(
+            db_path,
+            op_id="stop-op-2",
+            op_type="stop",
+            target="minecraft",
+            status="intent",
+            payload={},
+        )
+        ctx = self._ctx(db_path, service_status="activating", intent="shutting")
+        with patch("app.services.dashboard_operations_runtime.time.time", side_effect=[9_999_999_999.0, 9_999_999_999.0]):
+            updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
+        self.assertGreaterEqual(updated, 1)
+        item = state_store_service.get_operation(db_path, "stop-op-2")
+        self.assertEqual(item["status"], "failed")
+        self.assertIsNone(ctx._intent_state["value"])
+
 
 if __name__ == "__main__":
     unittest.main()

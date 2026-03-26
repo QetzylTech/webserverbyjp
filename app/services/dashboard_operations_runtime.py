@@ -228,6 +228,12 @@ def reconcile_operations_once(ctx: Any) -> int:
                             message="Stop operation stale before worker progress.",
                             finished=True,
                         )
+                        intent_setter = getattr(ctx, "set_service_status_intent", None)
+                        if callable(intent_setter):
+                            try:
+                                intent_setter(None)
+                            except Exception:
+                                pass
                         updated += 1
                         continue
                     if age >= float(ctx.OPERATION_STOP_TIMEOUT_SECONDS):
@@ -238,6 +244,12 @@ def reconcile_operations_once(ctx: Any) -> int:
                             message="Stop operation timed out.",
                             finished=True,
                         )
+                        intent_setter = getattr(ctx, "set_service_status_intent", None)
+                        if callable(intent_setter):
+                            try:
+                                intent_setter(None)
+                            except Exception:
+                                pass
                         updated += 1
                         continue
                     continue

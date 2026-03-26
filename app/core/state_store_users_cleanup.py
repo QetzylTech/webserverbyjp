@@ -60,23 +60,81 @@ def load_fallmap(db_path: DbPath) -> dict[str, str]:
     return mapping
 
 
+def load_fallmap_rows(db_path: DbPath) -> list[JsonDict]:
+    """Return device fallmap rows with owner metadata."""
+    with profiling.timed("sqlite.fallmap.load_rows"):
+        with _connect(db_path) as conn:
+            _create_tables(conn)
+            rows = conn.execute(
+                "SELECT ip, device_name, owner FROM device_fallmap ORDER BY ip ASC"
+            ).fetchall()
+    output: list[JsonDict] = []
+    for row in rows:
+        ip = str(row["ip"] or "").strip()
+        name = str(row["device_name"] or "").strip()
+        owner = str(row["owner"] or "").strip()
+        if ip and name:
+            output.append({"ip": ip, "device_name": name, "owner": owner})
+    return output
+
+
+def load_user_records(db_path: DbPath) -> list[JsonDict]:
+    """Return user activity rows ordered by most recently updated first."""
+    with profiling.timed("sqlite.users.load"):
+        with _connect(db_path) as conn:
+            _create_tables(conn)
+            rows = conn.execute(
+                """
+                SELECT ip, timestamp, device_name, updated_at
+                FROM users
+                ORDER BY updated_at DESC, ip ASC
+                """
+            ).fetchall()
+    records: list[JsonDict] = []
+    for row in rows:
+        records.append(
+            {
+                "ip": str(row["ip"] or "").strip(),
+                "timestamp": str(row["timestamp"] or "").strip(),
+                "device_name": str(row["device_name"] or "").strip(),
+                "updated_at": str(row["updated_at"] or "").strip(),
+            }
+        )
+    return records
+
+
 def replace_fallmap(db_path: DbPath, mapping: Mapping[object, object]) -> None:
     """Replace the device_fallmap table with the provided IP -> device name mapping."""
+    rows = []
+    for ip, name in (mapping or {}).items():
+        ip_text = str(ip or "").strip()
+        name_text = str(name or "").strip()
+        if not ip_text or not name_text:
+            continue
+        rows.append({"ip": ip_text, "device_name": name_text, "owner": ""})
+    replace_fallmap_rows(db_path, rows)
+
+
+def replace_fallmap_rows(db_path: DbPath, rows: object) -> None:
+    """Replace the device_fallmap table with full row metadata."""
     with profiling.timed("sqlite.fallmap.replace"):
         with _connect(db_path) as conn:
             _create_tables(conn)
             conn.execute("DELETE FROM device_fallmap")
-            for ip, name in (mapping or {}).items():
-                ip_text = str(ip or "").strip()
-                name_text = str(name or "").strip()
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                ip_text = str(row.get("ip", "") or "").strip()
+                name_text = str(row.get("device_name", "") or row.get("name", "") or "").strip()
+                owner_text = str(row.get("owner", "") or "").strip()
                 if not ip_text or not name_text:
                     continue
                 conn.execute(
                     """
-                    INSERT INTO device_fallmap (ip, device_name, updated_at)
-                    VALUES (?, ?, datetime('now'))
+                    INSERT INTO device_fallmap (ip, device_name, owner, updated_at)
+                    VALUES (?, ?, ?, datetime('now'))
                     """,
-                    (ip_text, name_text),
+                    (ip_text, name_text, owner_text),
                 )
             conn.commit()
 

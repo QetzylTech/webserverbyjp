@@ -46,6 +46,13 @@
             const message = payload && typeof payload.message === "string" && payload.message.trim()
                 ? payload.message
                 : fallbackMessage || "Operation failed.";
+            const errorCode = String((payload && (payload.error_code || payload.error)) || "").trim().toLowerCase();
+            if ((errorCode === "invalid_password" || errorCode === "password_incorrect")
+                && modalsController
+                && typeof modalsController.showPasswordError === "function") {
+                modalsController.showPasswordError(message);
+                return;
+            }
             const details = payload && payload.details ? payload.details : payload;
             actions.showError?.(message, details);
         }
@@ -79,6 +86,7 @@
                         modalsController.showDryRunModal(payload.preview || {}, "run-rules");
                     }
                 } else {
+                    modalsController?.closePasswordModal?.();
                     if (modalsController && typeof modalsController.showCompleteModal === "function") {
                         modalsController.showCompleteModal(payload?.result || {}, "run-rules");
                     }
@@ -106,6 +114,7 @@
                         modalsController.showDryRunModal(payload.preview || {}, "manual-delete");
                     }
                 } else {
+                    modalsController?.closePasswordModal?.();
                     if (modalsController && typeof modalsController.showCompleteModal === "function") {
                         modalsController.showCompleteModal(payload?.result || {}, "manual-delete");
                     }

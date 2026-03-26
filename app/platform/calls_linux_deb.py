@@ -54,7 +54,11 @@ def minecraft_startup_probe_output(service_name, logs_dir, *, timeout=4):
 
 def minecraft_follow_logs_command(service_name, logs_dir):
     _ = logs_dir
-    return ["journalctl", "-u", service_name, "-f", "-n", "0", "--no-pager"]
+    base_cmd = ["journalctl", "-u", service_name, "-f", "-n", "0", "--no-pager"]
+    stdbuf_path = shutil.which("stdbuf")
+    if stdbuf_path:
+        return [stdbuf_path, "-oL"] + base_cmd
+    return base_cmd
 
 
 def service_show_load_state(service_name, *, timeout=5, minecraft_root=None):

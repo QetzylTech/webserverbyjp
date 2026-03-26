@@ -108,20 +108,21 @@ def _resolve_observed_service_status(
 ) -> str:
     raw = str(service_status_raw or "inactive").strip().lower()
     off_states = {str(item or "").strip().lower() for item in getattr(ctx, "OFF_STATES", {"inactive", "failed"})}
+    intent = _transition_intent(ctx)
     if raw == "active":
+        return raw
+    if raw in off_states:
+        if intent == "starting":
+            return "starting"
         return raw
     if _active_operation(latest_restore) or _active_operation(latest_stop):
         return "shutting_down"
     if _active_operation(latest_start):
         return "starting"
-
-    intent = _transition_intent(ctx)
     if intent == "shutting":
         return "shutting_down"
     if intent == "starting":
         return "starting"
-    if raw in off_states:
-        return raw
     return raw
 
 

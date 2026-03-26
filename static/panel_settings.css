@@ -231,33 +231,118 @@ body {
   font-size: 1rem;
 }
 
-.device-map-table-wrap {
+.device-machine-list-wrap {
   margin-top: 8px;
 }
 
-.device-map-table {
-  width: 100%;
-  border-collapse: collapse;
+.device-machine-list-head,
+.device-machine-summary {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.3fr) minmax(180px, 1.4fr) minmax(130px, 1fr) minmax(100px, 0.8fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.device-machine-list-head {
+  padding: 0 12px 10px;
+  color: var(--muted-text, #6b7280);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.device-machine-list {
+  display: grid;
+  gap: 10px;
   margin-bottom: 10px;
 }
 
-.device-map-table th,
-.device-map-table td {
-  text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--pane-border, #d0d7e2);
+.device-machine-card {
+  border-radius: 14px;
+  background: var(--pane-content-surface);
+  overflow: hidden;
 }
 
-.device-map-table input {
-  width: 100%;
+.device-machine-summary {
+  min-height: 64px;
+  padding: 12px;
 }
 
-.device-map-remove {
-  background: transparent;
-  border: none;
-  color: #b42318;
+.device-machine-cell {
+  min-width: 0;
+}
+
+.device-machine-name {
   font-weight: 700;
-  cursor: pointer;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.device-machine-addresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.device-machine-address-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.device-machine-muted {
+  color: var(--muted-text, #6b7280);
+  font-size: 0.9rem;
+}
+
+.device-machine-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.device-machine-editor {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--pane-border, #d0d7e2);
+}
+
+.device-machine-editor[hidden] {
+  display: none;
+}
+
+.device-machine-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.device-machine-editor label {
+  min-width: 0;
+}
+
+.device-machine-editor textarea {
+  width: 100%;
+  min-height: 108px;
+  resize: vertical;
+  padding: 10px 12px !important;
+  border-radius: 12px !important;
+  background: var(--ui-card-input-bg) !important;
+}
+
+.device-machine-editor-note {
+  margin: 0;
+  color: var(--muted-text, #6b7280);
+  font-size: 0.86rem;
 }
 
 .device-map-upload {
@@ -304,6 +389,19 @@ body {
 
   .settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .device-machine-list-head {
+    display: none;
+  }
+
+  .device-machine-summary,
+  .device-machine-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .device-machine-actions {
+    justify-content: flex-start;
   }
 }
 

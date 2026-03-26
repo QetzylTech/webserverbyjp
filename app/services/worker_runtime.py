@@ -228,13 +228,14 @@ def _execute_restore(ctx: Any, op_id: str, target: object) -> None:
         return
 
     restore_job_id = str((result or {}).get("job_id", "") or "")
+    restore_log_file = str((result or {}).get("log_file", "") or "")
     _update_operation(
         ctx,
         op_id,
         status="in_progress",
         checkpoint="restore_job_started",
         message="Restore worker started.",
-        payload={"restore_job_id": restore_job_id},
+        payload={"restore_job_id": restore_job_id, "restore_log_file": restore_log_file},
     )
 
     deadline = time.time() + (2 * 60 * 60)
