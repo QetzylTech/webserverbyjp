@@ -28,9 +28,6 @@
     const VIEW_STATE_STORAGE_KEY = "mcweb.viewState.v1";
     const PRIMARY_TTL_MS = 6000;
     const PRIMARY_HEARTBEAT_MS = 2000;
-    const METRICS_FALLBACK_POLL_MS = 1000;
-    const METRICS_SSE_STALL_MS = 1500;
-
     let currentPath = window.location.pathname;
     let currentUrl = window.location.href;
     let navigationToken = 0;
@@ -38,9 +35,8 @@
     let navBound = false;
     let themeBound = false;
     let metricsEventSource = null;
-    let metricsFallbackPollTimer = null;
-    let lastMetricsSseAtMs = 0;
     let notificationsEventSource = null;
+    let operationEventSource = null;
     let pendingPromptAction = null;
     let unsavedChangesGuard = null;
     let unsavedChangesModal = null;
@@ -168,6 +164,7 @@
         maintenanceStateCache: new Map(),
         maintenanceStatePromises: new Map(),
         metricsSubscribers: new Set(),
+        operationSubscribers: new Set(),
         homeLogSubscribers: new Set(),
         homeView: createDefaultHomeViewState(),
         fileViews: {
@@ -416,13 +413,14 @@
     function startPrimaryStreams() {
         startMetricsStream();
         startNotificationsStream();
+        startOperationStream();
         activateHomeLogStream(resolvePreferredHomeLogSource());
     }
 
     function stopPrimaryStreams() {
         stopMetricsStream();
-        stopMetricsFallbackPoll();
         stopNotificationsStream();
+        stopOperationStream();
         stopAllHomeLogStreams();
     }
 
@@ -524,12 +522,20 @@
             setHomeLogSnapshot(message.source, lines, { fromBroadcast: true });
             return;
         }
+        if (type === "log_lines" && message.source) {
+            appendHomeLogLines(message.source, message.lines, { fromBroadcast: true });
+            return;
+        }
         if (type === "log_line" && message.source) {
             appendHomeLogLine(message.source, message.line || "", { fromBroadcast: true });
             return;
         }
         if (type === "notification" && message.payload) {
             handleNotificationPayload(message.payload, { fromBroadcast: true });
+            return;
+        }
+        if (type === "operation_update" && message.payload) {
+            dispatchOperationUpdate(message.payload, { fromBroadcast: true });
             return;
         }
         if (type === "sound_event" && message.sound) {
@@ -1610,6 +1616,22 @@
         }
     }
 
+    function dispatchOperationUpdate(payload, options = {}) {
+        if (!payload || typeof payload !== "object") return;
+        const operation = payload.operation;
+        if (!operation || typeof operation !== "object") return;
+        shellState.operationSubscribers.forEach((listener) => {
+            try {
+                listener(operation);
+            } catch (_) {
+                // Ignore subscriber failures.
+            }
+        });
+        if (!options.fromBroadcast && isPrimaryTab) {
+            broadcast.send({ type: "operation_update", payload });
+        }
+    }
+
     function metricsStreamPath() {
         const clientId = getPersistentClientId("mcweb.clientId");
         return clientId ? `/metrics-stream?client_id=${encodeURIComponent(clientId)}` : "/metrics-stream";
@@ -1623,30 +1645,6 @@
             // Ignore close errors.
         }
         metricsEventSource = null;
-        lastMetricsSseAtMs = 0;
-    }
-
-    function stopMetricsFallbackPoll() {
-        if (!metricsFallbackPollTimer) return;
-        window.clearInterval(metricsFallbackPollTimer);
-        metricsFallbackPollTimer = null;
-    }
-
-    function startMetricsFallbackPoll() {
-        if (metricsFallbackPollTimer) return;
-        metricsFallbackPollTimer = window.setInterval(async () => {
-            if (!isPrimaryTab) return;
-            if (shellState.metricsSubscribers.size <= 0) return;
-            const sseFresh = lastMetricsSseAtMs > 0 && (Date.now() - lastMetricsSseAtMs) < METRICS_SSE_STALL_MS;
-            if (metricsEventSource && sseFresh) return;
-            try {
-                const result = await fetchJson("/metrics");
-                if (!result.response.ok || !result.payload || typeof result.payload !== "object") return;
-                dispatchMetricsSnapshot(result.payload);
-            } catch (_) {
-                // Ignore fallback poll failures; SSE/offline recovery owns reconnect behavior.
-            }
-        }, METRICS_FALLBACK_POLL_MS);
     }
 
     function stopNotificationsStream() {
@@ -1657,6 +1655,16 @@
             // Ignore close errors.
         }
         notificationsEventSource = null;
+    }
+
+    function stopOperationStream() {
+        if (!operationEventSource) return;
+        try {
+            operationEventSource.close();
+        } catch (_) {
+            // Ignore close errors.
+        }
+        operationEventSource = null;
     }
 
     function startNotificationsStream() {
@@ -1675,14 +1683,28 @@
         };
     }
 
+    function startOperationStream() {
+        if (!isPrimaryTab || operationEventSource) return;
+        operationEventSource = new EventSource("/operation-stream");
+        operationEventSource.addEventListener("operation", (event) => {
+            try {
+                const payload = JSON.parse(event.data || "{}");
+                dispatchOperationUpdate(payload, { fromBroadcast: false });
+            } catch (_) {
+                // Ignore malformed payloads.
+            }
+        });
+        operationEventSource.onerror = () => {
+            // EventSource reconnects automatically.
+        };
+    }
+
     function startMetricsStream() {
         if (!isPrimaryTab || metricsEventSource) return;
-        startMetricsFallbackPoll();
         metricsEventSource = new EventSource(metricsStreamPath());
         metricsEventSource.onmessage = (event) => {
             try {
                 const payload = JSON.parse(event.data || "{}");
-                lastMetricsSseAtMs = Date.now();
                 dispatchMetricsSnapshot(payload);
             } catch (_) {
                 // Ignore malformed payloads.
@@ -1698,7 +1720,6 @@
         shellState.metricsSubscribers.add(listener);
         if (isPrimaryTab) {
             startMetricsStream();
-            startMetricsFallbackPoll();
         }
         if (shellState.metricsSnapshot && typeof shellState.metricsSnapshot === "object") {
             try {
@@ -1709,9 +1730,17 @@
         }
         return () => {
             shellState.metricsSubscribers.delete(listener);
-            if (shellState.metricsSubscribers.size <= 0) {
-                stopMetricsFallbackPoll();
-            }
+        };
+    }
+
+    function subscribeOperationUpdates(listener) {
+        if (typeof listener !== "function") return () => {};
+        shellState.operationSubscribers.add(listener);
+        if (isPrimaryTab) {
+            startOperationStream();
+        }
+        return () => {
+            shellState.operationSubscribers.delete(listener);
         };
     }
 
@@ -2026,20 +2055,28 @@
     }
 
     function appendHomeLogLine(source, line, options = {}) {
+        appendHomeLogLines(source, [line], options);
+    }
+
+    function appendHomeLogLines(source, lines, options = {}) {
         const sourceKey = String(source || "").trim().toLowerCase();
         if (!HOME_LOG_LIMITS[sourceKey]) return;
-        shellState.homeLogs.pending[sourceKey].push(String(line || ""));
+        const nextLines = Array.isArray(lines)
+            ? lines.map((item) => String(item || "")).filter((item) => item.length > 0)
+            : [String(lines || "")].filter((item) => item.length > 0);
+        if (!nextLines.length) return;
+        shellState.homeLogs.pending[sourceKey].push(...nextLines);
         if (shellState.homeLogs.flushTimers[sourceKey]) return;
         shellState.homeLogs.flushTimers[sourceKey] = window.setTimeout(() => {
             shellState.homeLogs.flushTimers[sourceKey] = null;
-            const nextLines = shellState.homeLogs.pending[sourceKey].splice(0);
-            if (!nextLines.length) return;
-            const merged = shellState.homeLogs.buffers[sourceKey].concat(nextLines);
+            const flushedLines = shellState.homeLogs.pending[sourceKey].splice(0);
+            if (!flushedLines.length) return;
+            const merged = shellState.homeLogs.buffers[sourceKey].concat(flushedLines);
             shellState.homeLogs.buffers[sourceKey] = capHomeLogLines(merged, homeLogLimit(sourceKey));
             notifyHomeLogSubscribers(sourceKey);
         }, 75);
         if (!options.fromBroadcast && isPrimaryTab) {
-            broadcast.send({ type: "log_line", source: sourceKey, line: String(line || "") });
+            broadcast.send({ type: "log_lines", source: sourceKey, lines: nextLines });
         }
     }
 
@@ -2055,6 +2092,23 @@
         const basePath = HOME_LOG_PATHS[sourceKey];
         const streamPath = clientId ? `${basePath}?client_id=${encodeURIComponent(clientId)}` : basePath;
         const stream = new EventSource(streamPath);
+        stream.addEventListener("snapshot", (event) => {
+            try {
+                const payload = JSON.parse(event.data || "{}");
+                const lines = Array.isArray(payload.lines) ? payload.lines : [];
+                setHomeLogSnapshot(sourceKey, lines.join("\n"));
+            } catch (_) {
+                // Ignore malformed snapshot payloads.
+            }
+        });
+        stream.addEventListener("batch", (event) => {
+            try {
+                const payload = JSON.parse(event.data || "{}");
+                appendHomeLogLines(sourceKey, Array.isArray(payload.lines) ? payload.lines : []);
+            } catch (_) {
+                // Ignore malformed batch payloads.
+            }
+        });
         stream.onmessage = (event) => appendHomeLogLine(sourceKey, event.data || "");
         stream.onerror = () => {
             // EventSource reconnects automatically.
@@ -2296,6 +2350,7 @@
     window.MCWebShell = Object.assign({}, window.MCWebShell || {}, {
         getPersistentClientId,
         subscribeMetrics,
+        subscribeOperationUpdates,
         fetchDeviceNameMap,
         getDeviceNameMapSnapshot,
         fetchConfiguredReadme,

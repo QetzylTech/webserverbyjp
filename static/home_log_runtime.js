@@ -243,8 +243,16 @@
         }
 
         function appendSourceLogLine(source, line) {
+            appendSourceLogLines(source, [line]);
+        }
+
+        function appendSourceLogLines(source, lines) {
             if (!LOG_SOURCE_KEYS.includes(source)) return;
-            pendingLogLines[source].push(line || "");
+            const nextLines = Array.isArray(lines)
+                ? lines.map(function (line) { return String(line || ""); }).filter(function (line) { return line.length > 0; })
+                : [String(lines || "")].filter(function (line) { return line.length > 0; });
+            if (!nextLines.length) return;
+            pendingLogLines[source].push.apply(pendingLogLines[source], nextLines);
             if (pendingLogFlushTimers[source]) return;
             pendingLogFlushTimers[source] = window.setTimeout(function () {
                 pendingLogFlushTimers[source] = null;
@@ -305,6 +313,26 @@
             const path = LOG_SOURCE_STREAM_PATHS[source];
             if (!path) return;
             const stream = new EventSource(path);
+            stream.addEventListener("snapshot", function (event) {
+                try {
+                    const payload = JSON.parse(event.data || "{}");
+                    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+                    setSourceLogText(source, lines.join("\n"));
+                    if (selectedLogSource === source) {
+                        renderActiveLog();
+                    }
+                } catch (_) {
+                    // Ignore malformed snapshot payloads.
+                }
+            });
+            stream.addEventListener("batch", function (event) {
+                try {
+                    const payload = JSON.parse(event.data || "{}");
+                    appendSourceLogLines(source, Array.isArray(payload.lines) ? payload.lines : []);
+                } catch (_) {
+                    // Ignore malformed batch payloads.
+                }
+            });
             stream.onmessage = function (event) {
                 appendSourceLogLine(source, event.data || "");
             };

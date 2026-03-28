@@ -28,8 +28,9 @@ Disallowed:
 ## Frontend Runtime Rules
 
 - Shared shell behavior (theme, nav shell wiring, persistent client identity, shared metrics SSE ownership) must live in shared shell/bootstrap modules, not duplicated per page.
-- Page scripts should own page-specific mount/unmount and presentation logic only; shared metrics, logs, connection ownership, and multi-tab coordination remain shell-owned.
+- Page scripts should own page-specific mount/unmount and presentation logic only. Shared metrics, shared logs, shared connection ownership, and multi-tab coordination remain shell-owned; page-specific SSE subscriptions are acceptable only for page-local data that has no shared shell owner.
 - Live dissemination should prefer one shared client runtime owner per page shell, not duplicated SSE or polling owners for the same topic.
+- Client-driven polling must not be used for live dashboard/file/maintenance/restore state that is available from server broadcasts; prefer SSE streams with one-off HTTP reads only for explicit user-triggered content loads or compatibility fallback.
 - Shell-first hydration is the current contract: full page loads render `app_shell.html`, shell navigation fetches fragment responses, and page modules mount/unmount inside the persistent shell.
 - Theme/nav boot, metrics SSE ownership, and other cross-page runtime concerns stay in the shell; page modules must not duplicate them.
 
@@ -50,7 +51,7 @@ Disallowed:
 - Keep one persistent browser shell, one shared client state/cache surface, and one shared metrics SSE owner across navigation.
 - Refactor page code into explicit `mount()` / `unmount()` modules; new work should not reintroduce full-page boot ownership into page scripts.
 - Add lightweight fragment/data endpoints where needed, but keep backend business logic in the existing layers.
-- Avoid keeping hidden timers, fetchers, or duplicate DOM/runtime owners mounted after a page unmounts.
+- Avoid keeping hidden timers, polling fetchers, or duplicate DOM/runtime owners mounted after a page unmounts.
 
 ## Enforcement Layers
 

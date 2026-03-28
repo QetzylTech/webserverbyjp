@@ -1,8 +1,10 @@
 """Maintenance route registration for the MC web dashboard."""
 # mypy: disable-error-code=untyped-decorator
 
+import json
+import time
 from typing import Any, cast
-from flask import jsonify, render_template, request
+from flask import Response, jsonify, render_template, request, stream_with_context
 
 from app.commands import maintenance_commands as maintenance_commands_service
 from app.core import profiling
@@ -93,6 +95,40 @@ def register_maintenance_routes(app: Any, state: Any) -> None:
             force_refresh = str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "on"}
             scope = _maintenance_queries.normalize_scope(request.args.get("scope", "backups"))
             return jsonify(_maintenance_queries.get_state_payload(ctx, state, scope, force_refresh=force_refresh))
+
+    @app.route("/maintenance-stream")
+    def maintenance_stream() -> Response:
+        scope = _maintenance_queries.normalize_scope(request.args.get("scope", "backups"))
+        force_refresh = str(request.args.get("refresh", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+        def generate() -> Any:
+            last_payload = ""
+            initial_force = force_refresh
+            last_keepalive = 0.0
+            while True:
+                payload = _maintenance_queries.get_state_payload(ctx, state, scope, force_refresh=initial_force)
+                initial_force = False
+                encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+                if encoded != last_payload:
+                    last_payload = encoded
+                    yield "event: state\n"
+                    yield f"data: {encoded}\n\n"
+                    last_keepalive = time.time()
+                else:
+                    now = time.time()
+                    if (now - last_keepalive) >= 1.0:
+                        yield ": keepalive\n\n"
+                        last_keepalive = now
+                time.sleep(1.0)
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.route("/maintenance/api/confirm-password", methods=["POST"])
     def maintenance_api_confirm_password() -> Any:

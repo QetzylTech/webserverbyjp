@@ -1,7 +1,6 @@
 """Route registration for the shell-first MC web dashboard."""
 # mypy: disable-error-code=untyped-decorator
 import threading
-import time
 from typing import Any
 
 from flask import jsonify, redirect, render_template, request, send_from_directory
@@ -22,7 +21,7 @@ from app.services import maintenance_state_store as maintenance_state_store_serv
 def register_routes(app: Any, state: dict[str, Any]) -> None:
     """Register top-level dashboard routes and wire the supporting route modules."""
     restore_pane_alert_lock = threading.Lock()
-    restore_pane_alert_until_ref = [0.0]
+    restore_pane_alert_active_ref = [False]
     restore_pane_alert_filename_ref = [""]
     restore_pane_alert_ip_ref = [""]
     restore_pane_alert_client_id_ref = [""]
@@ -50,13 +49,32 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
     def _current_request_client_id() -> str:
         return str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
 
+    def _client_is_active(client_id: str) -> bool:
+        key = str(client_id or "").strip()
+        if not key:
+            return False
+        registry = state.get("client_registry")
+        lock = state.get("client_registry_lock")
+        if not isinstance(registry, dict) or lock is None:
+            return False
+        with lock:
+            return isinstance(registry.get(key), dict)
+
     def _build_nav_alert_state(current_ip: str = "", current_client_id: str = "") -> dict[str, object]:
-        now = time.time()
         with restore_pane_alert_lock:
-            active = now <= restore_pane_alert_until_ref[0]
+            active = bool(restore_pane_alert_active_ref[0])
             filename = str(restore_pane_alert_filename_ref[0] or "")
             opener_ip = _normalized_ip(restore_pane_alert_ip_ref[0])
             opener_client_id = str(restore_pane_alert_client_id_ref[0] or "").strip()
+            if active and opener_client_id and not _client_is_active(opener_client_id):
+                restore_pane_alert_active_ref[0] = False
+                restore_pane_alert_filename_ref[0] = ""
+                restore_pane_alert_ip_ref[0] = ""
+                restore_pane_alert_client_id_ref[0] = ""
+                active = False
+                filename = ""
+                opener_ip = ""
+                opener_client_id = ""
         opened_by_self = bool(current_client_id and opener_client_id and current_client_id == opener_client_id)
         if not opened_by_self:
             opened_by_self = bool(current_ip and opener_ip and current_ip == opener_ip)
@@ -212,20 +230,27 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
 
     @app.route("/maintenance/nav-alert/restore-pane-open", methods=["POST"])
     def maintenance_nav_alert_restore_pane_open() -> tuple[str, int]:
-        """Record a short-lived restore-pane activity signal for cross-client nav attention."""
+        """Record or clear restore-pane activity for cross-client nav attention."""
         payload = request.get_json(silent=True) or {}
         filename = str(payload.get("filename", "") or "").strip()
         opener_client_id = str(payload.get("client_id", "") or "").strip()
+        active = payload.get("active", True) is not False
         opener_ip = _current_request_ip() or "unknown"
-        now = time.time()
-        ttl_seconds = 15.0
         with restore_pane_alert_lock:
-            restore_pane_alert_until_ref[0] = max(restore_pane_alert_until_ref[0], now + ttl_seconds)
-            if filename:
-                restore_pane_alert_filename_ref[0] = filename
-            restore_pane_alert_ip_ref[0] = opener_ip
-            if opener_client_id:
-                restore_pane_alert_client_id_ref[0] = opener_client_id
+            if active:
+                restore_pane_alert_active_ref[0] = True
+                if filename:
+                    restore_pane_alert_filename_ref[0] = filename
+                restore_pane_alert_ip_ref[0] = opener_ip
+                if opener_client_id:
+                    restore_pane_alert_client_id_ref[0] = opener_client_id
+            else:
+                current_client_id = str(restore_pane_alert_client_id_ref[0] or "").strip()
+                if not current_client_id or not opener_client_id or current_client_id == opener_client_id:
+                    restore_pane_alert_active_ref[0] = False
+                    restore_pane_alert_filename_ref[0] = ""
+                    restore_pane_alert_ip_ref[0] = ""
+                    restore_pane_alert_client_id_ref[0] = ""
         return ("", 204)
 
     @app.route("/maintenance/nav-alert/state")

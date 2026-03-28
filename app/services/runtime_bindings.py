@@ -53,6 +53,7 @@ _MINECRAFT_CTX_METHODS = (
     "get_log_source_text",
     "_drain_buffered_log_lines",
     "ensure_log_stream_fetcher_started",
+    "flush_log_stream_batch",
     "_increment_log_stream_clients",
     "_decrement_log_stream_clients",
     "_refresh_rcon_config",

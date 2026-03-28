@@ -16,6 +16,7 @@ Use this checklist for every PR review. Treat `doc/project requirements.txt` as 
 - [ ] All required live data still exists and is available to connected clients through server-driven JSON/SSE updates.
 - [ ] Home metrics still include RAM, CPU per core, CPU frequency, storage, server status, players online, tick time, auto-stop timer, backup status, last backup, next backup, backups folder, backup/stale-world counts, cleanup run metadata, cleanup versions, rule last changed by, next cleanup run, and missed-run count.
 - [ ] Clients do not introduce individual polling for data that is supposed to come from shared server broadcasts.
+- [ ] File lists, maintenance state, restore progress, and operation progress consume server streams in normal runtime flow instead of browser polling loops.
 - [ ] Cadence-by-state still matches the rules:
 - [ ] Server off + 0 clients: metrics/logs paused.
 - [ ] Server on + 0 clients: metrics paused, logs/storage refreshed only at the specified idle cadence.

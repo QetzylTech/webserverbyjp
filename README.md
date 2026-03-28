@@ -221,12 +221,16 @@ Process role:
 8. Live update model
 
 The UI uses a shell-owned live-update model:
-- `/metrics-stream` (SSE): the continuous metrics channel used by the shell and page runtimes
-- `/log-stream/<source>` (SSE): continuous log push for the active Home log source
-- one-shot HTTP endpoints are still used for cache-backed reads such as file lists, viewed files, README content, and maintenance snapshots
-- targeted polling remains only for workflow-specific state such as operation status, nav attention, and restore progress
+- `/metrics-stream` (SSE): the continuous metrics channel used by the shell
+- `/notifications-stream` (SSE): shell-owned notification delivery
+- `/operation-stream` (SSE): shell-owned operation acceptance/progress/completion updates
+- `/log-stream/<source>` (SSE): initial snapshot plus batched Home log delivery for the active source
+- `/file-page-stream/<page_name>` and `/log-files-stream/<source>` (SSE): pushed file-list inventory updates for file-browser pages
+- `/maintenance-stream` (SSE): pushed cleanup state updates for the maintenance page
+- `/stream/restore_logs?job_id=...` (SSE): restore-progress log and status delivery
+- one-shot HTTP endpoints remain for explicit user-driven reads such as viewed-file content, README/document content, downloads, and action POSTs, with fetch-based state reads kept only as compatibility fallbacks
 
-So the dashboard is not broadcast-only, but continuous metrics delivery is SSE-first and shell-owned.
+The current dashboard runtime no longer polls live metrics, operation status, restore status, maintenance state, or file-list state from the browser. Metrics follow the collector cadence, and live log streams deliver an initial snapshot plus batched updates instead of one SSE event per line.
 
 Status transition timing note:
 - start/stop button handlers set intent immediately, but the visible dashboard state is still read through cached observed-state and streamed metrics snapshots
@@ -252,12 +256,12 @@ Current architecture:
 - shell navigation requests send `X-MCWEB-Fragment: 1` and receive fragment-only HTML
 - `static/app_shell.js` intercepts internal navigation, swaps fragment HTML into `#mcweb-app-content`, and mounts/unmounts page modules through `MCWebPageModules`
 - the shell owns theme preference wiring, sidebar nav wiring, metrics SSE, persistent client identity, shared home-log state, and cross-page caches for README/file/log/maintenance data
-- page scripts own page-specific DOM wiring, page-scoped timers, and teardown only
+- page scripts own page-specific DOM wiring, page-specific SSE subscriptions, and teardown only
 
 Guardrails:
 - do not duplicate shell boot concerns such as theme or nav binding inside page scripts
 - do not add a second continuous metrics owner; live metrics stay under the shell SSE runtime
-- keep heavy page data lazy and cacheable, and tear down page-specific listeners and timers on unmount
+- keep heavy page data lazy and cacheable, and tear down page-specific listeners, streams, and timers on unmount
 
 10. Nginx reverse proxy (optional, no `:8080` in URL)
 

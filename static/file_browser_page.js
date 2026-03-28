@@ -141,18 +141,6 @@ function mountFileBrowserPage() {
         const dataRuntime = window.MCWebFilePageDataRuntime || {};
         const modalsRuntime = window.MCWebFilePageModals || {};
         const escapeHtml = typeof logUtils.escapeHtml === "function" ? logUtils.escapeHtml : (text) => String(text || "");
-        const FILE_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.heartbeatIntervalMs || 10000);
-        const FILE_PAGE_LIST_REFRESH_INTERVAL_MS = Number(__MCWEB_FILES_CONFIG.listRefreshIntervalMs || 0);
-        const pageActivityRuntime = window.MCWebPageActivityRuntime;
-        const fileHeartbeatController = pageActivityRuntime.createHeartbeatController({
-            path: "/file-page-heartbeat",
-            csrfToken,
-            intervalMs: FILE_PAGE_HEARTBEAT_INTERVAL_MS,
-            clientId,
-        });
-        fileHeartbeatController.start();
-
-
         const errorBox = document.getElementById("download-error");
         const sortSelect = document.getElementById("file-sort");
         const backupSortSelect = document.getElementById("backup-sort");
@@ -200,17 +188,14 @@ function mountFileBrowserPage() {
         const paneAnimations = window.MCWebPaneAnimations || null;
         let selectedRestoreFilename = "";
         let selectedRestoreDisplayName = "";
-        let restorePollTimer = null;
         let restorePollJobId = "";
         let restorePollSeq = 0;
         let restoreLogStream = null;
-        let restoreStreamReconnectTimer = null;
         let restoreStreamSeq = 0;
         let restoreStreamJobId = "";
-        let restoreOperationPollTimer = null;
-        let restoreOperationOpId = "";
-        let restorePaneAlertTimer = null;
-        let fileListRefreshTimer = null;
+        let trackedRestoreOperationId = "";
+        let fileListEventSource = null;
+        let fileListStreamTarget = "";
         let restoreServerIsOff = false;
         let activeViewedFilename = "";
         let activeRestoreFilename = "";
@@ -236,6 +221,7 @@ function mountFileBrowserPage() {
         let currentLogFileSource = "";
         let fileListClickBound = false;
         let fileMetricsUnsubscribe = null;
+        let fileOperationUnsubscribe = null;
         let fileViewerScrollbarCleanup = null;
         let fileListScrollbarCleanup = null;
         let hasRestoredShellViewState = false;
@@ -251,15 +237,11 @@ function mountFileBrowserPage() {
             return pageRuntimeActive && token === fileListLoadToken;
         }
 
-        const restorePaneClientId = (() => {
-            const shell = window.MCWebShell;
-            if (shell && typeof shell.getPersistentClientId === "function") {
-                return shell.getPersistentClientId("mcweb.restorePaneClientId");
-            }
-            return (window.crypto && typeof window.crypto.randomUUID === "function")
+        const restorePaneClientId = clientId || (
+            (window.crypto && typeof window.crypto.randomUUID === "function")
                 ? window.crypto.randomUUID()
-                : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        })();
+                : `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+        );
 
 
         function getPersistedFileViewState() {
@@ -502,9 +484,9 @@ function mountFileBrowserPage() {
             setSelectedRestoreLastLog(resolveLastRestoreLogFromSelection());
             setActiveRestoreFilename(selectedRestoreDisplayName);
             if (restorePaneForcedByRemote) {
-                stopRestorePaneAlertHeartbeat();
+                sendRestorePaneAttention(false);
             } else {
-                startRestorePaneAlertHeartbeat();
+                sendRestorePaneAttention(true);
             }
             openViewer();
             setBackupRestoreControlsVisible(true);
@@ -620,7 +602,6 @@ function mountFileBrowserPage() {
         async function showLastRestoreLog() {
             if (!selectedRestoreLastLog || !fileViewerContent) return;
             stopRestoreLogStream();
-            stopRestorePolling();
             const url = `/view-log-file/restore/${encodeURIComponent(selectedRestoreLastLog)}`;
             let payload = null;
             try {
@@ -720,10 +701,6 @@ function mountFileBrowserPage() {
         }
 
         function stopRestoreLogStream() {
-            if (restoreStreamReconnectTimer) {
-                window.clearTimeout(restoreStreamReconnectTimer);
-                restoreStreamReconnectTimer = null;
-            }
             if (!restoreLogStream) return;
             try {
                 restoreLogStream.close();
@@ -734,43 +711,17 @@ function mountFileBrowserPage() {
             restoreStreamJobId = "";
         }
 
-        function stopRestorePolling() {
-            if (!restorePollTimer) return;
-            window.clearTimeout(restorePollTimer);
-            restorePollTimer = null;
-        }
-
-        function stopRestoreOperationPolling() {
-            if (!restoreOperationPollTimer) return;
-            window.clearTimeout(restoreOperationPollTimer);
-            restoreOperationPollTimer = null;
-            restoreOperationOpId = "";
-        }
-
-        function scheduleRestoreStreamReconnect(delayMs) {
-            if (restoreStreamReconnectTimer) {
-                window.clearTimeout(restoreStreamReconnectTimer);
-            }
-            restoreStreamReconnectTimer = window.setTimeout(() => {
-                restoreStreamReconnectTimer = null;
-                if (!restoreStreamJobId || !pageRuntimeActive) return;
-                startRestoreLogStream(restoreStreamJobId);
-            }, delayMs);
-        }
-
         function startRestoreLogStream(jobId) {
             if (typeof EventSource !== "function") return false;
             stopRestoreLogStream();
             restoreStreamJobId = String(jobId || "").trim() || "restore";
             const stream = (dataClient && typeof dataClient.openRestoreLogStream === "function")
-                ? dataClient.openRestoreLogStream({ clientId: restorePaneClientId })
-                : new EventSource(`/log-stream/restore?client_id=${encodeURIComponent(restorePaneClientId)}`);
-            stream.onmessage = (event) => handleRestoreStreamLine(event);
+                ? dataClient.openRestoreLogStream({ jobId: restoreStreamJobId })
+                : new EventSource(`/stream/restore_logs?job_id=${encodeURIComponent(restoreStreamJobId)}`);
+            stream.addEventListener("line", handleRestoreStreamLine);
+            stream.addEventListener("status", handleRestoreStreamStatus);
             stream.onerror = () => {
-                scheduleRestoreStreamReconnect(1200);
-                if (!restorePollTimer) {
-                    scheduleRestorePoll(1200);
-                }
+                // EventSource reconnects automatically.
             };
             restoreLogStream = stream;
             return true;
@@ -813,69 +764,6 @@ function mountFileBrowserPage() {
             }
         }
 
-        function scheduleRestorePoll(delayMs) {
-            stopRestorePolling();
-            restorePollTimer = window.setTimeout(pollRestoreStatus, delayMs);
-        }
-
-        function scheduleRestoreOperationPoll(delayMs) {
-            if (!restoreOperationOpId) return;
-            if (restoreOperationPollTimer) {
-                window.clearTimeout(restoreOperationPollTimer);
-            }
-            restoreOperationPollTimer = window.setTimeout(pollRestoreOperationStatus, delayMs);
-        }
-
-        async function pollRestoreOperationStatus() {
-            if (pageId !== "backups" || !restoreOperationOpId) return;
-            let response;
-            let payload = null;
-            try {
-                response = await fetch(`/operation-status/${encodeURIComponent(restoreOperationOpId)}`, {
-                    method: "GET",
-                    headers: { "X-Requested-With": "XMLHttpRequest" },
-                    cache: "no-store",
-                });
-            } catch (_) {
-                scheduleRestoreOperationPoll(1100);
-                return;
-            }
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload || payload.ok === false || !payload.operation) {
-                scheduleRestoreOperationPoll(1300);
-                return;
-            }
-            const operation = payload.operation || {};
-            const status = String(operation.status || "").trim().toLowerCase();
-            const opData = operation.data && typeof operation.data === "object" ? operation.data : {};
-            const restoreJobId = String(opData.restore_job_id || "").trim();
-            const restoreLogFile = String(opData.restore_log_file || "").trim();
-            if (restoreLogFile) {
-                setSelectedRestoreLastLog(restoreLogFile);
-            }
-            if (restoreJobId && restorePollJobId !== restoreJobId) {
-                startRestoreProgressPanel(restoreJobId, "Restore Progress", "Restore started.", { preserveContent: true });
-            }
-            if (status === "failed") {
-                appendRestoreLine("", String(operation.message || "Restore failed."));
-                modals.showErrorModal(String(operation.message || "Restore failed."), {
-                    errorCode: String(operation.error_code || "restore_failed"),
-                });
-                stopRestoreOperationPolling();
-                return;
-            }
-            if (status === "observed") {
-                announceFileListInvalidation({ backups: true });
-                stopRestoreOperationPolling();
-                return;
-            }
-            scheduleRestoreOperationPoll(700);
-        }
-
         function handleRestoreStatusPayload(payload, options = {}) {
             if (!payload || typeof payload !== "object") return;
             const skipEvents = !!options.skipEvents;
@@ -894,12 +782,10 @@ function mountFileBrowserPage() {
 
             syncRestoreAvailabilityUi();
             if (payload.running) return;
-            stopRestorePolling();
             stopRestoreLogStream();
             restorePollJobId = "";
             restoreStreamSeq = 0;
             restoreProgressActive = false;
-            restoreStatusFinalLogged = false;
             if (payload.result && payload.result.ok) {
                 if (!restoreStatusFinalLogged) {
                     const successMessage = String(payload.result.message || "Restore completed successfully.");
@@ -910,6 +796,9 @@ function mountFileBrowserPage() {
                 announceFileListInvalidation({ backups: true });
                 setDownloadError("");
             } else if (payload.result && payload.result.message) {
+                if (!restoreStatusFinalLogged) {
+                    restoreStatusFinalLogged = true;
+                }
                 modals.showErrorModal(payload.result.message || "Restore failed.", {
                     errorCode: payload.result.error || "",
                 });
@@ -917,41 +806,41 @@ function mountFileBrowserPage() {
             }
         }
 
-        async function pollRestoreStatus() {
-            if (pageId !== "backups" || !restorePollJobId) return;
-            if (restoreLogStream && restoreStreamJobId === restorePollJobId) return;
-            let response;
-            try {
-                const params = new URLSearchParams();
-                params.set("since", String(restorePollSeq));
-                params.set("job_id", restorePollJobId);
-                response = await fetch(`/restore-status?${params.toString()}`, {
-                    method: "GET",
-                    headers: { "X-Requested-With": "XMLHttpRequest" },
-                    cache: "no-store",
+        function handleRestoreOperationUpdate(operation) {
+            if (!operation || typeof operation !== "object") return;
+            const opId = String(operation.op_id || "").trim();
+            if (!opId || opId !== trackedRestoreOperationId) return;
+            const status = String(operation.status || "").trim().toLowerCase();
+            const opData = operation.data && typeof operation.data === "object" ? operation.data : {};
+            const restoreJobId = String(opData.restore_job_id || "").trim();
+            const restoreLogFile = String(opData.restore_log_file || "").trim();
+            if (restoreLogFile) {
+                setSelectedRestoreLastLog(restoreLogFile);
+            }
+            if (restoreJobId && restorePollJobId !== restoreJobId) {
+                startRestoreProgressPanel(restoreJobId, "Restore Progress", "Restore started.", { preserveContent: true });
+            }
+            if (status === "intent" || status === "in_progress") {
+                return;
+            }
+            trackedRestoreOperationId = "";
+            if (status === "observed") {
+                if (!restoreProgressActive && !restoreStatusFinalLogged) {
+                    const successMessage = String(operation.message || "Restore completed successfully.");
+                    modals.showSuccessModal(successMessage);
+                    restoreStatusFinalLogged = true;
+                }
+                announceFileListInvalidation({ backups: true });
+                return;
+            }
+            if (status === "failed" && !restoreStatusFinalLogged) {
+                const failureMessage = String(operation.message || "Restore failed.");
+                appendRestoreLine("", failureMessage);
+                modals.showErrorModal(failureMessage, {
+                    errorCode: String(operation.error_code || "restore_failed"),
                 });
-            } catch (_) {
-                scheduleRestorePoll(1200);
-                return;
-            }
-
-            let payload = null;
-            try {
-                payload = await response.json();
-            } catch (_) {
-                payload = null;
-            }
-            if (!response.ok || !payload || payload.ok === false) {
-                appendRestoreLine("", "Unable to fetch restore status.");
-                scheduleRestorePoll(1500);
-                return;
-            }
-
-            handleRestoreStatusPayload(payload);
-            if (payload.running) {
-                scheduleRestorePoll(800);
-            } else {
-                stopRestorePolling();
+                setDownloadError(failureMessage);
+                restoreStatusFinalLogged = true;
             }
         }
 
@@ -976,7 +865,9 @@ function mountFileBrowserPage() {
             }
             restoreProgressActive = true;
             restoreStatusFinalLogged = false;
-            startRestorePaneAlertHeartbeat();
+            if (!restorePaneForcedByRemote) {
+                sendRestorePaneAttention(true);
+            }
             ensureRestoreViewerOpen(title || "Restore Progress");
             if (fileViewerContent && !preserveContent) fileViewerContent.innerHTML = "";
             syncRestoreAvailabilityUi();
@@ -992,16 +883,12 @@ function mountFileBrowserPage() {
                 },
                 activeRestoreFilename: selectedRestoreFilename,
             });
-            const streaming = startRestoreLogStream(restorePollJobId);
-            if (restorePollJobId && !streaming) {
-                scheduleRestorePoll(200);
-            }
+            startRestoreLogStream(restorePollJobId);
         }
 
-        async function sendRestorePaneOpenSignal() {
+        async function sendRestorePaneAttention(active) {
             if (pageId !== "backups") return;
-            if (document.hidden) return;
-            const filename = (selectedRestoreFilename || activeRestoreFilename || "").trim();
+            const filename = active ? (selectedRestoreFilename || activeRestoreFilename || "").trim() : "";
             try {
                 await fetch("/maintenance/nav-alert/restore-pane-open", {
                     method: "POST",
@@ -1010,26 +897,13 @@ function mountFileBrowserPage() {
                         "X-CSRF-Token": csrfToken || "",
                         "Content-Type": "application/json",
                     },
-                    body: JSON.stringify({ filename, client_id: restorePaneClientId }),
+                    body: JSON.stringify({ filename, client_id: restorePaneClientId, active: active !== false }),
                     cache: "no-store",
                     keepalive: true,
                 });
             } catch (_) {
                 // Best-effort nav attention signal.
             }
-        }
-
-        function stopRestorePaneAlertHeartbeat() {
-            if (!restorePaneAlertTimer) return;
-            window.clearInterval(restorePaneAlertTimer);
-            restorePaneAlertTimer = null;
-        }
-
-        function startRestorePaneAlertHeartbeat() {
-            if (pageId !== "backups") return;
-            sendRestorePaneOpenSignal();
-            if (restorePaneAlertTimer) return;
-            restorePaneAlertTimer = window.setInterval(sendRestorePaneOpenSignal, 8000);
         }
 
         function applyRestorePaneSharedState(navAttention) {
@@ -1057,54 +931,109 @@ function mountFileBrowserPage() {
             applyRestorePaneSharedState(payload.nav_attention || null);
         }
 
-        function stopFileHeartbeatPolling() {
-            fileHeartbeatController.stop();
+        function stopFileListStream() {
+            if (!fileListEventSource) return;
+            try {
+                fileListEventSource.close();
+            } catch (_) {
+                // Ignore EventSource teardown failures.
+            }
+            fileListEventSource = null;
+            fileListStreamTarget = "";
         }
 
-        function startFileHeartbeatPolling() {
-            fileHeartbeatController.start();
-        }
-
-        function refreshActiveFileList(options = {}) {
+        function resolveFileListStreamTarget() {
             if (pageId === "minecraft_logs") {
-                const source = currentLogFileSource || activeLogSource || initialLogFileSource || "minecraft";
-                loadLogFileSourceList(source, options);
-                return;
+                const source = String(currentLogFileSource || activeLogSource || initialLogFileSource || "minecraft").trim().toLowerCase();
+                return source ? `log:${source}` : "";
             }
-            loadStandardFileList(options);
+            if (pageId === "backups" || pageId === "crash_logs") {
+                return `page:${pageId}`;
+            }
+            return "";
         }
 
-        function stopFileListRefreshPolling() {
-            if (!fileListRefreshTimer) return;
-            window.clearInterval(fileListRefreshTimer);
-            fileListRefreshTimer = null;
+        function buildFileListStreamUrl(target) {
+            if (!target) return "";
+            const url = new URL(window.location.origin);
+            if (target.startsWith("page:")) {
+                url.pathname = `/file-page-stream/${encodeURIComponent(target.slice(5))}`;
+            } else if (target.startsWith("log:")) {
+                url.pathname = `/log-files-stream/${encodeURIComponent(target.slice(4))}`;
+            } else {
+                return "";
+            }
+            if (clientId) {
+                url.searchParams.set("client_id", clientId);
+            }
+            return url.toString();
         }
 
-        function startFileListRefreshPolling() {
-            if (!Number.isFinite(FILE_PAGE_LIST_REFRESH_INTERVAL_MS) || FILE_PAGE_LIST_REFRESH_INTERVAL_MS <= 0) {
+        function handleFileListStreamPayload(target, payload) {
+            if (!pageRuntimeActive || !payload || typeof payload !== "object") return;
+            if (target.startsWith("log:")) {
+                const sourceKey = String(payload.source || target.slice(4) || "minecraft").trim().toLowerCase();
+                currentLogFileSource = sourceKey;
+                persistFileViewState({ currentLogFileSource });
+                setActiveLogSource(sourceKey);
+                renderLogFileList(payload);
                 return;
             }
-            if (document.hidden) return;
-            refreshActiveFileList({ force: true, silent: true });
-            if (fileListRefreshTimer) return;
-            fileListRefreshTimer = window.setInterval(() => {
-                if (document.hidden) return;
-                refreshActiveFileList({ force: true, silent: true });
-            }, FILE_PAGE_LIST_REFRESH_INTERVAL_MS);
+            renderStandardFileList(payload);
+        }
+
+        function startFileListStream(options = {}) {
+            if (typeof window.EventSource !== "function") {
+                return false;
+            }
+            if (document.hidden) {
+                return false;
+            }
+            const target = String(options.target || resolveFileListStreamTarget() || "").trim();
+            if (!target) {
+                return false;
+            }
+            if (fileListEventSource && fileListStreamTarget === target && options.restart !== true) {
+                return true;
+            }
+            stopFileListStream();
+            nextFileListLoadToken();
+            if (!options.silent) {
+                setListLoadingState(true);
+            }
+            const streamUrl = buildFileListStreamUrl(target);
+            if (!streamUrl) {
+                return false;
+            }
+            fileListStreamTarget = target;
+            const stream = new EventSource(streamUrl);
+            fileListEventSource = stream;
+            stream.addEventListener("state", (event) => {
+                if (!pageRuntimeActive || fileListEventSource !== stream) return;
+                try {
+                    const payload = JSON.parse(String(event.data || "{}"));
+                    handleFileListStreamPayload(target, payload);
+                } catch (_) {
+                    if (!options.silent) {
+                        handleListLoadFailure("Failed to load file list.");
+                    }
+                }
+            });
+            stream.onerror = () => {
+                if (!pageRuntimeActive || fileListEventSource !== stream) return;
+                if (!options.silent && !listHasRows()) {
+                    handleListLoadFailure("Failed to load file list.");
+                }
+            };
+            return true;
         }
 
         function handleVisibilityStateChange() {
             if (document.hidden) {
-                stopFileHeartbeatPolling();
-                stopRestorePaneAlertHeartbeat();
-                stopFileListRefreshPolling();
+                stopFileListStream();
                 return;
             }
-            startFileHeartbeatPolling();
-            if (pageId === "backups" && selectedRestoreFilename) {
-                startRestorePaneAlertHeartbeat();
-            }
-            startFileListRefreshPolling();
+            startFileListStream({ restart: true, silent: true });
         }
 
         function sortKeyForItem(item, mode) {
@@ -1527,15 +1456,18 @@ function mountFileBrowserPage() {
             : null;
 
         function closeViewer() {
+            if (pageId === "backups" && !restorePaneForcedByRemote) {
+                sendRestorePaneAttention(false);
+            }
             selectedRestoreFilename = "";
             selectedRestoreDisplayName = "";
             restorePaneForcedByRemote = false;
             restoreProgressActive = false;
             restoreStatusFinalLogged = false;
+            trackedRestoreOperationId = "";
             setBackupRestoreControlsVisible(false);
             setActiveViewedFilename("");
             setActiveRestoreFilename("");
-            stopRestorePolling();
             stopRestoreLogStream();
             persistFileViewState({ viewerOpen: false });
             if (viewerController) {
@@ -1697,8 +1629,7 @@ function mountFileBrowserPage() {
             }
             startRestoreProgressPanel(jobId, "Restore Progress", `Restore requested for ${restoreDisplay}.`, { preserveContent: true });
             if (opId) {
-                restoreOperationOpId = String(opId || "").trim();
-                scheduleRestoreOperationPoll(500);
+                trackedRestoreOperationId = String(opId || "").trim();
             }
             modals.showSuccessModal(`Restore requested for ${restoreDisplay}.`);
         }
@@ -1922,37 +1853,53 @@ function mountFileBrowserPage() {
             } else if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
                 applyBackupMetricsSnapshot(window.__MCWEB_LAST_METRICS_SNAPSHOT);
             }
-            addScopedListener(window, "beforeunload", stopRestoreOperationPolling);
+            if (shell && typeof shell.subscribeOperationUpdates === "function") {
+                fileOperationUnsubscribe = shell.subscribeOperationUpdates((operation) => {
+                    handleRestoreOperationUpdate(operation);
+                });
+            }
         }
         function handleFileListInvalidated(event) {
+            if (document.hidden) return;
             const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
             if (pageId === "backups" && detail.backups) {
+                if (startFileListStream({ restart: true, silent: true })) {
+                    return;
+                }
                 loadStandardFileList({ force: true });
                 return;
             }
             if (pageId === "minecraft_logs" && detail.logFiles) {
                 const source = currentLogFileSource || activeLogSource || initialLogFileSource || "minecraft";
+                if (startFileListStream({ target: `log:${source}`, restart: true, silent: true })) {
+                    return;
+                }
                 loadLogFileSourceList(source, { force: true });
             }
         }
         addScopedListener(window, FILE_LISTS_INVALIDATED_EVENT, handleFileListInvalidated);
         if (pageId === "backups") {
-            loadStandardFileList();
+            if (!startFileListStream()) {
+                loadStandardFileList();
+            }
         }
         // Release page-local timers and subscriptions before the shell swaps
         // this fragment out or the browser unloads.
         function teardownFilePageLifecycle() {
             pageRuntimeActive = false;
             fileListLoadToken += 1;
-            stopFileHeartbeatPolling();
-            stopFileListRefreshPolling();
-            stopRestorePaneAlertHeartbeat();
-            stopRestorePolling();
+            stopFileListStream();
+            if (pageId === "backups" && !restorePaneForcedByRemote) {
+                sendRestorePaneAttention(false);
+            }
             stopRestoreLogStream();
-            stopRestoreOperationPolling();
             if (typeof fileMetricsUnsubscribe === "function") {
                 fileMetricsUnsubscribe();
                 fileMetricsUnsubscribe = null;
+            }
+            if (typeof fileOperationUnsubscribe === "function") {
+                fileOperationUnsubscribe();
+                fileOperationUnsubscribe = null;
             }
             if (typeof fileViewerScrollbarCleanup === "function") {
                 fileViewerScrollbarCleanup();
@@ -1983,7 +1930,13 @@ function mountFileBrowserPage() {
                 setDownloadError("");
                 const source = btn.getAttribute("data-log-source") || "";
                 if (!source) return;
-                await loadLogFileSourceList(source);
+                const sourceKey = String(source || "").trim().toLowerCase();
+                currentLogFileSource = sourceKey;
+                persistFileViewState({ currentLogFileSource });
+                setActiveLogSource(sourceKey);
+                if (!startFileListStream({ target: `log:${sourceKey}` })) {
+                    await loadLogFileSourceList(sourceKey);
+                }
             });
         });
         if (pageId === "minecraft_logs") {
@@ -1991,10 +1944,11 @@ function mountFileBrowserPage() {
             persistFileViewState({ currentLogFileSource });
             setActiveLogSource(activeLogSource || currentLogFileSource || "minecraft");
             if (logSourceToggles.length > 0) {
-                loadLogFileSourceList(currentLogFileSource);
+                if (!startFileListStream({ target: `log:${currentLogFileSource}` })) {
+                    loadLogFileSourceList(currentLogFileSource);
+                }
             }
         }
-        startFileListRefreshPolling();
     return teardownFileBrowserPage;
 }
 

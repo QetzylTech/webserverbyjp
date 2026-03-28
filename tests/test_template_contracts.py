@@ -159,10 +159,14 @@ class TemplateContractsTests(unittest.TestCase):
 
     def test_panel_settings_security_paths_timezone_and_csv_layout_use_cards(self):
         fragment = self._read("templates/fragments/panel_settings_fragment.html")
+        panel_js = self._read("static/panel_settings.js")
         self.assertIn('class="settings-card-grid"', fragment)
         self.assertIn('class="settings-card"', fragment)
         self.assertIn('class="settings-dropzone settings-dropzone--full"', fragment)
         self.assertIn('class="device-map-upload-row"', fragment)
+        self.assertIn("syncCsvDropzoneState", panel_js)
+        self.assertIn("selectedCsvFile = file", panel_js)
+        self.assertIn("if (assignedToInput)", panel_js)
 
     def test_cleanup_rules_only_style_inputs_in_edit_mode(self):
         rules_js = self._read("static/maintenance_page_rules.js")
@@ -211,25 +215,51 @@ class TemplateContractsTests(unittest.TestCase):
         self.assertIn('pageKey: "panel_settings"', panel_js)
         self.assertIn("saveAllUnsavedChanges", panel_js)
 
-    def test_shell_has_metrics_1hz_fallback_poll_when_sse_stalls(self):
+    def test_shell_uses_metrics_sse_without_http_poll_fallback(self):
         shell_js = self._read("static/app_shell.js")
-        self.assertIn("METRICS_FALLBACK_POLL_MS = 1000", shell_js)
-        self.assertIn("METRICS_SSE_STALL_MS = 1500", shell_js)
-        self.assertIn('fetchJson("/metrics")', shell_js)
-        self.assertIn("startMetricsFallbackPoll", shell_js)
-        self.assertIn("lastMetricsSseAtMs = Date.now()", shell_js)
+        self.assertIn('new EventSource(metricsStreamPath())', shell_js)
+        self.assertIn("function subscribeMetrics(listener)", shell_js)
+        self.assertNotIn('fetchJson("/metrics")', shell_js)
+        self.assertNotIn("startMetricsFallbackPoll", shell_js)
         self.assertIn('nextStatus === "running"', shell_js)
         self.assertIn('nextStatus === "off"', shell_js)
         self.assertIn('previousStatus === "running" || previousStatus === "shutting down"', shell_js)
+        self.assertIn('stream.addEventListener("batch"', shell_js)
+        self.assertIn('stream.addEventListener("snapshot"', shell_js)
+        self.assertIn('broadcast.send({ type: "log_lines"', shell_js)
 
-    def test_home_page_has_direct_visible_1hz_metrics_poll(self):
+    def test_home_page_consumes_shell_metrics_stream_without_direct_poll(self):
         home_js = self._read("static/dashboard_home_page.js")
-        self.assertIn("METRICS_POLL_INTERVAL_MS = 1000", home_js)
-        self.assertIn('fetch("/metrics"', home_js)
-        self.assertIn("scheduleLiveMetricsPoll({ immediate: true })", home_js)
-        self.assertIn("clearMetricsPollTimer()", home_js)
+        self.assertIn('homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {', home_js)
+        self.assertIn('operationUpdatesUnsubscribe = shell.subscribeOperationUpdates((operation) => {', home_js)
         self.assertIn("cacheMetricsSnapshot(payload)", home_js)
-        self.assertNotIn("homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {\n                if (payload && typeof payload === \"object\") {\n                    applyMetricsData(payload);", home_js)
+        self.assertIn("applyMetricsData(payload)", home_js)
+        self.assertNotIn('fetch("/metrics"', home_js)
+        self.assertNotIn("/home-heartbeat", home_js)
+        self.assertNotIn("/operation-status/", home_js)
+        self.assertNotIn("scheduleLiveMetricsPoll({ immediate: true })", home_js)
+
+    def test_file_page_uses_shell_operation_stream_and_restore_sse(self):
+        file_js = self._read("static/file_browser_page.js")
+        data_js = self._read("static/file_page_data_runtime.js")
+        shell_js = self._read("static/app_shell.js")
+        self.assertIn('new EventSource("/operation-stream")', shell_js)
+        self.assertIn("subscribeOperationUpdates", shell_js)
+        self.assertIn('stream.addEventListener("status", handleRestoreStreamStatus);', file_js)
+        self.assertIn("/file-page-stream/", file_js)
+        self.assertIn("/log-files-stream/", file_js)
+        self.assertNotIn("/file-page-heartbeat", file_js)
+        self.assertNotIn("/restore-status", file_js)
+        self.assertNotIn("/operation-status/", file_js)
+        self.assertIn('const url = new URL("/stream/restore_logs", window.location.origin);', data_js)
+
+    def test_maintenance_page_uses_state_stream_without_interval_polling(self):
+        maint_js = self._read("static/maintenance_page.js")
+        self.assertIn('const streamUrl = new URL("/maintenance-stream", window.location.origin);', maint_js)
+        self.assertIn('const stream = new EventSource(streamUrl.toString());', maint_js)
+        self.assertNotIn("REFRESH_INTERVAL_MS", maint_js)
+        self.assertNotIn("startAutoRefresh", maint_js)
+        self.assertNotIn("stopAutoRefresh", maint_js)
 
 if __name__ == "__main__":
     unittest.main()

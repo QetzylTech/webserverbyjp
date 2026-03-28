@@ -78,3 +78,53 @@ def register_notification_routes(app: Any, state: Mapping[str, Any]) -> None:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.route("/operation-stream")
+    def operation_stream() -> Response:
+        explicit_since = request.args.get("since", "") or request.headers.get("Last-Event-ID", "")
+        last_event_id = _coerce_event_id(explicit_since)
+        if not explicit_since:
+            db_path = state.get("APP_STATE_DB_PATH")
+            if db_path is not None:
+                try:
+                    latest_event = state_store_service.get_latest_event(db_path, topic="operation_update")
+                except Exception:
+                    latest_event = None
+                if isinstance(latest_event, dict):
+                    last_event_id = _coerce_event_id(latest_event.get("id"), last_event_id)
+
+        def generate() -> Iterator[str]:
+            nonlocal last_event_id
+            while True:
+                db_path = state.get("APP_STATE_DB_PATH")
+                if db_path is not None:
+                    try:
+                        rows = state_store_service.list_events_since(
+                            db_path,
+                            topic="operation_update",
+                            since_id=last_event_id,
+                            limit=20,
+                        )
+                    except Exception:
+                        rows = []
+                    if rows:
+                        for row in rows:
+                            payload = row.get("payload", {}) if isinstance(row, dict) else {}
+                            operation = payload.get("operation") if isinstance(payload, dict) else None
+                            row_id = row.get("id", last_event_id) if isinstance(row, dict) else last_event_id
+                            last_event_id = _coerce_event_id(row_id, last_event_id)
+                            if isinstance(operation, dict):
+                                data = json.dumps({"operation": operation}, separators=(",", ":"))
+                                yield f"id: {last_event_id}\nevent: operation\ndata: {data}\n\n"
+                        continue
+                yield ": keepalive\n\n"
+                time.sleep(0.5)
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )

@@ -35,6 +35,7 @@
         const addDeviceRowBtn = document.getElementById("panel-add-device-row");
         const csvInput = document.getElementById("panel-device-csv");
         const csvDropzone = document.getElementById("panel-device-csv-dropzone");
+        const csvDropzoneText = csvDropzone?.querySelector(".settings-dropzone-text") || null;
         const csvModeSelect = document.getElementById("panel-device-import-mode");
         const uploadCsvBtn = document.getElementById("panel-upload-device-csv");
         let selectedCsvFile = null;
@@ -266,6 +267,18 @@
 
         function resolveSelectedCsvFile() {
             return selectedCsvFile || csvInput?.files?.[0] || null;
+        }
+
+        function syncCsvDropzoneState() {
+            const file = resolveSelectedCsvFile();
+            if (csvDropzoneText) {
+                csvDropzoneText.textContent = file
+                    ? `Selected file: ${String(file.name || "unnamed.csv")}`
+                    : "Choose file or drag and drop to upload.";
+            }
+            if (csvDropzone) {
+                csvDropzone.classList.toggle("has-file", !!file);
+            }
         }
 
         function updateSummaryFromSnapshot(card, snapshot) {
@@ -820,6 +833,11 @@
                     return acc;
                 }, []);
                 await refreshPanelState({ silent: true });
+                selectedCsvFile = null;
+                if (csvInput) {
+                    csvInput.value = "";
+                }
+                syncCsvDropzoneState();
                 setStatus(body.message || "Device map imported.", "ok");
                 showDeviceMapImportPreview(changes);
             });
@@ -860,28 +878,46 @@
 
         if (csvDropzone && csvInput) {
             const clearDrag = () => csvDropzone.classList.remove("dragover");
-            csvDropzone.addEventListener("dragover", (event) => {
+            const acceptDrop = (event) => {
                 event.preventDefault();
+                event.stopPropagation();
                 csvDropzone.classList.add("dragover");
+            };
+            csvDropzone.addEventListener("dragenter", acceptDrop);
+            csvDropzone.addEventListener("dragover", (event) => {
+                acceptDrop(event);
             });
             csvDropzone.addEventListener("dragleave", () => clearDrag());
             csvDropzone.addEventListener("drop", (event) => {
                 event.preventDefault();
+                event.stopPropagation();
                 clearDrag();
                 const file = event.dataTransfer?.files?.[0];
                 if (!file) return;
                 selectedCsvFile = file;
+                let assignedToInput = false;
                 try {
                     const dt = new DataTransfer();
                     dt.items.add(file);
                     csvInput.files = dt.files;
+                    assignedToInput = csvInput.files?.length > 0;
                 } catch (_) {
                     // Some browsers block programmatic file assignment.
                 }
-                csvInput.dispatchEvent(new Event("change", { bubbles: true }));
+                if (assignedToInput) {
+                    csvInput.dispatchEvent(new Event("change", { bubbles: true }));
+                    return;
+                }
+                syncCsvDropzoneState();
             });
             csvInput.addEventListener("change", () => {
-                selectedCsvFile = csvInput.files?.[0] || null;
+                const nextFile = csvInput.files?.[0] || null;
+                if (nextFile) {
+                    selectedCsvFile = nextFile;
+                } else if (!selectedCsvFile) {
+                    selectedCsvFile = null;
+                }
+                syncCsvDropzoneState();
             });
         }
 
@@ -889,6 +925,7 @@
             config.deviceMachines = buildDeviceMachines(config.deviceMap || {});
         }
         renderDeviceMapRows(config.deviceMap || {});
+        syncCsvDropzoneState();
         syncSecuritySaveVisibility();
         syncPathsSaveVisibility();
         syncTimezoneSaveVisibility();

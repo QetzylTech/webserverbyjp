@@ -43,7 +43,19 @@ def _coerce_event_id(value: object, default: int = 0) -> int:
 
 def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state_from_request: Any = None) -> None:
     """Register metrics JSON and SSE endpoints."""
+    runtime_state = getattr(state, "ctx", state)
     process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
+
+    def _runtime_get(name: str, default: Any = None) -> Any:
+        if isinstance(runtime_state, dict):
+            return runtime_state.get(name, default)
+        return getattr(runtime_state, name, default)
+
+    def _runtime_set(name: str, value: Any) -> None:
+        if isinstance(runtime_state, dict):
+            runtime_state[name] = value
+            return
+        setattr(runtime_state, name, value)
 
     def _ensure_metrics_runtime_started_best_effort() -> None:
         starter = state.get("ensure_metrics_collector_started")
@@ -128,14 +140,20 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
         client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
         def generate() -> Iterator[str]:
             """Runtime helper generate."""
+            def _serialize_snapshot(snapshot: dict[str, Any]) -> str:
+                return json.dumps(_attach_nav_attention(snapshot), separators=(",", ":"))
+
             if client_id:
                 _client_registry.register_client(state, client_id, channel="metrics_stream")
-            with state["metrics_cache_cond"]:
-                state["metrics_stream_client_count"] += 1
-                state["metrics_cache_cond"].notify_all()
+            with _runtime_get("metrics_cache_cond"):
+                _runtime_set("metrics_stream_client_count", int(_runtime_get("metrics_stream_client_count", 0) or 0) + 1)
+                _runtime_get("metrics_cache_cond").notify_all()
+            _refresh_metrics_snapshot_best_effort()
             last_event_id = 0
             last_cache_seq = 0
+            last_payload = ""
             db_path = state.get("APP_STATE_DB_PATH")
+            latest_db_snapshot: dict[str, Any] | None = None
             if db_path is not None:
                 try:
                     latest_event = _state_store.get_latest_event(db_path, topic="metrics_snapshot")
@@ -145,20 +163,28 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                     latest_payload = latest_event.get("payload", {})
                     latest_snapshot = latest_payload.get("snapshot") if isinstance(latest_payload, dict) else None
                     last_event_id = _coerce_event_id(latest_event.get("id", 0))
-                    last_cache_seq = last_event_id
                     if isinstance(latest_snapshot, dict):
-                        payload = json.dumps(_attach_nav_attention(latest_snapshot), separators=(",", ":"))
-                        yield f"data: {payload}\n\n"
-            if not last_event_id:
-                with state["metrics_cache_cond"]:
-                    cache_payload = dict(state["metrics_cache_payload"]) if isinstance(state.get("metrics_cache_payload"), dict) else None
-                    last_cache_seq = _coerce_event_id(state.get("metrics_cache_seq", 0))
-                if isinstance(cache_payload, dict):
-                    payload = json.dumps(_attach_nav_attention(cache_payload), separators=(",", ":"))
-                    yield f"data: {payload}\n\n"
+                        latest_db_snapshot = latest_snapshot
+            with _runtime_get("metrics_cache_cond"):
+                cache_payload = dict(_runtime_get("metrics_cache_payload", {})) if isinstance(_runtime_get("metrics_cache_payload", {}), dict) else None
+                last_cache_seq = _coerce_event_id(_runtime_get("metrics_cache_seq", 0))
+            initial_snapshot = cache_payload if isinstance(cache_payload, dict) else latest_db_snapshot
+            if isinstance(initial_snapshot, dict):
+                last_payload = _serialize_snapshot(initial_snapshot)
+                yield f"data: {last_payload}\n\n"
             try:
                 while True:
-                    _refresh_metrics_snapshot_best_effort()
+                    delivered = False
+                    with _runtime_get("metrics_cache_cond"):
+                        cache_payload = dict(_runtime_get("metrics_cache_payload", {})) if isinstance(_runtime_get("metrics_cache_payload", {}), dict) else None
+                        cache_seq = _coerce_event_id(_runtime_get("metrics_cache_seq", 0), last_cache_seq)
+                    if isinstance(cache_payload, dict) and cache_seq > last_cache_seq:
+                        payload = _serialize_snapshot(cache_payload)
+                        if payload != last_payload:
+                            yield f"data: {payload}\n\n"
+                            delivered = True
+                            last_payload = payload
+                        last_cache_seq = cache_seq
                     db_path = state.get("APP_STATE_DB_PATH")
                     if db_path is not None:
                         try:
@@ -175,40 +201,33 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                                 payload_obj = row.get("payload", {}) if isinstance(row, dict) else {}
                                 snapshot = payload_obj.get("snapshot") if isinstance(payload_obj, dict) else None
                                 if isinstance(snapshot, dict):
-                                    payload = json.dumps(_attach_nav_attention(snapshot), separators=(",", ":"))
-                                    yield f"data: {payload}\n\n"
+                                    payload = _serialize_snapshot(snapshot)
+                                    if payload != last_payload:
+                                        yield f"data: {payload}\n\n"
+                                        delivered = True
+                                        last_payload = payload
                                 row_id = _coerce_event_id(
                                     row.get("id", last_event_id) if isinstance(row, dict) else last_event_id,
                                     last_event_id,
                                 )
                                 last_event_id = max(last_event_id, row_id)
-                                last_cache_seq = max(last_cache_seq, row_id)
-                            continue
-                    with state["metrics_cache_cond"]:
-                        cache_payload = dict(state["metrics_cache_payload"]) if isinstance(state.get("metrics_cache_payload"), dict) else None
-                        cache_seq = _coerce_event_id(state.get("metrics_cache_seq", 0), last_cache_seq)
-                    if isinstance(cache_payload, dict) and cache_seq > last_cache_seq:
-                        payload = json.dumps(_attach_nav_attention(cache_payload), separators=(",", ":"))
-                        yield f"data: {payload}\n\n"
-                        last_cache_seq = cache_seq
-                        last_event_id = max(last_event_id, cache_seq)
-                        continue
-                    yield ": keepalive\n\n"
+                    if not delivered:
+                        yield ": keepalive\n\n"
                     if client_id:
                         _client_registry.touch_client(state, client_id, channel="metrics_stream")
                     configured_heartbeat = float(state["METRICS_STREAM_HEARTBEAT_SECONDS"])
                     heartbeat = max(0.5, min(configured_heartbeat, 1.0))
-                    with state["metrics_cache_cond"]:
-                        state["metrics_cache_cond"].wait_for(
-                            lambda: _coerce_event_id(state.get("metrics_cache_seq", 0), last_cache_seq) > last_cache_seq,
+                    with _runtime_get("metrics_cache_cond"):
+                        _runtime_get("metrics_cache_cond").wait_for(
+                            lambda: _coerce_event_id(_runtime_get("metrics_cache_seq", 0), last_cache_seq) > last_cache_seq,
                             timeout=heartbeat,
                         )
             finally:
                 if client_id:
                     _client_registry.unregister_client(state, client_id, channel="metrics_stream")
-                with state["metrics_cache_cond"]:
-                    state["metrics_stream_client_count"] = max(0, state["metrics_stream_client_count"] - 1)
-                    state["metrics_cache_cond"].notify_all()
+                with _runtime_get("metrics_cache_cond"):
+                    _runtime_set("metrics_stream_client_count", max(0, int(_runtime_get("metrics_stream_client_count", 0) or 0) - 1))
+                    _runtime_get("metrics_cache_cond").notify_all()
 
         return Response(
             stream_with_context(generate()),

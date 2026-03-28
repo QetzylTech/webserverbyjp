@@ -1,4 +1,4 @@
-﻿"""Panel settings routes for admin configuration."""
+"""Panel settings routes for admin configuration."""
 
 from __future__ import annotations
 # mypy: disable-error-code=untyped-decorator
@@ -15,7 +15,6 @@ from flask import jsonify, render_template, request
 from werkzeug.security import generate_password_hash
 
 from app.core import state_store as state_store_service
-from app.core.web_config import WebConfig
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 from app.services import setup_service as setup_service_service
 from app.queries import setup_queries as setup_queries_service
@@ -86,9 +85,23 @@ def _web_cfg_values(state: Mapping[str, Any]) -> dict[str, str]:
 
 def _load_env_file_values(web_conf_path: str | Path, app_dir: str | Path) -> dict[str, str]:
     try:
-        return dict(WebConfig(Path(web_conf_path), Path(app_dir)).values)
-    except Exception:
+        lines = Path(web_conf_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
         return {}
+    values: dict[str, str] = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
 
 
 def _load_env_defaults(state: Mapping[str, Any]) -> tuple[dict[str, str], Path, Path]:

@@ -222,12 +222,14 @@ class FileRoutesCoverageTests(unittest.TestCase):
                 _assert_rule_methods(self, app, "/crash-logs", {"GET"})
                 _assert_rule_methods(self, app, "/minecraft-logs", {"GET"})
                 _assert_rule_methods(self, app, "/file-page-heartbeat", {"POST"})
+                _assert_rule_methods(self, app, "/file-page-stream/<page_name>", {"GET"})
                 _assert_rule_methods(self, app, "/download/backups/<path:filename>", {"POST"})
                 _assert_rule_methods(self, app, "/download/backups-snapshot/<path:snapshot_name>", {"POST"})
                 _assert_rule_methods(self, app, "/download/crash-logs/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/download/minecraft-logs/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/download/log-files/<source>/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/log-files/<source>", {"GET"})
+                _assert_rule_methods(self, app, "/log-files-stream/<source>", {"GET"})
                 _assert_rule_methods(self, app, "/view-file/<source>/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/view-log-file/<source>/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/log-stream/<source>", {"GET"})
@@ -241,6 +243,9 @@ class FileRoutesCoverageTests(unittest.TestCase):
                 self.assertIn("/minecraft-logs?source=crash", crash_redirect.headers.get("Location", ""))
                 self.assertEqual(client.get("/minecraft-logs").status_code, 200)
                 self.assertEqual(client.post("/file-page-heartbeat").status_code, 204)
+                file_stream = client.get("/file-page-stream/backups", buffered=False)
+                self.assertEqual(file_stream.status_code, 200)
+                file_stream.close()
                 self.assertEqual(client.post("/download/backups/a.zip", data={"sudo_password": "ok"}).status_code, 200)
                 self.assertEqual(client.post("/download/backups-snapshot/nope", data={"sudo_password": "ok"}).status_code, 404)
                 self.assertEqual(client.get("/download/crash-logs/crash.txt").status_code, 200)
@@ -249,6 +254,9 @@ class FileRoutesCoverageTests(unittest.TestCase):
                 self.assertEqual(client.get("/download/log-files/crash/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/log-files/minecraft").status_code, 200)
                 self.assertEqual(client.get("/log-files/crash").status_code, 200)
+                log_stream = client.get("/log-files-stream/minecraft", buffered=False)
+                self.assertEqual(log_stream.status_code, 200)
+                log_stream.close()
                 self.assertEqual(client.get("/view-file/crash_logs/crash.txt").status_code, 200)
                 self.assertEqual(client.get("/view-log-file/backup/backup.log").status_code, 200)
                 self.assertEqual(client.get("/view-log-file/crash/crash.txt").status_code, 200)
@@ -330,6 +338,7 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
 
             _assert_rule_methods(self, app, "/maintenance", {"GET"})
             _assert_rule_methods(self, app, "/maintenance/api/state", {"GET"})
+            _assert_rule_methods(self, app, "/maintenance-stream", {"GET"})
             _assert_rule_methods(self, app, "/maintenance/api/confirm-password", {"POST"})
             _assert_rule_methods(self, app, "/maintenance/api/save-rules", {"POST"})
             _assert_rule_methods(self, app, "/maintenance/api/run-rules", {"POST"})
@@ -342,6 +351,9 @@ class MaintenanceRoutesCoverageTests(unittest.TestCase):
             state_body = state_resp.get_json() or {}
             self.assertIn("freshness", state_body)
             self.assertIn("computed_at_epoch", state_body.get("freshness", {}))
+            state_stream = client.get("/maintenance-stream", buffered=False)
+            self.assertEqual(state_stream.status_code, 200)
+            state_stream.close()
             self.assertEqual(
                 client.post("/maintenance/api/confirm-password", json={"action": "open_rules_edit", "sudo_password": "ok"}).status_code,
                 200,

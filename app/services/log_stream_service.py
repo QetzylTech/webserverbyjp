@@ -140,6 +140,102 @@ def drain_buffered_log_lines(ctx: Any, source: object) -> list[str]:
         return lines
 
 
+def _log_batch_interval_seconds(ctx: Any) -> float:
+    try:
+        value = float(getattr(ctx, "LOG_STREAM_BATCH_INTERVAL_SECONDS", 0.5) or 0.5)
+    except Exception:
+        value = 0.5
+    return max(0.1, value)
+
+
+def _log_batch_max_lines(ctx: Any) -> int:
+    try:
+        value = int(getattr(ctx, "LOG_STREAM_BATCH_MAX_LINES", 80) or 80)
+    except Exception:
+        value = 80
+    return max(1, value)
+
+
+def _log_batch_max_bytes(ctx: Any) -> int:
+    try:
+        value = int(getattr(ctx, "LOG_STREAM_BATCH_MAX_BYTES", 16 * 1024) or (16 * 1024))
+    except Exception:
+        value = 16 * 1024
+    return max(256, value)
+
+
+def _active_file_poll_seconds(ctx: Any) -> float:
+    try:
+        value = float(getattr(ctx, "LOG_FETCHER_ACTIVE_POLL_SECONDS", 0.5) or 0.5)
+    except Exception:
+        value = 0.5
+    return max(0.1, value)
+
+
+def _line_size_bytes(line: str) -> int:
+    return len(str(line or "").encode("utf-8", errors="ignore"))
+
+
+def _batch_payload(source: str, lines: list[str]) -> dict[str, object]:
+    return {
+        "source": str(source or "").strip().lower(),
+        "lines": [str(line or "") for line in lines if str(line or "")],
+    }
+
+
+def flush_log_stream_batch(ctx: Any, source: object, *, force: bool = False) -> bool:
+    normalized = normalize_log_source(ctx, source)
+    if normalized is None:
+        return False
+    stream_state = ctx.log_stream_states.get(normalized)
+    if stream_state is None:
+        return False
+    payload: dict[str, object] | None = None
+    has_clients = False
+    now = time.time()
+    with stream_state["lifecycle_lock"]:
+        pending_lines = stream_state.get("pending_lines")
+        if not isinstance(pending_lines, list) or not pending_lines:
+            return False
+        batch_started_at = float(stream_state.get("batch_started_at", 0.0) or 0.0)
+        pending_bytes = int(stream_state.get("pending_bytes", 0) or 0)
+        should_flush = force
+        if not should_flush and batch_started_at > 0.0:
+            should_flush = (now - batch_started_at) >= _log_batch_interval_seconds(ctx)
+        if not should_flush:
+            should_flush = len(pending_lines) >= _log_batch_max_lines(ctx) or pending_bytes >= _log_batch_max_bytes(ctx)
+        if not should_flush:
+            return False
+        payload = _batch_payload(normalized, list(pending_lines))
+        has_clients = int(stream_state.get("clients", 0) or 0) > 0
+        pending_lines.clear()
+        stream_state["pending_bytes"] = 0
+        stream_state["batch_started_at"] = 0.0
+
+    lines = payload.get("lines", []) if isinstance(payload, dict) else []
+    if not isinstance(lines, list) or not lines:
+        return False
+
+    if has_clients:
+        db_event_id = 0
+        try:
+            db_event_id = int(
+                ports.store.append_event(
+                    ctx.APP_STATE_DB_PATH,
+                    topic=f"log:{normalized}",
+                    payload=payload,
+                )
+                or 0
+            )
+        except Exception:
+            db_event_id = 0
+        with stream_state["cond"]:
+            stream_state["seq"] = int(db_event_id or (stream_state["seq"] + 1))
+            stream_state["events"].append((stream_state["seq"], payload))
+            stream_state["cond"].notify_all()
+    return True
+
+
 def _mark_start_observed_from_log(ctx: Any, line: object) -> None:
     pattern = getattr(ctx, "RCON_STARTUP_READY_PATTERN", None)
     if pattern is None or not pattern.search(str(line or "")):
@@ -203,34 +299,20 @@ def publish_log_stream_line(ctx: Any, source: object, line: object) -> None:
     normalized = normalize_log_source(ctx, source)
     if normalized is None:
         return
+    clean = str(line or "").rstrip("\r\n")
+    if not clean:
+        return
     if normalized == "minecraft":
-        _mark_start_observed_from_log(ctx, line)
+        _mark_start_observed_from_log(ctx, clean)
     stream_state = ctx.log_stream_states.get(normalized)
     if stream_state is None:
         return
-    process_role = str(getattr(ctx, "PROCESS_ROLE", "all") or "all").strip().lower()
     with stream_state["lifecycle_lock"]:
-        has_clients = int(stream_state.get("clients", 0) or 0) > 0
-        buffered = stream_state.get("buffered_lines")
-        if not has_clients and isinstance(buffered, deque):
-            buffered.append(str(line or ""))
-    if has_clients:
-        with stream_state["cond"]:
-            db_event_id = 0
-            try:
-                db_event_id = int(
-                    ports.store.append_event(
-                        ctx.APP_STATE_DB_PATH,
-                        topic=f"log:{normalized}",
-                        payload={"line": str(line or "")},
-                    )
-                    or 0
-                )
-            except Exception:
-                db_event_id = 0
-            stream_state["seq"] = int(db_event_id or (stream_state["seq"] + 1))
-            stream_state["events"].append((stream_state["seq"], line))
-            stream_state["cond"].notify_all()
+        pending_lines = stream_state.setdefault("pending_lines", [])
+        if not pending_lines:
+            stream_state["batch_started_at"] = time.time()
+        pending_lines.append(clean)
+        stream_state["pending_bytes"] = int(stream_state.get("pending_bytes", 0) or 0) + _line_size_bytes(clean)
     appenders = {
         "minecraft": ctx._append_minecraft_log_cache_line,
         "backup": ctx._append_backup_log_cache_line,
@@ -238,7 +320,8 @@ def publish_log_stream_line(ctx: Any, source: object, line: object) -> None:
     }
     appender = appenders.get(normalized)
     if appender is not None:
-        appender(line)
+        appender(clean)
+    flush_log_stream_batch(ctx, normalized)
 
 
 def line_matches_crash_marker(ctx: Any, line: object) -> bool:
@@ -364,10 +447,11 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
     def _read_file_updates(stream_state: dict[str, Any], path: Path, *, allow_break_on_no_clients: bool) -> None:
         nonlocal file_poll_offset, follow_from_end_initialized
         if not path.exists():
+            flush_log_stream_batch(ctx, normalized, force=True)
             file_poll_offset = 0
             follow_from_end_initialized = False
             _store_offset_state(stream_state, file_poll_offset, follow_from_end_initialized)
-            time.sleep(1)
+            time.sleep(_active_file_poll_seconds(ctx))
             return
         try:
             file_size = int(path.stat().st_size)
@@ -397,6 +481,7 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                 if normalized == "minecraft":
                     schedule_crash_stop_if_needed(ctx, clean)
             file_poll_offset = int(fh.tell())
+        flush_log_stream_batch(ctx, normalized, force=True)
         _store_offset_state(stream_state, file_poll_offset, follow_from_end_initialized)
 
     while True:
@@ -439,12 +524,12 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                     _settings_path(settings["path"]),
                     allow_break_on_no_clients=True,
                 )
-                time.sleep(1)
+                time.sleep(_active_file_poll_seconds(ctx))
                 continue
             if settings["type"] == "journal":
                 proc = ports.log.minecraft_open_follow_logs_process(str(settings["unit"]), ctx.MINECRAFT_LOGS_DIR)
                 if not proc:
-                    time.sleep(1)
+                    time.sleep(_active_file_poll_seconds(ctx))
                     continue
             else:
                 _read_file_updates(
@@ -452,7 +537,7 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
                     _settings_path(settings["path"]),
                     allow_break_on_no_clients=True,
                 )
-                time.sleep(1)
+                time.sleep(_active_file_poll_seconds(ctx))
                 continue
 
             with stream_state["lifecycle_lock"]:
@@ -472,10 +557,11 @@ def log_source_fetcher_loop(ctx: Any, source: object) -> None:
         except Exception as exc:
             ctx.log_mcweb_exception(settings["context"], exc)
         finally:
+            flush_log_stream_batch(ctx, normalized, force=True)
             with stream_state["lifecycle_lock"]:
                 stream_state["proc"] = None
             ports.log.terminate_process(proc)
-        time.sleep(1)
+        time.sleep(_active_file_poll_seconds(ctx))
 
 
 def ensure_log_stream_fetcher_started(ctx: Any, source: object) -> None:

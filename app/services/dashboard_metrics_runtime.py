@@ -37,10 +37,13 @@ def has_active_flask_app_clients(ctx: Any) -> bool:
     with ctx.metrics_cache_cond:
         home_last_seen = float(getattr(ctx, "home_page_last_seen", 0.0) or 0.0)
         file_last_seen = float(getattr(ctx, "file_page_last_seen", 0.0) or 0.0)
+        metrics_stream_clients = int(getattr(ctx, "metrics_stream_client_count", 0) or 0)
         home_ttl_seconds = float(getattr(ctx, "HOME_PAGE_ACTIVE_TTL_SECONDS", 0.0) or 0.0)
         file_ttl_seconds = float(getattr(ctx, "FILE_PAGE_ACTIVE_TTL_SECONDS", 0.0) or 0.0)
     active_clients = client_registry_service.active_client_count(ctx)
     return (
+        metrics_stream_clients > 0
+        or
         active_clients > 0
         or (now - home_last_seen) <= home_ttl_seconds
         or (now - file_last_seen) <= file_ttl_seconds

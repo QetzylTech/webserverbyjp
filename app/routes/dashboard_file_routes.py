@@ -1,5 +1,6 @@
 """File and log routes for the shell-first MC web dashboard."""
 # mypy: disable-error-code=untyped-decorator
+import json
 import time
 from typing import Any, Iterator, Mapping, cast
 
@@ -30,6 +31,11 @@ def _sse_response(generator: Iterator[str]) -> Response:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _json_payload_changed(payload: Mapping[str, Any], previous: str) -> tuple[bool, str]:
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return encoded != previous, encoded
 
 
 def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
@@ -124,6 +130,65 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
         if payload is None:
             return jsonify({"ok": False, "message": "Invalid file page source."}), 404
         return jsonify({"ok": True, "page": normalized, **payload})
+
+    @app.route("/file-page-stream/<page_name>")
+    def file_page_stream(page_name: str) -> Any:
+        normalized = str(page_name or "").strip().lower()
+        if normalized not in {"backups", "crash_logs"}:
+            return Response("invalid file page source", status=404)
+        client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
+        channel = f"file_page_stream:{normalized}"
+
+        def _build_payload() -> dict[str, Any]:
+            state["ensure_file_page_cache_refresher_started"]()
+            marker = state["_mark_file_page_client_active"]
+            try:
+                marker(client_id=client_id)
+            except TypeError:
+                marker()
+            if normalized == "backups":
+                return {
+                    "ok": True,
+                    "page": normalized,
+                    "items": state["get_cached_file_page_items"]("backups"),
+                    "download_base": "/download/backups",
+                    "view_base": "",
+                }
+            return {
+                "ok": True,
+                "page": normalized,
+                "items": state["get_cached_file_page_items"]("crash_logs"),
+                "download_base": "/download/crash-logs",
+                "view_base": "/view-file/crash_logs",
+            }
+
+        def generate() -> Iterator[str]:
+            if client_id:
+                _client_registry_service.register_client(state, client_id, channel=channel)
+            last_payload = ""
+            last_keepalive = 0.0
+            try:
+                while True:
+                    payload = _build_payload()
+                    changed, encoded = _json_payload_changed(payload, last_payload)
+                    if changed:
+                        last_payload = encoded
+                        yield "event: state\n"
+                        yield f"data: {encoded}\n\n"
+                        last_keepalive = time.time()
+                    else:
+                        now = time.time()
+                        if (now - last_keepalive) >= 1.0:
+                            yield ": keepalive\n\n"
+                            last_keepalive = now
+                    if client_id:
+                        _client_registry_service.touch_client(state, client_id, channel=channel)
+                    time.sleep(1.0)
+            finally:
+                if client_id:
+                    _client_registry_service.unregister_client(state, client_id, channel=channel)
+
+        return _sse_response(generate())
 
     # Route: /download/backups/<path:filename>
     @app.route("/download/backups/<path:filename>", methods=["POST"])
@@ -227,6 +292,64 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
             }
         )
 
+    @app.route("/log-files-stream/<source>")
+    def log_files_stream(source: str) -> Any:
+        spec = file_queries.log_file_source_spec(state, source)
+        if spec is None:
+            return Response("invalid log file source", status=404)
+        client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
+        source_key = str(spec["key"] or "").strip().lower()
+        channel = f"log_files_stream:{source_key}"
+
+        def _build_payload() -> dict[str, Any]:
+            state["ensure_file_page_cache_refresher_started"]()
+            marker = state["_mark_file_page_client_active"]
+            try:
+                marker(client_id=client_id)
+            except TypeError:
+                marker()
+            if source_key == "minecraft":
+                items = state["get_cached_file_page_items"]("minecraft_logs")
+            elif source_key == "crash":
+                items = state["get_cached_file_page_items"]("crash_logs")
+            else:
+                items = file_queries.log_file_items_from_spec(state, spec)
+            return {
+                "ok": True,
+                "source": source_key,
+                "items": items,
+                "download_base": spec["download_base"],
+                "view_base": spec["view_base"],
+            }
+
+        def generate() -> Iterator[str]:
+            if client_id:
+                _client_registry_service.register_client(state, client_id, channel=channel)
+            last_payload = ""
+            last_keepalive = 0.0
+            try:
+                while True:
+                    payload = _build_payload()
+                    changed, encoded = _json_payload_changed(payload, last_payload)
+                    if changed:
+                        last_payload = encoded
+                        yield "event: state\n"
+                        yield f"data: {encoded}\n\n"
+                        last_keepalive = time.time()
+                    else:
+                        now = time.time()
+                        if (now - last_keepalive) >= 1.0:
+                            yield ": keepalive\n\n"
+                            last_keepalive = now
+                    if client_id:
+                        _client_registry_service.touch_client(state, client_id, channel=channel)
+                    time.sleep(1.0)
+            finally:
+                if client_id:
+                    _client_registry_service.unregister_client(state, client_id, channel=channel)
+
+        return _sse_response(generate())
+
     # Route: /view-file/<source>/<path:filename>
     @app.route("/view-file/<source>/<path:filename>")
     def view_file(source: str, filename: str) -> Any:
@@ -282,13 +405,35 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
 
         def generate() -> Iterator[str]:
             """Runtime helper generate."""
+            def _coerce_batch_payload(payload_obj: object) -> dict[str, object] | None:
+                if not isinstance(payload_obj, dict):
+                    return None
+                source_value = str(payload_obj.get("source", source_key) or source_key).strip().lower() or source_key
+                raw_lines = payload_obj.get("lines")
+                lines = [str(line or "") for line in raw_lines] if isinstance(raw_lines, list) else []
+                if not lines:
+                    legacy_line = str(payload_obj.get("line", "") or "")
+                    if legacy_line:
+                        lines = [legacy_line]
+                if not lines:
+                    return None
+                return {
+                    "source": source_value,
+                    "lines": lines,
+                }
+
             if client_id:
                 _client_registry_service.register_client(state, client_id, channel=channel)
             state["_increment_log_stream_clients"](source_key)
-            buffered_lines = state["_drain_buffered_log_lines"](source_key)
-            for line in buffered_lines:
-                if line:
-                    yield f"data: {line}\n\n"
+            snapshot_text = state["get_log_source_text"](source_key)
+            if snapshot_text is not None:
+                snapshot_payload = _coerce_batch_payload({
+                    "source": source_key,
+                    "lines": str(snapshot_text or "").splitlines(),
+                })
+                if snapshot_payload is not None:
+                    yield "event: snapshot\n"
+                    yield f"data: {json.dumps(snapshot_payload, ensure_ascii=True, separators=(',', ':'))}\n\n"
             last_event_id = 0
             last_seq = 0
             db_path = state.get("APP_STATE_DB_PATH")
@@ -307,19 +452,27 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
             last_keepalive = time.time()
             try:
                 while True:
+                    flush_batch = state.get("flush_log_stream_batch")
+                    if callable(flush_batch):
+                        try:
+                            flush_batch(source_key)
+                        except Exception:
+                            pass
                     delivered = False
                     if stream_state is not None:
                         with stream_state["cond"]:
                             events = list(stream_state["events"])
                         if events:
-                            for seq, line in events:
+                            for seq, payload_obj in events:
                                 if seq <= last_seq:
                                     continue
                                 last_seq = seq
                                 last_event_id = max(last_event_id, seq)
-                                if line:
+                                payload = _coerce_batch_payload(payload_obj)
+                                if payload is not None:
                                     delivered = True
-                                    yield f"data: {line}\n\n"
+                                    yield "event: batch\n"
+                                    yield f"data: {json.dumps(payload, ensure_ascii=True, separators=(',', ':'))}\n\n"
                     db_path = state.get("APP_STATE_DB_PATH")
                     if db_path is not None:
                         try:
@@ -333,11 +486,11 @@ def register_file_routes(app: Any, state: Mapping[str, Any]) -> None:
                             rows = []
                         if rows:
                             for row in rows:
-                                payload = row.get("payload", {}) if isinstance(row, dict) else {}
-                                line = str(payload.get("line", "") if isinstance(payload, dict) else "")
-                                if line:
+                                payload = _coerce_batch_payload(row.get("payload", {}) if isinstance(row, dict) else {})
+                                if payload is not None:
                                     delivered = True
-                                    yield f"data: {line}\n\n"
+                                    yield "event: batch\n"
+                                    yield f"data: {json.dumps(payload, ensure_ascii=True, separators=(',', ':'))}\n\n"
                                 last_event_id = _event_id(row.get("id", last_event_id), last_event_id)
                                 last_seq = max(last_seq, last_event_id)
                             continue

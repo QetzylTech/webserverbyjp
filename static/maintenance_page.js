@@ -556,9 +556,71 @@
         }
 
         let refreshSeq = 0;
+        let maintenanceStateStream = null;
+        let maintenanceStateStreamScope = "";
+
+        function stopMaintenanceStateStream() {
+            if (!maintenanceStateStream) return;
+            try {
+                maintenanceStateStream.close();
+            } catch (_) {
+                // Ignore EventSource teardown failures.
+            }
+            maintenanceStateStream = null;
+            maintenanceStateStreamScope = "";
+        }
+
+        function startMaintenanceStateStream(options = {}) {
+            if (typeof window.EventSource !== "function" || document.hidden) {
+                return false;
+            }
+            const targetScope = normalizeScope(options.scope || state.currentScope);
+            if (
+                maintenanceStateStream
+                && maintenanceStateStreamScope === targetScope
+                && options.restart !== true
+                && options.force !== true
+            ) {
+                return true;
+            }
+            stopMaintenanceStateStream();
+            const streamUrl = new URL("/maintenance-stream", window.location.origin);
+            streamUrl.searchParams.set("scope", targetScope);
+            if (options.force) {
+                streamUrl.searchParams.set("refresh", "1");
+            }
+            const stream = new EventSource(streamUrl.toString());
+            maintenanceStateStream = stream;
+            maintenanceStateStreamScope = targetScope;
+            stream.addEventListener("state", (event) => {
+                if (maintenanceStateStream !== stream) return;
+                if (targetScope !== state.currentScope) return;
+                try {
+                    const payload = JSON.parse(String(event.data || "{}"));
+                    applyStatePayload(payload);
+                } catch (_) {
+                    if (!options.silent) {
+                        actions.showError?.("Failed to refresh maintenance state.");
+                    }
+                }
+            });
+            stream.onerror = () => {
+                if (maintenanceStateStream !== stream) return;
+            };
+            return true;
+        }
+
         async function refreshState(options = {}) {
             const seq = ++refreshSeq;
             const targetScope = state.currentScope;
+            if (startMaintenanceStateStream({
+                scope: targetScope,
+                force: !!options.force,
+                restart: !!options.force,
+                silent: !!options.silent,
+            })) {
+                return;
+            }
             try {
                 const payload = await actions.fetchState(targetScope, { force: !!options.force });
                 if (seq !== refreshSeq) return;
@@ -881,25 +943,12 @@
             }
 
             listen(document, "visibilitychange", () => {
-                if (!document.hidden) {
-                    refreshState({ silent: true });
+                if (document.hidden) {
+                    stopMaintenanceStateStream();
+                    return;
                 }
-            });
-        }
-
-        const REFRESH_INTERVAL_MS = 10000;
-        let refreshTimer = null;
-        function startAutoRefresh() {
-            if (refreshTimer) return;
-            refreshTimer = window.setInterval(() => {
-                if (document.hidden) return;
                 refreshState({ silent: true });
-            }, REFRESH_INTERVAL_MS);
-        }
-        function stopAutoRefresh() {
-            if (!refreshTimer) return;
-            window.clearInterval(refreshTimer);
-            refreshTimer = null;
+            });
         }
 
         wireEventListeners();
@@ -909,7 +958,6 @@
         actions.renderRules();
         actions.renderFileList();
         renderStats();
-        startAutoRefresh();
         refreshState({ silent: true });
 
         if (shell && typeof shell.setUnsavedChangesGuard === "function") {
@@ -922,7 +970,7 @@
         }
 
         teardownMaintenancePage = () => {
-            stopAutoRefresh();
+            stopMaintenanceStateStream();
             if (shell && typeof shell.clearUnsavedChangesGuard === "function") {
                 shell.clearUnsavedChangesGuard("maintenance");
             }

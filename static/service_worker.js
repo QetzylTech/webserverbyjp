@@ -1,6 +1,6 @@
-const STATIC_CACHE = "mcweb-static-v5";
-const HTML_CACHE = "mcweb-html-v5";
-const FRAGMENT_CACHE = "mcweb-fragments-v5";
+const STATIC_CACHE = "mcweb-static-v6";
+const HTML_CACHE = "mcweb-html-v6";
+const FRAGMENT_CACHE = "mcweb-fragments-v6";
 const OFFLINE_FALLBACK_URL = "/static/offline.html";
 const OFFLINE_FRAGMENT_HTML = "<main id=\"mcweb-page-root\" class=\"content\" data-page-key=\"offline\" data-page-title=\"Offline\" data-page-styles='[]' data-page-scripts='[]'><div class=\"wrap page-panes\"><section class=\"panel pane-primary\"><div class=\"pane-head\"><h1 class=\"pane-title\">Server offline</h1></div><div class=\"pane-content\"><p>Cached content is unavailable for this page. Reconnect to load data.</p></div></section></div></main>";
 

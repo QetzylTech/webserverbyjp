@@ -10,6 +10,7 @@ _LOG_STREAM_EXPORTS = (
     "drain_buffered_log_lines",
     "decrement_log_stream_clients",
     "ensure_log_stream_fetcher_started",
+    "flush_log_stream_batch",
     "get_log_source_text",
     "increment_log_stream_clients",
     "is_rcon_noise_line",

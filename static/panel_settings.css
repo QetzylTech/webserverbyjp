@@ -192,6 +192,11 @@ body {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
+.settings-dropzone.has-file {
+  border-color: #1b8f3b;
+  box-shadow: 0 0 0 2px rgba(27, 143, 59, 0.12);
+}
+
 .settings-dropzone-text {
   font-weight: 600;
   color: var(--muted-text, #6b7280);

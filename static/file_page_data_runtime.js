@@ -49,9 +49,9 @@
         }
 
         function openRestoreLogStream(options = {}) {
-            const clientId = String(options.clientId || "").trim();
-            const url = new URL("/log-stream/restore", window.location.origin);
-            if (clientId) url.searchParams.set("client_id", clientId);
+            const jobId = String(options.jobId || "").trim();
+            const url = new URL("/stream/restore_logs", window.location.origin);
+            if (jobId) url.searchParams.set("job_id", jobId);
             return new EventSource(url.toString());
         }
 

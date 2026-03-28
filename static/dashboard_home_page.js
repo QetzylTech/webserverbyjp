@@ -20,16 +20,8 @@
     const homeLogRuntime = window.MCWebHomeLogRuntime || {};
     const homeTimeUtils = window.MCWebHomeTimeUtils || {};
     const pageModules = window.MCWebPageModules || null;
-    const HOME_PAGE_HEARTBEAT_INTERVAL_MS = Number(__MCWEB_HOME_CONFIG.heartbeatIntervalMs || 10000);
-    const pageActivityRuntime = window.MCWebPageActivityRuntime;
     const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
     const START_BUTTON_COOLDOWN_MS = 10000;
-    const METRICS_POLL_INTERVAL_MS = 1000;
-    const homeHeartbeatController = pageActivityRuntime.createHeartbeatController({
-        path: "/home-heartbeat",
-        csrfToken,
-        intervalMs: HOME_PAGE_HEARTBEAT_INTERVAL_MS,
-    });
 
     // UI state used for dynamic controls/modals.
     let idleCountdownSeconds = null;
@@ -53,15 +45,21 @@
     let logScrollbarCleanup = null;
     let countdownTimer = null;
     let serverClockTimer = null;
-    let metricsPollTimer = null;
     let startCooldownTimer = null;
-    const operationPollTimers = {};
     let lowStorageModalShown = false;
     let lastBackupWarningSeq = 0;
     let cachedMetricsSnapshot = null;
+    let homeMetricsUnsubscribe = null;
+    let operationUpdatesUnsubscribe = null;
+    let homeLogsUnsubscribe = null;
     let backupStatusOverride = "";
     let queuedStartPending = false;
     let startCooldownUntilMs = 0;
+    const trackedOperationIds = {
+        "/start": "",
+        "/stop": "",
+        "/backup": "",
+    };
     // Current scheduler mode: "active" or "off".
     let refreshMode = null;
     const SERVER_TIME_REBASE_TOLERANCE_SECONDS = 2;
@@ -314,56 +312,10 @@
         serverClockTimer = window.setTimeout(scheduleServerClockTick, delay);
     }
 
-    function clearMetricsPollTimer() {
-        if (!metricsPollTimer) return;
-        clearTimeout(metricsPollTimer);
-        metricsPollTimer = null;
-    }
-
     function cacheMetricsSnapshot(data) {
         if (!data || typeof data !== "object") return;
         cachedMetricsSnapshot = data;
         window.__MCWEB_LAST_METRICS_SNAPSHOT = data;
-    }
-
-    async function fetchLiveMetricsSnapshot() {
-        try {
-            const response = await fetch("/metrics", {
-                method: "GET",
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest",
-                    Accept: "application/json",
-                },
-                cache: "no-store",
-            });
-            if (!response.ok) return null;
-            const payload = await response.json();
-            return payload && typeof payload === "object" ? payload : null;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    async function refreshLiveMetricsSnapshot() {
-        if (document.hidden) return;
-        const payload = await fetchLiveMetricsSnapshot();
-        if (payload) {
-            applyMetricsData(payload);
-        }
-    }
-
-    function scheduleLiveMetricsPoll(options = {}) {
-        clearMetricsPollTimer();
-        if (document.hidden) return;
-        const immediate = options.immediate === true;
-        const now = Date.now();
-        const driftToNextSecond = METRICS_POLL_INTERVAL_MS - (now % METRICS_POLL_INTERVAL_MS);
-        const delay = immediate ? 0 : Math.max(250, Math.min(1250, driftToNextSecond));
-        metricsPollTimer = window.setTimeout(async () => {
-            metricsPollTimer = null;
-            await refreshLiveMetricsSnapshot();
-            scheduleLiveMetricsPoll();
-        }, delay);
     }
 
     function isServiceRunningInMetrics(data) {
@@ -585,59 +537,49 @@
     }
 
 
-    function stopOperationPoll(opId) {
-        const key = String(opId || "").trim();
-        if (!key) return;
-        const timerId = operationPollTimers[key];
-        if (!timerId) return;
-        clearTimeout(timerId);
-        delete operationPollTimers[key];
+    function rememberTrackedOperation(action, opId) {
+        const actionKey = String(action || "").trim();
+        if (!Object.prototype.hasOwnProperty.call(trackedOperationIds, actionKey)) return;
+        trackedOperationIds[actionKey] = String(opId || "").trim();
     }
 
-    async function pollOperationStatus(opId, action) {
+    function trackedActionForOperation(opId) {
         const key = String(opId || "").trim();
-        if (!key) return;
-        let response;
-        let payload = null;
-        try {
-            response = await fetch(`/operation-status/${encodeURIComponent(key)}`, {
-                method: "GET",
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest",
-                },
-                cache: "no-store",
-            });
-        } catch (_) {
-            operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 1000);
-            return;
-        }
-        try {
-            payload = await response.json();
-        } catch (_) {
-            payload = null;
-        }
-        if (!response.ok || !payload || payload.ok === false || !payload.operation) {
-            operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 1200);
-            return;
-        }
-        const operation = payload.operation || {};
+        if (!key) return "";
+        return Object.keys(trackedOperationIds).find((action) => trackedOperationIds[action] === key) || "";
+    }
+
+    function clearTrackedOperation(action) {
+        const actionKey = String(action || "").trim();
+        if (!Object.prototype.hasOwnProperty.call(trackedOperationIds, actionKey)) return;
+        trackedOperationIds[actionKey] = "";
+    }
+
+    function handleTrackedOperationUpdate(operation) {
+        if (!operation || typeof operation !== "object") return;
+        const opId = String(operation.op_id || "").trim();
+        const action = trackedActionForOperation(opId);
+        if (!action) return;
         const status = String(operation.status || "").trim().toLowerCase();
+        if (action === "/backup" && (status === "intent" || status === "in_progress")) {
+            setBackupStatusOverride(status === "in_progress" ? "Running" : "Queued");
+        }
+        if (status === "intent" || status === "in_progress") return;
+
+        clearTrackedOperation(action);
+        if (action === "/start") {
+            clearQueuedStartState();
+        }
+        if (action === "/backup") {
+            setBackupStatusOverride("");
+        }
         if (status === "observed") {
-            stopOperationPoll(key);
             if (action === "/backup") {
-                setBackupStatusOverride("");
                 announceBackupsListInvalidation();
             }
             return;
         }
         if (status === "failed") {
-            stopOperationPoll(key);
-            if (action === "/start") {
-                clearQueuedStartState();
-            }
-            if (action === "/backup") {
-                setBackupStatusOverride("");
-            }
             showErrorModal(
                 String(operation.message || "Action failed."),
                 {
@@ -645,14 +587,7 @@
                     action,
                 }
             );
-            return;
         }
-        if (status === "intent" || status === "in_progress") {
-            if (action === "/backup") {
-                setBackupStatusOverride(status === "in_progress" ? "Running" : "Queued");
-            }
-        }
-        operationPollTimers[key] = window.setTimeout(() => pollOperationStatus(key, action), 700);
     }
 
     function showErrorModal(message, options = {}) {
@@ -945,8 +880,7 @@
                 }
                 const opId = String(payload.op_id || "").trim();
                 if (opId) {
-                    stopOperationPoll(opId);
-                    operationPollTimers[opId] = window.setTimeout(() => pollOperationStatus(opId, action), 400);
+                    rememberTrackedOperation(action, opId);
                 }
                 return;
             }
@@ -1000,17 +934,18 @@
             homeMetricsUnsubscribe();
             homeMetricsUnsubscribe = null;
         }
+        if (typeof operationUpdatesUnsubscribe === "function") {
+            operationUpdatesUnsubscribe();
+            operationUpdatesUnsubscribe = null;
+        }
         if (typeof homeLogsUnsubscribe === "function") {
             homeLogsUnsubscribe();
             homeLogsUnsubscribe = null;
         }
-        Object.keys(operationPollTimers).forEach((opId) => stopOperationPoll(opId));
-        homeHeartbeatController.stop();
         if (typeof logScrollbarCleanup === "function") {
             logScrollbarCleanup();
             logScrollbarCleanup = null;
         }
-        clearMetricsPollTimer();
         clearRefreshTimers();
         clearServerClockTimer();
         clearStartCooldownTimer();
@@ -1022,15 +957,14 @@
             if (homeLogController && (!shell || typeof shell.activateHomeLogStream !== "function")) {
                 homeLogController.teardown();
             }
-            homeHeartbeatController.stop();
-            clearMetricsPollTimer();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
-        scheduleLiveMetricsPoll({ immediate: true });
+        if (cachedMetricsSnapshot) {
+            applyMetricsData(cachedMetricsSnapshot, { fromCache: true });
+        }
         scheduleServerClockTick();
-        homeHeartbeatController.start();
     }
 
     async function startHomePage() {
@@ -1199,17 +1133,21 @@
             homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {
                 if (payload && typeof payload === "object") {
                     cacheMetricsSnapshot(payload);
+                    applyMetricsData(payload);
                 }
+            });
+        }
+        if (shell && typeof shell.subscribeOperationUpdates === "function") {
+            operationUpdatesUnsubscribe = shell.subscribeOperationUpdates((operation) => {
+                handleTrackedOperationUpdate(operation);
             });
         }
         if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
             applyMetricsData(window.__MCWEB_LAST_METRICS_SNAPSHOT);
         }
-        scheduleLiveMetricsPoll({ immediate: true });
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");
-        homeHeartbeatController.start();
         addScopedListener(document, "visibilitychange", handleVisibilityRefreshMode);
         addScopedListener(window, "pagehide", teardownRealtimeConnections);
         addScopedListener(window, "beforeunload", teardownRealtimeConnections);

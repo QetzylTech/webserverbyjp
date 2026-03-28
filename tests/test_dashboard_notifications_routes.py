@@ -54,6 +54,37 @@ class DashboardNotificationRoutesTests(unittest.TestCase):
         self.assertIn("message\":\"newer", first_chunk)
         self.assertIn("id: 12", first_chunk)
 
+    def test_operation_stream_replays_new_operation_updates_from_explicit_since(self):
+        app = Flask(__name__)
+        register_notification_routes(app, {"APP_STATE_DB_PATH": "state.sqlite3"})
+        rows = [
+            {
+                "id": 21,
+                "payload": {
+                    "operation": {
+                        "op_id": "start-123",
+                        "op_type": "start",
+                        "status": "in_progress",
+                    }
+                },
+            }
+        ]
+
+        with app.test_request_context("/operation-stream?since=20"), \
+             patch.object(dashboard_notifications_routes.state_store_service, "list_events_since", return_value=rows), \
+             patch.object(dashboard_notifications_routes.state_store_service, "get_latest_event") as latest_event:
+            response = app.view_functions["operation_stream"]()
+            try:
+                first_chunk = next(response.response)
+            finally:
+                response.close()
+
+        latest_event.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: operation", first_chunk)
+        self.assertIn("op_id\":\"start-123", first_chunk)
+        self.assertIn("id: 21", first_chunk)
+
 
 if __name__ == "__main__":
     unittest.main()

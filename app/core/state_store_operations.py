@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from app.core.state_store_core import _connect, _create_tables
+from app.core import state_store_events
 from app.core import profiling
 
 _OPERATIONS_WRITE_LOCK = threading.Lock()
@@ -200,6 +201,14 @@ def _record_operation_update(
             checkpoint_name = str(item.get("checkpoint", "") or "")
         if checkpoint_name:
             profiling.mark_operation_checkpoint(str(item.get("op_id", "") or fallback_op_id), str(checkpoint_name))
+        try:
+            state_store_events.append_event(
+                db_path,
+                topic="operation_update",
+                payload={"operation": dict(item)},
+            )
+        except Exception:
+            pass
         return
     _latest_cache_invalidate(db_path, "")
 
@@ -291,6 +300,14 @@ def _create_operation_impl(
             str(saved_item.get("op_id", "") or op_id),
             str(checkpoint or "intent_created"),
         )
+        try:
+            state_store_events.append_event(
+                db_path,
+                topic="operation_update",
+                payload={"operation": dict(saved_item)},
+            )
+        except Exception:
+            pass
     return saved_item
 
 
