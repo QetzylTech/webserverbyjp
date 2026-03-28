@@ -442,18 +442,27 @@ body {
   justify-self: start;
 }
 
+.rule-inline-edit-input {
+  justify-self: start;
+}
+
+.rule-inline-edit-input[type="time"] {
+  width: 138px;
+}
+
 .rule-inline-control {
   justify-self: start;
   min-width: 120px;
 }
 
-#rules-card-list .rule-inline-sentence select.rule-inline-control {
-  background: var(--pane-content-surface) !important;
-  color: var(--text) !important;
-  border: 0 !important;
-  box-shadow: none !important;
+#rules-card-list .rule-inline-sentence .ui-select {
   min-width: 230px;
-  padding-right: 28px;
+  justify-self: start;
+}
+
+#rules-card-list .rule-inline-sentence .ui-select-button,
+#rules-card-list .rule-inline-sentence .ui-select-option {
+  white-space: nowrap;
 }
 
 .rule-inline-value {
@@ -483,29 +492,9 @@ body {
   border-top: 1px solid var(--border);
 }
 
-.maintenance-action-view input[type="number"].ui-card-input {
-  background: var(--pane-content-surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
-}
-
-.maintenance-action-view input[type="number"].ui-card-input:disabled {
-  background: var(--pane-content-surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  opacity: 1;
-}
-
-#rules-card-list .rule-inline-sentence .ui-card-input,
-#rules-card-list .rule-inline-sentence .ui-card-input:hover,
-#rules-card-list .rule-inline-sentence .ui-card-input:focus,
-#rules-card-list .rule-inline-sentence .ui-card-input:disabled {
-  background: var(--pane-content-surface) !important;
-  border: 0 !important;
-  box-shadow: none !important;
+#rules-card-list .rule-inline-sentence .rule-inline-edit-input:disabled {
+  opacity: 0.68;
+  color: var(--muted);
 }
 
 .maintenance-card-title {
@@ -634,22 +623,16 @@ html.theme-dark .rule-inline-warning {
   color: #fca5a5;
 }
 
-html.theme-dark .maintenance-action-view input[type="number"].ui-card-input,
-html.theme-dark .maintenance-action-view input[type="number"].ui-card-input:disabled,
-html.theme-dark #rules-card-list .rule-inline-sentence .ui-card-input,
-html.theme-dark #rules-card-list .rule-inline-sentence .ui-card-input:hover,
-html.theme-dark #rules-card-list .rule-inline-sentence .ui-card-input:focus,
-html.theme-dark #rules-card-list .rule-inline-sentence .ui-card-input:disabled {
-  background: var(--pane-content-surface) !important;
-  border-color: var(--border) !important;
+html.theme-dark #rules-card-list .rule-inline-sentence .rule-inline-edit-input,
+html.theme-dark #rules-card-list .rule-inline-sentence .rule-inline-edit-input:disabled {
+  background: var(--ui-card-input-bg) !important;
   color: var(--text) !important;
   box-shadow: none !important;
 }
 
-html.theme-dark #rules-card-list .rule-inline-sentence select.rule-inline-control {
-  background: var(--pane-content-surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
+html.theme-dark #rules-card-list .rule-inline-sentence .ui-select-button,
+html.theme-dark #rules-card-list .rule-inline-sentence .ui-select-option {
+  color: inherit !important;
 }
 
 html.theme-dark .modal-list {

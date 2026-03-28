@@ -13,12 +13,6 @@
             mcweb: 200,
             mcweb_log: 200,
         };
-        const LOG_SOURCE_TEXT_PATHS = {
-            minecraft: "/log-text/minecraft",
-            backup: "/log-text/backup",
-            mcweb: "/log-text/mcweb",
-            mcweb_log: "/log-text/mcweb_log",
-        };
         const LOG_SOURCE_STREAM_PATHS = {
             minecraft: "/log-stream/minecraft",
             backup: "/log-stream/backup",
@@ -329,32 +323,6 @@
             ensureLogStreamStarted(source);
         }
 
-        async function loadLogSourceFromServer(source) {
-            try {
-                if (shell && typeof shell.getHomeLogLines === "function") {
-                    const cached = shell.getHomeLogLines(source);
-                    if (Array.isArray(cached) && cached.length > 0) {
-                        setSourceLogText(source, cached.join("\n"));
-                        if (selectedLogSource === source) {
-                            renderActiveLog();
-                        }
-                        return;
-                    }
-                }
-                const logs = shell && typeof shell.fetchLogText === "function"
-                    ? await shell.fetchLogText(source)
-                    : await fetch(LOG_SOURCE_TEXT_PATHS[source], { cache: "no-store" })
-                        .then(function (response) { return response.ok ? response.json() : null; })
-                        .then(function (payload) { return payload && typeof payload === "object" ? payload.logs : ""; });
-                setSourceLogText(source, logs || "");
-            } catch (_) {
-                setSourceLogText(source, "(no logs)");
-            }
-            if (selectedLogSource === source) {
-                renderActiveLog();
-            }
-        }
-
         function bindShellLogSubscription() {
             if (!shell || typeof shell.subscribeHomeLogs !== "function") return;
             if (shellLogUnsubscribe) return;
@@ -502,7 +470,6 @@
             scrollLogToBottom: scrollLogToBottom,
             renderActiveLog: renderActiveLog,
             activateLogStream: activateLogStream,
-            loadLogSourceFromServer: loadLogSourceFromServer,
             loadDeviceNameMap: loadDeviceNameMap,
             syncShellLogSource: syncShellLogSource,
             bindLogElement: bindLogElement,

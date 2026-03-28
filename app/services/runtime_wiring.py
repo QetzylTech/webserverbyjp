@@ -93,11 +93,25 @@ def _build_run_server(
     namespace: Mapping[str, Any],
     binding: Callable[[str], Any],
     start_worker_loops: Callable[[], object],
-) -> Any:
+) -> tuple[Any, Any]:
     """Create the app startup entrypoint from the resolved runtime bindings."""
     bootstrap_service = namespace.get("bootstrap_service") or _default_bootstrap_service
     process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
-    return app_lifecycle_service.build_run_server(
+    boot_runtime = app_lifecycle_service.build_boot_runtime(
+        log_mcweb_log=namespace["log_mcweb_log"],
+        log_mcweb_exception=namespace["log_mcweb_exception"],
+        is_backup_running=binding("is_backup_running"),
+        load_backup_log_cache_from_disk=binding("_load_backup_log_cache_from_disk"),
+        load_minecraft_log_cache_from_journal=binding("_load_minecraft_log_cache_from_journal"),
+        load_mcweb_log_cache_from_disk=binding("_load_mcweb_log_cache_from_disk"),
+        ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
+        warm_file_page_caches=binding("warm_file_page_caches"),
+        collect_and_publish_metrics=binding("_collect_and_publish_metrics"),
+        start_worker_loops=start_worker_loops,
+        enable_background_workers=process_role != "web",
+        enable_boot_runtime_tasks=process_role != "web",
+    )
+    run_server = app_lifecycle_service.build_run_server(
         bootstrap_service=bootstrap_service,
         app=app,
         app_config=namespace["APP_CONFIG"],
@@ -113,7 +127,9 @@ def _build_run_server(
         start_worker_loops=start_worker_loops,
         enable_background_workers=process_role != "web",
         enable_boot_runtime_tasks=process_role != "web",
+        boot_runtime=boot_runtime,
     )
+    return run_server, boot_runtime
 
 
 def create_runtime(
@@ -195,15 +211,18 @@ def create_runtime(
     runtime_context["STATE"] = state
     register_routes(app, state)
 
+    run_server, boot_runtime = _build_run_server(
+        services.app_lifecycle_service,
+        app,
+        namespace,
+        binding,
+        lambda: services.worker_runtime_service.start_worker_loops(state),
+    )
+
     return {
         "runtime_context": runtime_context,
         "state": state,
         "static_asset_version_fn": world_bindings["_static_asset_version"],
-        "run_server": _build_run_server(
-            services.app_lifecycle_service,
-            app,
-            namespace,
-            binding,
-            lambda: services.worker_runtime_service.start_worker_loops(state),
-        ),
+        "run_server": run_server,
+        "boot_runtime": boot_runtime,
     }

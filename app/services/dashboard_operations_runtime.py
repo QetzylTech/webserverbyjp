@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core import profiling
 from app.core import state_store as state_store_service
+from app.ports import ports
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
@@ -25,6 +26,42 @@ def _operation_age_seconds(op: object, now_epoch: float) -> float:
     except Exception:
         return 0.0
     return max(0.0, now_epoch - ts)
+
+
+def _start_off_grace_seconds(ctx: Any) -> float:
+    try:
+        start_timeout = float(getattr(ctx, "OPERATION_START_TIMEOUT_SECONDS", 180.0) or 180.0)
+    except Exception:
+        start_timeout = 180.0
+    return max(5.0, min(15.0, start_timeout))
+
+
+def _start_failed_before_active_message(ctx: Any) -> str:
+    base = "Start operation failed: service returned to an off state before startup completed."
+    service_name = str(getattr(ctx, "SERVICE", "") or "").strip()
+    logs_dir = getattr(ctx, "MINECRAFT_LOGS_DIR", None)
+    if not service_name or logs_dir is None:
+        return base
+    try:
+        output = str(
+            ports.log.minecraft_startup_probe_output(
+                service_name,
+                logs_dir,
+                timeout=4,
+            )
+            or ""
+        ).strip()
+    except Exception:
+        output = ""
+    if not output:
+        return base
+    lines = [str(line).strip() for line in output.splitlines() if str(line).strip()]
+    if not lines:
+        return base
+    last_line = lines[-1]
+    if len(last_line) > 220:
+        last_line = last_line[-220:]
+    return f"{base} Recent log: {last_line}"
 
 
 def get_consistency_report(ctx: Any, *, auto_repair: bool = False) -> JsonDict:
@@ -131,6 +168,22 @@ def reconcile_operations_once(ctx: Any) -> int:
                             message="Service start observed by reconciler.",
                             finished=True,
                         )
+                        updated += 1
+                        continue
+                    if status == "in_progress" and service_status in ctx.OFF_STATES and age >= _start_off_grace_seconds(ctx):
+                        _queue_update(
+                            op_id,
+                            status="failed",
+                            error_code="start_failed",
+                            message=_start_failed_before_active_message(ctx),
+                            finished=True,
+                        )
+                        intent_setter = getattr(ctx, "set_service_status_intent", None)
+                        if callable(intent_setter):
+                            try:
+                                intent_setter(None)
+                            except Exception:
+                                pass
                         updated += 1
                         continue
                     if status == "intent" and age >= float(ctx.OPERATION_INTENT_STALE_SECONDS):

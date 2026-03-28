@@ -86,40 +86,6 @@ def _is_rcon_noise_line(line: object) -> bool:
     return False
 
 
-def _minecraft_log_lines_from_latest_file(ctx: Any, max_visible_lines: int = 500) -> list[str]:
-    """Return recent minecraft file log lines, preferring non-RCON-noise lines."""
-    lines: list[str] = []
-    latest_path = None
-    try:
-        candidates = [p for p in ctx.MINECRAFT_LOGS_DIR.glob("*.log") if p.is_file()]
-        if candidates:
-            latest_path = max(candidates, key=lambda p: p.stat().st_mtime_ns)
-    except OSError:
-        latest_path = None
-
-    if latest_path is not None:
-        # Read a larger tail window so filtering still leaves enough visible lines.
-        source_lines = [
-            str(line)
-            for line in ctx._read_recent_file_lines(latest_path, max(max_visible_lines * 8, 2000))
-        ]
-        filtered = [line for line in source_lines if not _is_rcon_noise_line(line)]
-        if len(filtered) >= max_visible_lines:
-            return filtered[-max_visible_lines:]
-        return source_lines[-max_visible_lines:]
-    return lines
-
-
-def _load_minecraft_log_cache_from_latest_file(ctx: Any, max_visible_lines: int = 500) -> list[str]:
-    """Load recent minecraft file logs into cache."""
-    lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=max_visible_lines)
-    with ctx.minecraft_log_cache_lock:
-        ctx.minecraft_log_cache_lines.clear()
-        ctx.minecraft_log_cache_lines.extend(lines)
-        ctx.minecraft_log_cache_loaded = True
-    return lines
-
-
 def load_backup_log_cache_from_disk(ctx: Any) -> None:
     """Reload backup log cache from disk into bounded in-memory storage."""
     _load_file_log_cache_from_disk(
@@ -183,20 +149,8 @@ def load_minecraft_log_cache_from_journal(ctx: Any) -> None:
                 rejection_message=f"Timed out after {ctx.JOURNAL_LOAD_TIMEOUT_SECONDS:.1f}s.",
             )
             output = ""
-    if not output:
-        _load_minecraft_log_cache_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
-        return
     lines = output.splitlines()
     lines = [line for line in lines if not _is_rcon_noise_line(line)]
-    if len(lines) < ctx.MINECRAFT_LOG_VISIBLE_LINES:
-        # Journal output may be sparse; fall back to latest.log for an initial full tail.
-        file_lines = _minecraft_log_lines_from_latest_file(ctx, max_visible_lines=ctx.MINECRAFT_LOG_VISIBLE_LINES)
-        if len(file_lines) >= len(lines):
-            with ctx.minecraft_log_cache_lock:
-                ctx.minecraft_log_cache_lines.clear()
-                ctx.minecraft_log_cache_lines.extend(file_lines)
-                ctx.minecraft_log_cache_loaded = True
-            return
     if len(lines) > ctx.MINECRAFT_LOG_TEXT_LIMIT:
         lines = lines[-ctx.MINECRAFT_LOG_TEXT_LIMIT:]
     with ctx.minecraft_log_cache_lock:

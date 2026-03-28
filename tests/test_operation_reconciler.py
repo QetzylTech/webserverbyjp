@@ -23,6 +23,8 @@ class OperationReconcilerTests(unittest.TestCase):
             OPERATION_STOP_TIMEOUT_SECONDS=0.1,
             OPERATION_RESTORE_TIMEOUT_SECONDS=0.1,
             OFF_STATES={"inactive", "failed"},
+            SERVICE="minecraft",
+            MINECRAFT_LOGS_DIR=Path("data"),
             operation_reconciler_started=False,
             operation_reconciler_start_lock=threading.Lock(),
             get_status=lambda: service_status,
@@ -65,6 +67,28 @@ class OperationReconcilerTests(unittest.TestCase):
         self.assertGreaterEqual(updated, 1)
         item = state_store_service.get_operation(db_path, "start-op-2")
         self.assertEqual(item["status"], "failed")
+
+    def test_reconcile_start_in_progress_fails_when_service_returns_off(self):
+        db_path = self._db_path("test_ops_reconcile")
+        state_store_service.create_operation(
+            db_path,
+            op_id="start-op-3",
+            op_type="start",
+            target="minecraft",
+            status="in_progress",
+            payload={},
+        )
+        ctx = self._ctx(db_path, service_status="inactive", intent="starting")
+        ctx.OPERATION_START_TIMEOUT_SECONDS = 9_999_999_999.0
+        with patch.object(dashboard_operations_runtime.ports.log, "minecraft_startup_probe_output", return_value="[Server thread/INFO]: Bind failed"):
+            with patch("app.services.dashboard_operations_runtime.time.time", side_effect=[9_999_999_999.0, 9_999_999_999.0]):
+                updated = dashboard_operations_runtime.reconcile_operations_once(ctx)
+        self.assertGreaterEqual(updated, 1)
+        item = state_store_service.get_operation(db_path, "start-op-3")
+        self.assertEqual(item["status"], "failed")
+        self.assertEqual(item["error_code"], "start_failed")
+        self.assertIn("Recent log: [Server thread/INFO]: Bind failed", item["message"])
+        self.assertIsNone(ctx._intent_state["value"])
 
     def test_reconcile_restore_uses_restore_status_result(self):
         db_path = self._db_path("test_ops_reconcile")

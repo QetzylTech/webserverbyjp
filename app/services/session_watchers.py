@@ -4,7 +4,7 @@ from typing import Any
 
 from app.services import backup_scheduler_state as backup_scheduler_state_service
 from app.services import notification_service as notification_service
-from app.services.worker_scheduler import WorkerSpec, start_worker
+from app.services.worker_scheduler import WorkerSpec, get_worker_health_snapshot, start_worker
 
 
 def format_countdown(seconds: float) -> str:
@@ -75,6 +75,10 @@ def idle_player_watcher(ctx: Any) -> None:
 
 def start_idle_player_watcher(ctx: Any) -> None:
     """Start the idle watcher daemon thread once per process."""
+    marker = "idle_player_watcher"
+    health = get_worker_health_snapshot().get(marker, {})
+    if isinstance(health, dict) and bool(health.get("running")):
+        return
     start_worker(
         ctx,
         WorkerSpec(
@@ -177,6 +181,10 @@ def backup_session_watcher(ctx: Any) -> None:
 
 def start_backup_session_watcher(ctx: Any) -> None:
     """Start the backup session watcher daemon thread."""
+    marker = "backup_session_watcher"
+    health = get_worker_health_snapshot().get(marker, {})
+    if isinstance(health, dict) and bool(health.get("running")):
+        return
     start_worker(
         ctx,
         WorkerSpec(
@@ -274,6 +282,10 @@ def storage_safety_watcher(ctx: Any) -> None:
 
 def start_storage_safety_watcher(ctx: Any) -> None:
     """Start the low-storage safety watcher daemon thread."""
+    marker = "storage_safety_watcher"
+    health = get_worker_health_snapshot().get(marker, {})
+    if isinstance(health, dict) and bool(health.get("running")):
+        return
     start_worker(
         ctx,
         WorkerSpec(
@@ -285,6 +297,13 @@ def start_storage_safety_watcher(ctx: Any) -> None:
             health_marker="storage_safety_watcher",
         ),
     )
+
+
+def ensure_session_watchers_started(ctx: Any) -> None:
+    """Best-effort start/restart of session-related watcher workers."""
+    start_idle_player_watcher(ctx)
+    start_backup_session_watcher(ctx)
+    start_storage_safety_watcher(ctx)
 
 
 def initialize_session_tracking(ctx: Any) -> None:

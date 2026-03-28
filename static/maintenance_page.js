@@ -490,6 +490,71 @@
             actions.renderHistory();
         }
 
+        function normalizedRulesSignature(rules) {
+            const source = rules && typeof rules === "object" ? rules : {};
+            const age = source.age && typeof source.age === "object" ? source.age : {};
+            const count = source.count && typeof source.count === "object" ? source.count : {};
+            const space = source.space && typeof source.space === "object" ? source.space : {};
+            const timeBased = source.time_based && typeof source.time_based === "object" ? source.time_based : {};
+            const sessionKeep = Math.max(3, Number(count.session_backups_to_keep ?? count.max_per_category ?? 3));
+            const manualKeep = Math.max(3, Number(count.manual_backups_to_keep ?? count.max_per_category ?? 3));
+            const prerestoreKeep = Math.max(3, Number(count.prerestore_backups_to_keep ?? count.max_per_category ?? 3));
+            return JSON.stringify({
+                age: { days: Math.max(3, Number(age.days ?? 3)) },
+                count: {
+                    session_backups_to_keep: sessionKeep,
+                    manual_backups_to_keep: manualKeep,
+                    prerestore_backups_to_keep: prerestoreKeep,
+                    max_per_category: Math.max(3, Number(count.max_per_category ?? Math.max(sessionKeep, manualKeep, prerestoreKeep))),
+                },
+                space: {
+                    used_trigger_percent: Math.max(50, Math.min(100, Number(space.used_trigger_percent ?? 80))),
+                },
+                time_based: {
+                    enabled: !!timeBased.enabled,
+                    time_of_backup: String(timeBased.time_of_backup || "03:00"),
+                    repeat_mode: String(timeBased.repeat_mode || "does_not_repeat"),
+                    weekly_day: String(timeBased.weekly_day || "Sunday"),
+                    monthly_date: Math.max(1, Math.min(31, Number(timeBased.monthly_date ?? 1))),
+                    every_n_days: Math.max(1, Math.min(365, Number(timeBased.every_n_days ?? 1))),
+                },
+            });
+        }
+
+        function hasUnsavedRuleChanges() {
+            if (!state.rulesEditMode || !state.rulesDraft) return false;
+            return normalizedRulesSignature(actions.getEffectiveRules()) !== normalizedRulesSignature(state.config?.rules || {});
+        }
+
+        function saveUnsavedRuleChanges() {
+            if (!hasUnsavedRuleChanges()) return Promise.resolve(true);
+            if (!rulesController || typeof rulesController.saveRulesEdit !== "function" || !coreController || typeof coreController.requestPassword !== "function") {
+                return Promise.resolve(false);
+            }
+            return new Promise((resolve) => {
+                coreController.requestPassword("save_rules", "Enter sudo password to save cleanup rules.", async (password) => {
+                    try {
+                        const saved = await rulesController.saveRulesEdit(password);
+                        if (!saved) {
+                            resolve(false);
+                            return;
+                        }
+                        modalsController?.closePasswordModal?.();
+                        syncPaneHeadActions();
+                        renderActionDescription();
+                        resolve(true);
+                    } catch (err) {
+                        if (coreController && typeof coreController.showErrorFromPayload === "function") {
+                            coreController.showErrorFromPayload(err, "Failed to save cleanup rules.");
+                        } else {
+                            actions.showError?.("Failed to save cleanup rules.", err?.details || err);
+                        }
+                        resolve(false);
+                    }
+                });
+            });
+        }
+
         let refreshSeq = 0;
         async function refreshState(options = {}) {
             const seq = ++refreshSeq;
@@ -616,7 +681,10 @@
                     }
                     coreController?.requestPassword("save_rules", "Enter sudo password to save cleanup rules.", async (password) => {
                         try {
-                            await rulesController.saveRulesEdit(password);
+                            const saved = await rulesController.saveRulesEdit(password);
+                            if (!saved) {
+                                return;
+                            }
                             modalsController?.closePasswordModal?.();
                             syncPaneHeadActions();
                             renderActionDescription();
@@ -844,8 +912,20 @@
         startAutoRefresh();
         refreshState({ silent: true });
 
+        if (shell && typeof shell.setUnsavedChangesGuard === "function") {
+            shell.setUnsavedChangesGuard({
+                pageKey: "maintenance",
+                pageName: "Cleanup",
+                hasUnsavedChanges: hasUnsavedRuleChanges,
+                saveChanges: saveUnsavedRuleChanges,
+            });
+        }
+
         teardownMaintenancePage = () => {
             stopAutoRefresh();
+            if (shell && typeof shell.clearUnsavedChangesGuard === "function") {
+                shell.clearUnsavedChangesGuard("maintenance");
+            }
             if (cleanup && typeof cleanup.run === "function") {
                 cleanup.run();
             }

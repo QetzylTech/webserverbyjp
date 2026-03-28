@@ -1,7 +1,9 @@
 """Shared helpers for control-plane command handlers."""
 from __future__ import annotations
 
+import time
 import uuid
+from datetime import datetime
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -191,6 +193,21 @@ def _find_active_operation(ctx: Any, op_type: object, *, target: object = None) 
     return None
 
 
+def _operation_age_seconds(op: object) -> float:
+    if not isinstance(op, dict):
+        return 0.0
+    started = str(op.get("started_at", "") or "").strip()
+    intent = str(op.get("intent_at", "") or "").strip()
+    source = started or intent
+    if not source:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(source.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+    return max(0.0, time.time() - ts)
+
+
 def _update_operation_record(ctx: Any, op_id: object, log_key: str, **fields: object) -> bool:
     state: StateMapping = ctx.state
     try:
@@ -375,6 +392,38 @@ def _active_operation_response(
     if not isinstance(active, dict):
         return None
     state: StateMapping = ctx.state
+    if op_type == "start":
+        try:
+            service_status = str(state["get_status"]() or "").strip().lower()
+        except Exception:
+            service_status = ""
+        off_states = tuple(str(value or "").strip().lower() for value in state.get("OFF_STATES", ()))
+        age = _operation_age_seconds(active)
+        stale_after = float(state.get("OPERATION_INTENT_STALE_SECONDS", 15.0) or 15.0)
+        if service_status in off_states and age >= stale_after:
+            _update_operation_record(
+                ctx,
+                active.get("op_id", ""),
+                "start_intent_stale_request_path",
+                status="failed",
+                error_code="intent_stale",
+                checkpoint="intent_stale",
+                message="Start operation stale before worker progress.",
+                finished=True,
+            )
+            intent_setter = state.get("set_service_status_intent")
+            if callable(intent_setter):
+                try:
+                    intent_setter(None)
+                except Exception:
+                    pass
+            invalidate_fn = state.get("invalidate_status_cache")
+            if callable(invalidate_fn):
+                try:
+                    invalidate_fn()
+                except Exception:
+                    pass
+            return None
     if log_action:
         state["log_mcweb_action"](log_action)
     return _accepted_operation_result(

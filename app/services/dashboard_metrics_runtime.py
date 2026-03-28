@@ -9,8 +9,9 @@ from app.services import client_registry as client_registry_service
 from app.services import file_inventory_index as file_inventory_index_service
 from app.services import maintenance_state_store as maintenance_state_store_service
 from app.services import maintenance_scheduler as maintenance_scheduler_service
+from app.services import session_watchers as session_watchers_service
 from app.services.dashboard_state_runtime import get_backups_status, get_observed_state
-from app.services.worker_scheduler import WorkerSpec, start_worker
+from app.services.worker_scheduler import WorkerSpec, get_worker_health_snapshot, start_worker
 
 
 def mark_home_page_client_active(ctx: Any, client_id: str | None = None) -> None:
@@ -316,6 +317,11 @@ def collect_dashboard_metrics(ctx: Any) -> dict[str, Any]:
     active_clients = has_active_flask_app_clients(ctx)
     observed = get_observed_state(ctx)
     service_status = str(observed.get("service_status_raw", "") or ctx.get_status())
+    if active_clients or str(service_status or "").strip().lower() == "active":
+        try:
+            session_watchers_service.ensure_session_watchers_started(ctx)
+        except Exception as exc:
+            ctx.log_mcweb_exception("ensure_session_watchers_started", exc)
     slow = get_slow_metrics(ctx, service_status, active_clients=active_clients)
     cpu_per_core = slow["cpu_per_core"]
     ram_usage = slow["ram_usage"]
@@ -523,8 +529,16 @@ def metrics_collector_loop(ctx: Any) -> None:
 def ensure_metrics_collector_started(ctx: Any) -> None:
     """Start metrics collector daemon once."""
     if ctx.metrics_collector_started:
-        return
+        health = get_worker_health_snapshot().get("metrics_collector", {})
+        if isinstance(health, dict) and bool(health.get("running")):
+            return
+        ctx.metrics_collector_started = False
     with ctx.metrics_collector_start_lock:
+        if ctx.metrics_collector_started:
+            health = get_worker_health_snapshot().get("metrics_collector", {})
+            if isinstance(health, dict) and bool(health.get("running")):
+                return
+            ctx.metrics_collector_started = False
         if ctx.metrics_collector_started:
             return
         start_worker(

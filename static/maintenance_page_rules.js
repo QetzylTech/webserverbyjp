@@ -130,6 +130,7 @@
             ctx.actions.renderHistory?.();
             ctx.actions.renderStats?.();
             cancelRulesEdit();
+            await ctx.actions.refreshState?.({ force: true, silent: true });
             return true;
         }
 
@@ -156,7 +157,7 @@
                 daily: "Daily",
                 weekly: `Weekly on ${weeklyDay}`,
                 monthly: `Monthly on ${monthlyDate}`,
-                weekdays: "Every weekday (Monday to Friday)",
+                weekdays: "Weekdays (M-F)",
                 every_n_days: `Every ${everyNDays} day`,
             };
             const repeatLabel = !timeEnabled ? "Disabled" : (repeatLabelMap[repeatMode] || "Does not repeat");
@@ -169,7 +170,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Minimum age to start deleting (Days)</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-card-input" type="number" min="3" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
+                            ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="3" step="1" value="${ageDays}" data-rule-field="age.days" ${inputDisabled}>`
                             : `<span class="rule-inline-value">${ageDays}</span>`
                         }
                     </p>
@@ -179,7 +180,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Max disk usage before deleting starts (% used)</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-card-input" type="number" min="50" max="100" step="1" value="${usedTrigger}" data-rule-field="space.used_trigger_percent" ${inputDisabled}>`
+                            ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="50" max="100" step="1" value="${usedTrigger}" data-rule-field="space.used_trigger_percent" ${inputDisabled}>`
                             : `<span class="rule-inline-value">${usedTrigger}%</span>`
                         }
                     </p>
@@ -191,7 +192,7 @@
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest stale world entries to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="3" step="1" value="${maxPerCategory}" data-rule-field="count.max_per_category" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${maxPerCategory}</span>`
                                 }
                             </p>
@@ -200,21 +201,21 @@
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Session backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="3" step="1" value="${sessionKeep}" data-rule-field="count.session_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${sessionKeep}</span>`
                                 }
                             </p>
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Manual backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="3" step="1" value="${manualKeep}" data-rule-field="count.manual_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${manualKeep}</span>`
                                 }
                             </p>
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Newest Prerestore backups to keep</span>
                                 ${state.rulesEditMode
-                                    ? `<input class="ui-card-input" type="number" min="3" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
+                                    ? `<input class="ui-card-input rule-inline-edit-input" type="number" min="3" step="1" value="${prerestoreKeep}" data-rule-field="count.prerestore_backups_to_keep" ${inputDisabled}>`
                                     : `<span class="rule-inline-value">${prerestoreKeep}</span>`
                                 }
                             </p>
@@ -233,7 +234,7 @@
                     <p class="rule-inline-sentence">
                         <span class="rule-inline-label">Time of cleanup</span>
                         ${state.rulesEditMode
-                            ? `<input class="ui-card-input rule-inline-control" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${!timeEnabled ? "disabled" : inputDisabled}>`
+                            ? `<input class="ui-card-input rule-inline-control rule-inline-edit-input" type="time" value="${backupTime}" data-rule-field="time_based.time_of_backup" ${!timeEnabled ? "disabled" : inputDisabled}>`
                             : `<span class="rule-inline-value rule-inline-value-wide">${backupTime}</span>`
                         }
                     </p>
@@ -244,10 +245,10 @@
                                 <select class="rule-inline-control" data-rule-field="time_based.repeat_mode" ${!timeEnabled ? "disabled" : inputDisabled}>
                                     <option value="does_not_repeat"${repeatMode === "does_not_repeat" ? " selected" : ""}>Does not repeat</option>
                                     <option value="daily"${repeatMode === "daily" ? " selected" : ""}>Daily</option>
-                                    <option value="weekly"${repeatMode === "weekly" ? " selected" : ""}>Weekly on &lt;day&gt;</option>
-                                    <option value="monthly"${repeatMode === "monthly" ? " selected" : ""}>Monthly on &lt;date&gt;</option>
-                                    <option value="weekdays"${repeatMode === "weekdays" ? " selected" : ""}>Every weekday (Monday to Friday)</option>
-                                    <option value="every_n_days"${repeatMode === "every_n_days" ? " selected" : ""}>Every &lt;int&gt; day</option>
+                                    <option value="weekly"${repeatMode === "weekly" ? " selected" : ""}>Weekly on day</option>
+                                    <option value="monthly"${repeatMode === "monthly" ? " selected" : ""}>Monthly on date</option>
+                                    <option value="weekdays"${repeatMode === "weekdays" ? " selected" : ""}>Weekdays (M-F)</option>
+                                    <option value="every_n_days"${repeatMode === "every_n_days" ? " selected" : ""}>Every x day</option>
                                 </select>
                             `
                             : `<span class="rule-inline-value rule-inline-value-wide">${repeatLabel}</span>`
@@ -274,7 +275,7 @@
                         ? `
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Date (1-31):</span>
-                                <input class="ui-card-input rule-inline-control" type="number" min="1" max="31" step="1" value="${monthlyDate}" data-rule-field="time_based.monthly_date" ${inputDisabled}>
+                                <input class="ui-card-input rule-inline-control rule-inline-edit-input" type="number" min="1" max="31" step="1" value="${monthlyDate}" data-rule-field="time_based.monthly_date" ${inputDisabled}>
                             </p>
                         `
                         : ""
@@ -283,7 +284,7 @@
                         ? `
                             <p class="rule-inline-sentence">
                                 <span class="rule-inline-label">Every N day(s):</span>
-                                <input class="ui-card-input rule-inline-control" type="number" min="1" max="365" step="1" value="${everyNDays}" data-rule-field="time_based.every_n_days" ${inputDisabled}>
+                                <input class="ui-card-input rule-inline-control rule-inline-edit-input" type="number" min="1" max="365" step="1" value="${everyNDays}" data-rule-field="time_based.every_n_days" ${inputDisabled}>
                             </p>
                         `
                         : ""
@@ -291,6 +292,9 @@
                 </div>
             `;
             dom.rulesCardList.appendChild(item);
+            if (typeof window.MCWebEnhanceCustomSelects === "function") {
+                window.MCWebEnhanceCustomSelects(dom.rulesCardList);
+            }
             ctx.actions.syncMaintenanceOverflowState?.();
         }
 

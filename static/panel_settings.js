@@ -33,22 +33,25 @@
 
         const deviceMapBody = document.getElementById("panel-device-map-body");
         const addDeviceRowBtn = document.getElementById("panel-add-device-row");
-        const saveDeviceMapBtn = document.getElementById("panel-save-device-map");
         const csvInput = document.getElementById("panel-device-csv");
         const csvDropzone = document.getElementById("panel-device-csv-dropzone");
         const csvModeSelect = document.getElementById("panel-device-import-mode");
         const uploadCsvBtn = document.getElementById("panel-upload-device-csv");
         let selectedCsvFile = null;
 
-        const initialSecurityState = {
+        [newPasswordInput, newPasswordConfirmInput, newSuperadminPasswordInput, newSuperadminPasswordConfirmInput].forEach((input) => {
+            if (input) input.value = "";
+        });
+
+        let initialSecurityState = {
             requirePassword: !!requirePasswordInput?.checked,
         };
-        const initialPathSettingsState = {
+        let initialPathSettingsState = {
             minecraftRoot: String(minecraftRootInput?.value || ""),
             backupDir: String(backupDirInput?.value || ""),
             createBackupDir: !!createBackupDirInput?.checked,
         };
-        const initialTimezoneState = {
+        let initialTimezoneState = {
             displayTz: String(displayTzSelect?.value || ""),
         };
         let deviceMapBaseline = "";
@@ -118,6 +121,77 @@
             setSaveVisibility(saveTimezoneBtn, isTimezoneDirty());
         }
 
+        function applyStatePayload(payload = {}) {
+            const panelSettings = payload && typeof payload.panel_settings === "object"
+                ? payload.panel_settings
+                : {};
+            if (requirePasswordInput) {
+                requirePasswordInput.checked = !!panelSettings.require_password;
+            }
+            if (minecraftRootInput && panelSettings.minecraft_root_dir !== undefined) {
+                minecraftRootInput.value = String(panelSettings.minecraft_root_dir || "");
+            }
+            if (backupDirInput && panelSettings.backup_dir !== undefined) {
+                backupDirInput.value = String(panelSettings.backup_dir || "");
+            }
+            if (createBackupDirInput) {
+                createBackupDirInput.checked = !!panelSettings.create_backup_dir;
+            }
+            if (displayTzSelect && panelSettings.display_tz !== undefined) {
+                const nextTz = String(panelSettings.display_tz || "");
+                if (Array.from(displayTzSelect.options || []).some((option) => String(option.value || "") === nextTz)) {
+                    displayTzSelect.value = nextTz;
+                }
+            }
+            [newPasswordInput, newPasswordConfirmInput, newSuperadminPasswordInput, newSuperadminPasswordConfirmInput].forEach((input) => {
+                if (input) input.value = "";
+            });
+            initialSecurityState = {
+                requirePassword: !!requirePasswordInput?.checked,
+            };
+            initialPathSettingsState = {
+                minecraftRoot: String(minecraftRootInput?.value || ""),
+                backupDir: String(backupDirInput?.value || ""),
+                createBackupDir: !!createBackupDirInput?.checked,
+            };
+            initialTimezoneState = {
+                displayTz: String(displayTzSelect?.value || ""),
+            };
+            config.deviceMap = payload && payload.device_map && typeof payload.device_map === "object"
+                ? payload.device_map
+                : {};
+            config.deviceMachines = Array.isArray(payload?.device_machines)
+                ? payload.device_machines.map(normalizeMachine)
+                : buildDeviceMachines(config.deviceMap);
+            renderDeviceMapRows(config.deviceMap || {});
+            syncSecuritySaveVisibility();
+            syncPathsSaveVisibility();
+            syncTimezoneSaveVisibility();
+        }
+
+        async function refreshPanelState(options = {}) {
+            if (!http || typeof http.getJson !== "function") return;
+            let result;
+            try {
+                result = await http.getJson("/panel-settings/api/state", {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+            } catch (_) {
+                if (!options.silent) {
+                    setStatus("Failed to refresh panel settings.", "error");
+                }
+                return;
+            }
+            if (!result || !result.response || !result.response.ok || !result.payload || result.payload.ok === false) {
+                if (!options.silent) {
+                    const body = result && result.payload ? result.payload : {};
+                    setStatus(body.message || "Failed to refresh panel settings.", "error");
+                }
+                return;
+            }
+            applyStatePayload(result.payload || {});
+        }
+
         function parseAddressLines(value) {
             return Array.from(new Set(String(value || "")
                 .split(/\r?\n|,/)
@@ -183,7 +257,11 @@
         }
 
         function syncDeviceMapSaveVisibility() {
-            setSaveVisibility(saveDeviceMapBtn, isDeviceMapDirty());
+            return isDeviceMapDirty();
+        }
+
+        function hasUnsavedChanges() {
+            return isSecurityDirty() || isPathsDirty() || isTimezoneDirty() || isDeviceMapDirty();
         }
 
         function resolveSelectedCsvFile() {
@@ -199,19 +277,12 @@
             if (lastSeenEl) lastSeenEl.textContent = snapshot.last_seen || "-";
             if (ownerEl) ownerEl.textContent = snapshot.owner || "-";
             if (addressesEl) {
-                addressesEl.innerHTML = "";
                 if (!snapshot.addresses.length) {
-                    const empty = document.createElement("span");
-                    empty.className = "device-machine-muted";
-                    empty.textContent = "No addresses";
-                    addressesEl.appendChild(empty);
+                    addressesEl.textContent = "No addresses";
+                    addressesEl.classList.add("device-machine-empty");
                 } else {
-                    snapshot.addresses.forEach((address) => {
-                        const pill = document.createElement("span");
-                        pill.className = "device-machine-address-pill";
-                        pill.textContent = address;
-                        addressesEl.appendChild(pill);
-                    });
+                    addressesEl.textContent = snapshot.addresses.join(", ");
+                    addressesEl.classList.remove("device-machine-empty");
                 }
             }
         }
@@ -230,10 +301,19 @@
         }
 
         function setCardEditing(card, isEditing) {
-            const editor = card.querySelector("[data-device-editor]");
             const editBtn = card.querySelector("[data-device-edit]");
             const deleteBtn = card.querySelector("[data-device-delete]");
-            if (editor) editor.hidden = !isEditing;
+            card.classList.toggle("is-editing", isEditing);
+            card.querySelectorAll(".device-machine-value").forEach((el) => {
+                const preserveVisible = isEditing && el.hasAttribute("data-device-last-seen");
+                el.hidden = preserveVisible ? false : isEditing;
+            });
+            card.querySelectorAll(".device-machine-edit-field").forEach((el) => {
+                el.hidden = !isEditing;
+            });
+            card.querySelectorAll(".device-machine-inline-label").forEach((el) => {
+                el.hidden = !isEditing;
+            });
             if (editBtn) editBtn.textContent = isEditing ? "Save" : "Edit";
             if (deleteBtn) {
                 deleteBtn.textContent = isEditing ? "Cancel" : "Delete";
@@ -253,31 +333,28 @@
             card.dataset.editing = "false";
             card.innerHTML = `
                 <div class="device-machine-summary">
-                    <div class="device-machine-cell device-machine-name" data-device-machine-name></div>
-                    <div class="device-machine-cell device-machine-addresses" data-device-addresses></div>
-                    <div class="device-machine-cell device-machine-muted" data-device-last-seen></div>
-                    <div class="device-machine-cell device-machine-muted" data-device-owner></div>
+                    <div class="device-machine-cell">
+                        <span class="settings-label device-machine-inline-label" hidden>Machine name</span>
+                        <div class="device-machine-name device-machine-value" data-device-machine-name></div>
+                        <input class="ui-card-input device-machine-edit-field" type="text" data-device-edit-name placeholder="Machine name" hidden>
+                    </div>
+                    <div class="device-machine-cell">
+                        <span class="settings-label device-machine-inline-label" hidden>Addresses</span>
+                        <div class="device-machine-addresses device-machine-value" data-device-addresses></div>
+                        <textarea class="ui-card-input device-machine-edit-field" data-device-edit-addresses placeholder="One IP per line or comma-separated" hidden></textarea>
+                    </div>
+                    <div class="device-machine-cell">
+                        <div class="device-machine-muted device-machine-value" data-device-last-seen></div>
+                    </div>
+                    <div class="device-machine-cell">
+                        <span class="settings-label device-machine-inline-label" hidden>Owner</span>
+                        <div class="device-machine-muted device-machine-value" data-device-owner></div>
+                        <input class="ui-card-input device-machine-edit-field" type="text" data-device-edit-owner placeholder="Owner" hidden>
+                    </div>
                     <div class="device-machine-cell device-machine-actions">
                         <button type="button" class="btn-backup" data-device-edit>Edit</button>
                         <button type="button" class="btn-stop" data-device-delete>Delete</button>
                     </div>
-                </div>
-                <div class="device-machine-editor" data-device-editor hidden>
-                    <div class="device-machine-editor-grid">
-                        <label>
-                            <span class="settings-label">Machine name</span>
-                            <input class="ui-card-input" type="text" data-device-edit-name>
-                        </label>
-                        <label>
-                            <span class="settings-label">Owner</span>
-                            <input class="ui-card-input" type="text" data-device-edit-owner>
-                        </label>
-                    </div>
-                    <label>
-                        <span class="settings-label">Addresses</span>
-                        <textarea class="ui-card-input" data-device-edit-addresses placeholder="One IP per line or comma-separated"></textarea>
-                    </label>
-                    <p class="device-machine-editor-note">Save commits the row locally. Use Save Mappings to persist all machine changes.</p>
                 </div>
             `;
 
@@ -292,21 +369,32 @@
             if (addressInput) addressInput.value = snapshot.addresses.join("\n");
             updateSummaryFromSnapshot(card, snapshot);
 
-            editBtn?.addEventListener("click", () => {
+            editBtn?.addEventListener("click", async () => {
                 const isEditing = card.dataset.editing === "true";
                 if (!isEditing) {
                     setCardEditing(card, true);
                     nameInput?.focus();
                     return;
                 }
+                const previousSnapshotText = card.dataset.machineSnapshot || "{}";
                 const nextSnapshot = readCardSnapshot(card);
                 card.dataset.machineSnapshot = JSON.stringify(nextSnapshot);
                 updateSummaryFromSnapshot(card, nextSnapshot);
                 setCardEditing(card, false);
+                const saved = await runWithAdminPassword((password) => performDeviceMapSave(password));
+                if (!saved) {
+                    card.dataset.machineSnapshot = previousSnapshotText;
+                    if (nameInput) nameInput.value = nextSnapshot.machine_name;
+                    if (ownerInput) ownerInput.value = nextSnapshot.owner;
+                    if (addressInput) addressInput.value = nextSnapshot.addresses.join("\n");
+                    updateSummaryFromSnapshot(card, normalizeMachine(JSON.parse(previousSnapshotText)));
+                    setCardEditing(card, true);
+                    nameInput?.focus();
+                }
                 syncDeviceMapSaveVisibility();
             });
 
-            deleteBtn?.addEventListener("click", () => {
+            deleteBtn?.addEventListener("click", async () => {
                 const isEditing = card.dataset.editing === "true";
                 if (isEditing) {
                     if (card.dataset.isNew === "true") {
@@ -322,7 +410,11 @@
                     syncDeviceMapSaveVisibility();
                     return;
                 }
-                card.remove();
+                const rowsAfterDelete = collectDeviceMapRowsExcludingCard(card);
+                const saved = await runWithAdminPassword((password) => performDeviceMapSave(password, { rows: rowsAfterDelete }));
+                if (!saved) {
+                    return;
+                }
                 syncDeviceMapSaveVisibility();
             });
 
@@ -369,6 +461,20 @@
             return rows;
         }
 
+        function collectDeviceMapRowsExcludingCard(cardToSkip) {
+            const rows = [];
+            if (!deviceMapBody) return rows;
+            deviceMapBody.querySelectorAll(".device-machine-card").forEach((card) => {
+                if (card === cardToSkip) return;
+                const snapshot = card.dataset.editing === "true"
+                    ? readCardSnapshot(card)
+                    : normalizeMachine(JSON.parse(card.dataset.machineSnapshot || "{}"));
+                if (!snapshot.machine_name && !snapshot.addresses.length) return;
+                snapshot.addresses.forEach((ip) => rows.push({ name: snapshot.machine_name, ip, owner: snapshot.owner === "-" ? "" : snapshot.owner }));
+            });
+            return rows;
+        }
+
         function validateDeviceMapRows(rows) {
             const seenIps = new Set();
             for (const row of rows) {
@@ -386,13 +492,19 @@
         async function postJson(path, payload) {
             if (!http || typeof http.postJson !== "function") return null;
             const csrfToken = String(config.csrfToken || "").trim();
-            return http.postJson(path, payload, { csrfToken });
+            return http.postJson(path, payload, {
+                csrfToken,
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
         }
 
         async function postForm(path, formData) {
             if (!http || typeof http.postForm !== "function") return null;
             const csrfToken = String(config.csrfToken || "").trim();
-            return http.postForm(path, formData, { csrfToken });
+            return http.postForm(path, formData, {
+                csrfToken,
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
         }
 
         function schedulePageReload(message) {
@@ -409,59 +521,120 @@
             }, 1500);
         }
 
-        function saveSecurity() {
-            withAdminPassword(async (password) => {
-                const payload = {
-                    sudo_password: password,
-                    require_password: !!requirePasswordInput?.checked,
-                    new_password: String(newPasswordInput?.value || ""),
-                    new_password_confirm: String(newPasswordConfirmInput?.value || ""),
-                    new_superadmin_password: String(newSuperadminPasswordInput?.value || ""),
-                    new_superadmin_password_confirm: String(newSuperadminPasswordConfirmInput?.value || ""),
-                };
-                setStatus("Saving security settings...", "");
-                const result = await postJson("/panel-settings/security", payload);
-                if (!result || !result.response) {
-                    setStatus("Failed to save security settings.", "error");
+        function runWithAdminPassword(task) {
+            return new Promise((resolve) => {
+                if (shell && typeof shell.requestPanelSettingsAccess === "function") {
+                    shell.requestPanelSettingsAccess({
+                        forcePrompt: true,
+                        onSuccess: async (password) => {
+                            const cleaned = String(password || "").trim();
+                            if (!cleaned) {
+                                setStatus("Enter the superadmin password to apply changes.", "error");
+                                resolve(false);
+                                return;
+                            }
+                            try {
+                                resolve(await task(cleaned));
+                            } catch (_) {
+                                resolve(false);
+                            }
+                        },
+                        onCancel: () => resolve(false),
+                    });
                     return;
                 }
-                const body = result.payload || {};
-                if (!result.response.ok || body.ok === false) {
-                    setStatus(body.message || "Failed to save security settings.", "error");
-                    return;
-                }
-                schedulePageReload(body.message || "Security settings saved.");
+                setStatus("Unable to open the admin password prompt.", "error");
+                resolve(false);
             });
         }
 
+        async function performSecuritySave(password, options = {}) {
+            const payload = {
+                sudo_password: password,
+                require_password: !!requirePasswordInput?.checked,
+                new_password: String(newPasswordInput?.value || ""),
+                new_password_confirm: String(newPasswordConfirmInput?.value || ""),
+                new_superadmin_password: String(newSuperadminPasswordInput?.value || ""),
+                new_superadmin_password_confirm: String(newSuperadminPasswordConfirmInput?.value || ""),
+            };
+            setStatus("Saving security settings...", "");
+            let result;
+            try {
+                result = await postJson("/panel-settings/security", payload);
+            } catch (_) {
+                setStatus("Failed to save security settings.", "error");
+                return false;
+            }
+            if (!result || !result.response) {
+                setStatus("Failed to save security settings.", "error");
+                return false;
+            }
+            const body = result.payload || {};
+            if (!result.response.ok || body.ok === false) {
+                setStatus(body.message || "Failed to save security settings.", "error");
+                return false;
+            }
+            if (options.refreshAfter !== false) {
+                await refreshPanelState({ silent: true });
+            }
+            if (!options.silentSuccess) {
+                setStatus(body.message || "Security settings saved.", "ok");
+            }
+            return true;
+        }
+
+        function saveSecurity() {
+            runWithAdminPassword((password) => performSecuritySave(password));
+        }
+
+        async function performPathAndTimezoneSave(password, options = {}) {
+            const payload = {
+                sudo_password: password,
+                display_tz: String(displayTzSelect?.value || ""),
+                minecraft_root_dir: String(minecraftRootInput?.value || ""),
+                backup_dir: String(backupDirInput?.value || ""),
+                create_backup_dir: !!createBackupDirInput?.checked,
+            };
+            setStatus("Saving path and timezone settings...", "");
+            let result;
+            try {
+                result = await postJson("/panel-settings/paths", payload);
+            } catch (_) {
+                setStatus("Failed to save settings.", "error");
+                return false;
+            }
+            if (!result || !result.response) {
+                setStatus("Failed to save settings.", "error");
+                return false;
+            }
+            const body = result.payload || {};
+            if (!result.response.ok || body.ok === false) {
+                setStatus(body.message || "Failed to save settings.", "error");
+                return false;
+            }
+            if (options.refreshAfter !== false) {
+                await refreshPanelState({ silent: true });
+            }
+            if (!options.silentSuccess) {
+                setStatus(body.message || "Settings saved.", "ok");
+            }
+            return true;
+        }
+
         function savePathAndTimezoneSettings() {
-            withAdminPassword(async (password) => {
-                const payload = {
-                    sudo_password: password,
-                    display_tz: String(displayTzSelect?.value || ""),
-                    minecraft_root_dir: String(minecraftRootInput?.value || ""),
-                    backup_dir: String(backupDirInput?.value || ""),
-                    create_backup_dir: !!createBackupDirInput?.checked,
-                };
-                setStatus("Saving path and timezone settings...", "");
-                const result = await postJson("/panel-settings/paths", payload);
-                if (!result || !result.response) {
-                    setStatus("Failed to save settings.", "error");
-                    return;
-                }
-                const body = result.payload || {};
-                if (!result.response.ok || body.ok === false) {
-                    setStatus(body.message || "Failed to save settings.", "error");
-                    return;
-                }
-                schedulePageReload(body.message || "Settings saved.");
-            });
+            runWithAdminPassword((password) => performPathAndTimezoneSave(password));
         }
 
         function rebootApp() {
             withAdminPassword(async (password) => {
                 setStatus("Rebooting app...", "");
-                const result = await postJson("/panel-settings/reboot", { sudo_password: password });
+                let result;
+                try {
+                    result = await postJson("/panel-settings/reboot", { sudo_password: password });
+                } catch (_) {
+                    setStatus("Failed to reboot app.", "error");
+                    return;
+                }
                 if (!result || !result.response) {
                     setStatus("Failed to reboot app.", "error");
                     return;
@@ -475,29 +648,54 @@
             });
         }
 
-        function saveDeviceMap() {
-            withAdminPassword(async (password) => {
-                const rows = collectDeviceMapRows();
-                const error = validateDeviceMapRows(rows);
-                if (error) {
-                    setStatus(error, "error");
-                    return;
-                }
-                setStatus("Saving device map...", "");
-                const result = await postJson("/panel-settings/device-map/save", { sudo_password: password, rows });
-                if (!result || !result.response) {
-                    setStatus("Failed to save device map.", "error");
-                    return;
-                }
-                const body = result.payload || {};
-                if (!result.response.ok || body.ok === false) {
-                    setStatus(body.message || "Failed to save device map.", "error");
-                    return;
-                }
-                config.deviceMap = body.device_map || {};
-                config.deviceMachines = Array.isArray(body.device_machines) ? body.device_machines.map(normalizeMachine) : buildDeviceMachines(config.deviceMap);
-                renderDeviceMapRows(config.deviceMap);
+        async function performDeviceMapSave(password, options = {}) {
+            const rows = Array.isArray(options.rows) ? options.rows : collectDeviceMapRows();
+            const error = validateDeviceMapRows(rows);
+            if (error) {
+                setStatus(error, "error");
+                return false;
+            }
+            setStatus("Saving device map...", "");
+            let result;
+            try {
+                result = await postJson("/panel-settings/device-map/save", { sudo_password: password, rows });
+            } catch (_) {
+                setStatus("Failed to save device map.", "error");
+                return false;
+            }
+            if (!result || !result.response) {
+                setStatus("Failed to save device map.", "error");
+                return false;
+            }
+            const body = result.payload || {};
+            if (!result.response.ok || body.ok === false) {
+                setStatus(body.message || "Failed to save device map.", "error");
+                return false;
+            }
+            if (options.refreshAfter !== false) {
+                await refreshPanelState({ silent: true });
+            }
+            if (!options.silentSuccess) {
                 setStatus(body.message || "Device map saved.", "ok");
+            }
+            return true;
+        }
+
+        async function saveAllUnsavedChanges() {
+            if (!hasUnsavedChanges()) return true;
+            return runWithAdminPassword(async (password) => {
+                if ((isPathsDirty() || isTimezoneDirty()) && !await performPathAndTimezoneSave(password, { refreshAfter: false, silentSuccess: true })) {
+                    return false;
+                }
+                if (isDeviceMapDirty() && !await performDeviceMapSave(password, { refreshAfter: false, silentSuccess: true })) {
+                    return false;
+                }
+                if (isSecurityDirty() && !await performSecuritySave(password, { refreshAfter: false, silentSuccess: true })) {
+                    return false;
+                }
+                await refreshPanelState({ silent: true });
+                setStatus("Changes saved.", "ok");
+                return true;
             });
         }
 
@@ -575,7 +773,13 @@
                 formData.append("file", file);
                 formData.append("mode", mode);
                 formData.append("sudo_password", password);
-                let result = await postForm("/panel-settings/device-map/import", formData);
+                let result;
+                try {
+                    result = await postForm("/panel-settings/device-map/import", formData);
+                } catch (_) {
+                    setStatus("Failed to import device map.", "error");
+                    return;
+                }
                 if (!result || !result.response) {
                     setStatus("Failed to import device map.", "error");
                     return;
@@ -592,7 +796,12 @@
                     retryData.append("mode", mode);
                     retryData.append("resolution", resolution);
                     retryData.append("sudo_password", password);
-                    result = await postForm("/panel-settings/device-map/import", retryData);
+                    try {
+                        result = await postForm("/panel-settings/device-map/import", retryData);
+                    } catch (_) {
+                        setStatus("Failed to import device map.", "error");
+                        return;
+                    }
                     body = result && result.payload ? result.payload : {};
                 }
                 if (!result.response.ok || body.ok === false) {
@@ -610,9 +819,7 @@
                     }
                     return acc;
                 }, []);
-                config.deviceMap = nextMap;
-                config.deviceMachines = Array.isArray(body.device_machines) ? body.device_machines.map(normalizeMachine) : buildDeviceMachines(nextMap);
-                renderDeviceMapRows(config.deviceMap);
+                await refreshPanelState({ silent: true });
                 setStatus(body.message || "Device map imported.", "ok");
                 showDeviceMapImportPreview(changes);
             });
@@ -638,7 +845,6 @@
                 syncDeviceMapSaveVisibility();
             });
         }
-        if (saveDeviceMapBtn) saveDeviceMapBtn.addEventListener("click", saveDeviceMap);
         if (uploadCsvBtn) uploadCsvBtn.addEventListener("click", uploadDeviceCsv);
 
         if (requirePasswordInput) requirePasswordInput.addEventListener("change", syncSecuritySaveVisibility);
@@ -686,9 +892,21 @@
         syncSecuritySaveVisibility();
         syncPathsSaveVisibility();
         syncTimezoneSaveVisibility();
+        refreshPanelState({ silent: true });
+
+        if (shell && typeof shell.setUnsavedChangesGuard === "function") {
+            shell.setUnsavedChangesGuard({
+                pageKey: "panel_settings",
+                pageName: "Panel Settings",
+                hasUnsavedChanges,
+                saveChanges: saveAllUnsavedChanges,
+            });
+        }
 
         return function cleanup() {
-            // No-op cleanup; DOM is replaced on navigation.
+            if (shell && typeof shell.clearUnsavedChangesGuard === "function") {
+                shell.clearUnsavedChangesGuard("panel_settings");
+            }
         };
     }
 

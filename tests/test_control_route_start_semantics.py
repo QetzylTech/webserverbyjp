@@ -6,6 +6,7 @@ import uuid
 
 from flask import Flask
 
+from app.core import state_store as state_store_service
 from app.routes import dashboard_control_routes
 
 
@@ -48,6 +49,8 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
             "_rcon_rejected_response": lambda message, status=400: (message, status),
             "is_rcon_enabled": lambda: True,
             "get_status": lambda: service_status,
+            "OFF_STATES": {"inactive", "failed", "unknown", "deactivating", "off"},
+            "OPERATION_INTENT_STALE_SECONDS": 15.0,
             "_run_mcrcon": lambda command, timeout=8: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
             "APP_STATE_DB_PATH": Path(db_path or f"data/test_state_{uuid.uuid4().hex}.sqlite3"),
         }
@@ -103,6 +106,39 @@ class ControlRouteStartSemanticsTests(unittest.TestCase):
         payload = response.get_json() or {}
         self.assertEqual(response.status_code, 409)
         self.assertEqual(payload.get("error"), "invalid_state")
+
+    def test_start_request_path_clears_stale_active_start_operation_when_service_is_off(self):
+        app = Flask(__name__)
+        events = []
+        state = self._build_state(events, service_status="inactive")
+        db_path = Path(state["APP_STATE_DB_PATH"])
+        state_store_service.create_operation(
+            db_path,
+            op_id="start-old",
+            op_type="start",
+            status="intent",
+            checkpoint="intent_created",
+        )
+        # Age the existing intent so request-path stale cleanup should clear it.
+        state_store_service.update_operation(
+            db_path,
+            op_id="start-old",
+            message="old",
+        )
+        with patch("app.commands.control_support.time.time", return_value=9_999_999_999), patch(
+            "app.commands.control_support.datetime"
+        ) as fake_datetime:
+            fake_datetime.fromisoformat.return_value.timestamp.return_value = 0
+            with patch.object(dashboard_control_routes.threading, "Thread", _ImmediateThread):
+                dashboard_control_routes.register_control_routes(app, state, run_cleanup_event_if_enabled=lambda *_a, **_k: None)
+                response = app.test_client().post("/start")
+        payload = response.get_json() or {}
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(payload.get("accepted"))
+        self.assertNotEqual(payload.get("op_id"), "start-old")
+        old_item = state_store_service.get_operation(db_path, "start-old") or {}
+        self.assertEqual(old_item.get("status"), "failed")
+        self.assertEqual(old_item.get("error_code"), "intent_stale")
 
 
 if __name__ == "__main__":

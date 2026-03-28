@@ -28,15 +28,23 @@
     const VIEW_STATE_STORAGE_KEY = "mcweb.viewState.v1";
     const PRIMARY_TTL_MS = 6000;
     const PRIMARY_HEARTBEAT_MS = 2000;
+    const METRICS_FALLBACK_POLL_MS = 1000;
+    const METRICS_SSE_STALL_MS = 1500;
 
     let currentPath = window.location.pathname;
+    let currentUrl = window.location.href;
     let navigationToken = 0;
     let navigationController = null;
     let navBound = false;
     let themeBound = false;
     let metricsEventSource = null;
+    let metricsFallbackPollTimer = null;
+    let lastMetricsSseAtMs = 0;
     let notificationsEventSource = null;
     let pendingPromptAction = null;
+    let unsavedChangesGuard = null;
+    let unsavedChangesModal = null;
+    let unsavedChangesModalResolve = null;
     let isPrimaryTab = false;
     let primaryHeartbeatTimer = null;
     let primaryCheckTimer = null;
@@ -413,6 +421,7 @@
 
     function stopPrimaryStreams() {
         stopMetricsStream();
+        stopMetricsFallbackPoll();
         stopNotificationsStream();
         stopAllHomeLogStreams();
     }
@@ -959,7 +968,13 @@
         const input = document.getElementById("panel-settings-password-input");
         if (!modal) return;
         if (cancelBtn) {
-            cancelBtn.addEventListener("click", () => closePanelSettingsPasswordModal());
+            cancelBtn.addEventListener("click", () => {
+                const cancelCallback = panelSettingsAccessCancelCallback;
+                closePanelSettingsPasswordModal();
+                if (typeof cancelCallback === "function") {
+                    cancelCallback();
+                }
+            });
         }
         if (submitBtn) {
             submitBtn.addEventListener("click", () => {
@@ -975,8 +990,130 @@
             });
         }
         modal.addEventListener("click", (event) => {
-            if (event.target === modal) closePanelSettingsPasswordModal();
+            if (event.target === modal) {
+                const cancelCallback = panelSettingsAccessCancelCallback;
+                closePanelSettingsPasswordModal();
+                if (typeof cancelCallback === "function") {
+                    cancelCallback();
+                }
+            }
         });
+    }
+
+    function setUnsavedChangesGuard(guard) {
+        if (!guard || typeof guard !== "object" || typeof guard.hasUnsavedChanges !== "function") {
+            unsavedChangesGuard = null;
+            return false;
+        }
+        unsavedChangesGuard = {
+            pageKey: String(guard.pageKey || "").trim(),
+            pageName: String(guard.pageName || "This page").trim() || "This page",
+            hasUnsavedChanges: guard.hasUnsavedChanges,
+            saveChanges: typeof guard.saveChanges === "function" ? guard.saveChanges : null,
+        };
+        return true;
+    }
+
+    function clearUnsavedChangesGuard(pageKey = "") {
+        if (!unsavedChangesGuard) return;
+        const targetKey = String(pageKey || "").trim();
+        if (!targetKey || !unsavedChangesGuard.pageKey || unsavedChangesGuard.pageKey === targetKey) {
+            unsavedChangesGuard = null;
+        }
+    }
+
+    function pageHasUnsavedChanges() {
+        if (!unsavedChangesGuard || typeof unsavedChangesGuard.hasUnsavedChanges !== "function") {
+            return false;
+        }
+        try {
+            return !!unsavedChangesGuard.hasUnsavedChanges();
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function ensureUnsavedChangesModal() {
+        if (unsavedChangesModal) return unsavedChangesModal;
+        const modal = document.createElement("div");
+        modal.className = "modal-overlay";
+        modal.setAttribute("aria-hidden", "true");
+        modal.innerHTML = `
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mcweb-unsaved-changes-title">
+                <h3 id="mcweb-unsaved-changes-title" class="modal-title">Unsaved Changes</h3>
+                <p id="mcweb-unsaved-changes-text" class="modal-text">You have unsaved changes on this page.</p>
+                <div class="modal-actions">
+                    <button type="button" data-unsaved-action="cancel" class="btn-start">Go Back to Editing</button>
+                    <button type="button" data-unsaved-action="discard" class="btn-stop">Discard Changes</button>
+                    <button type="button" data-unsaved-action="save" class="btn-backup">Save Changes</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal) {
+                resolveUnsavedChangesModal("cancel");
+            }
+        });
+        modal.querySelectorAll("[data-unsaved-action]").forEach((button) => {
+            button.addEventListener("click", () => {
+                resolveUnsavedChangesModal(button.getAttribute("data-unsaved-action") || "cancel");
+            });
+        });
+        document.body.appendChild(modal);
+        unsavedChangesModal = modal;
+        return modal;
+    }
+
+    function closeUnsavedChangesModal() {
+        const modal = ensureUnsavedChangesModal();
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+    }
+
+    function resolveUnsavedChangesModal(action) {
+        const resolve = unsavedChangesModalResolve;
+        unsavedChangesModalResolve = null;
+        closeUnsavedChangesModal();
+        if (typeof resolve === "function") {
+            resolve(String(action || "cancel").trim().toLowerCase() || "cancel");
+        }
+    }
+
+    function openUnsavedChangesModal(pageName) {
+        const modal = ensureUnsavedChangesModal();
+        const text = modal.querySelector("#mcweb-unsaved-changes-text");
+        if (text) {
+            text.textContent = `You have unsaved changes on ${String(pageName || "this page").trim() || "this page"}.`;
+        }
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        const cancelButton = modal.querySelector('[data-unsaved-action="cancel"]');
+        if (cancelButton && typeof cancelButton.focus === "function") {
+            cancelButton.focus();
+        }
+        return new Promise((resolve) => {
+            unsavedChangesModalResolve = resolve;
+        });
+    }
+
+    async function confirmUnsavedChangesBeforeLeaving() {
+        if (!pageHasUnsavedChanges()) return true;
+        const choice = await openUnsavedChangesModal(unsavedChangesGuard?.pageName || "this page");
+        if (choice === "discard") {
+            return true;
+        }
+        if (choice === "save") {
+            if (!unsavedChangesGuard || typeof unsavedChangesGuard.saveChanges !== "function") {
+                return false;
+            }
+            try {
+                const saved = await unsavedChangesGuard.saveChanges();
+                return !!saved && !pageHasUnsavedChanges();
+            } catch (_) {
+                return false;
+            }
+        }
+        return false;
     }
 
     function getPersistentClientId(storageKey = "mcweb.restorePaneClientId") {
@@ -1105,6 +1242,7 @@
 
     const PANEL_SETTINGS_RELOAD_ACCESS_KEY = "mcweb.panelSettingsReloadAccess";
     let panelSettingsAccessCallback = null;
+    let panelSettingsAccessCancelCallback = null;
     let panelSettingsAccessPendingHref = "";
     let panelSettingsAccessGranted = false;
 
@@ -1190,10 +1328,11 @@
             errorText.hidden = true;
         }
         panelSettingsAccessCallback = null;
+        panelSettingsAccessCancelCallback = null;
         panelSettingsAccessPendingHref = "";
     }
 
-    function openPanelSettingsPasswordModal({ href, onSuccess } = {}) {
+    function openPanelSettingsPasswordModal({ href, onSuccess, onCancel } = {}) {
         const modal = document.getElementById("panel-settings-password-modal");
         const input = document.getElementById("panel-settings-password-input");
         const errorText = document.getElementById("panel-settings-password-error");
@@ -1202,6 +1341,7 @@
         const image = document.getElementById("panel-settings-password-image");
         if (!modal || !input) return;
         panelSettingsAccessCallback = typeof onSuccess === "function" ? onSuccess : null;
+        panelSettingsAccessCancelCallback = typeof onCancel === "function" ? onCancel : null;
         panelSettingsAccessPendingHref = String(href || "").trim();
         if (title) title.textContent = "Panel Settings";
         if (text) text.textContent = "Enter superadmin password to continue.";
@@ -1267,6 +1407,7 @@
     function requestPanelSettingsAccess(options = {}) {
         const href = String(options.href || "").trim();
         const onSuccess = typeof options.onSuccess === "function" ? options.onSuccess : null;
+        const onCancel = typeof options.onCancel === "function" ? options.onCancel : null;
         const forcePrompt = !!options.forcePrompt;
         if (!forcePrompt && isPanelSettingsAccessFresh()) {
             if (onSuccess) {
@@ -1279,7 +1420,7 @@
             }
             return true;
         }
-        openPanelSettingsPasswordModal({ href, onSuccess });
+        openPanelSettingsPasswordModal({ href, onSuccess, onCancel });
         return false;
     }
 
@@ -1410,9 +1551,22 @@
         applyNavAttentionPayload(payload);
         notifyMetricsSubscribers(payload);
         if (previousStatus && nextStatus && previousStatus !== nextStatus) {
-            if (previousStatus === "starting" && nextStatus === "running") {
+            if (
+                nextStatus === "running"
+                && previousStatus !== "running"
+                && previousStatus !== "shutting down"
+            ) {
                 emitSoundEvent("startup");
-            } else if (nextStatus === "shutting down") {
+            } else if (
+                nextStatus === "shutting down"
+                && previousStatus !== "shutting down"
+                && previousStatus !== "off"
+            ) {
+                emitSoundEvent("shutdown");
+            } else if (
+                nextStatus === "off"
+                && (previousStatus === "running" || previousStatus === "shutting down")
+            ) {
                 emitSoundEvent("shutdown");
             } else if (nextStatus === "crashed") {
                 emitSoundEvent("error");
@@ -1469,6 +1623,30 @@
             // Ignore close errors.
         }
         metricsEventSource = null;
+        lastMetricsSseAtMs = 0;
+    }
+
+    function stopMetricsFallbackPoll() {
+        if (!metricsFallbackPollTimer) return;
+        window.clearInterval(metricsFallbackPollTimer);
+        metricsFallbackPollTimer = null;
+    }
+
+    function startMetricsFallbackPoll() {
+        if (metricsFallbackPollTimer) return;
+        metricsFallbackPollTimer = window.setInterval(async () => {
+            if (!isPrimaryTab) return;
+            if (shellState.metricsSubscribers.size <= 0) return;
+            const sseFresh = lastMetricsSseAtMs > 0 && (Date.now() - lastMetricsSseAtMs) < METRICS_SSE_STALL_MS;
+            if (metricsEventSource && sseFresh) return;
+            try {
+                const result = await fetchJson("/metrics");
+                if (!result.response.ok || !result.payload || typeof result.payload !== "object") return;
+                dispatchMetricsSnapshot(result.payload);
+            } catch (_) {
+                // Ignore fallback poll failures; SSE/offline recovery owns reconnect behavior.
+            }
+        }, METRICS_FALLBACK_POLL_MS);
     }
 
     function stopNotificationsStream() {
@@ -1499,10 +1677,12 @@
 
     function startMetricsStream() {
         if (!isPrimaryTab || metricsEventSource) return;
+        startMetricsFallbackPoll();
         metricsEventSource = new EventSource(metricsStreamPath());
         metricsEventSource.onmessage = (event) => {
             try {
                 const payload = JSON.parse(event.data || "{}");
+                lastMetricsSseAtMs = Date.now();
                 dispatchMetricsSnapshot(payload);
             } catch (_) {
                 // Ignore malformed payloads.
@@ -1516,6 +1696,10 @@
     function subscribeMetrics(listener) {
         if (typeof listener !== "function") return () => {};
         shellState.metricsSubscribers.add(listener);
+        if (isPrimaryTab) {
+            startMetricsStream();
+            startMetricsFallbackPoll();
+        }
         if (shellState.metricsSnapshot && typeof shellState.metricsSnapshot === "object") {
             try {
                 listener(shellState.metricsSnapshot);
@@ -1523,7 +1707,12 @@
                 // Ignore initial listener failures.
             }
         }
-        return () => shellState.metricsSubscribers.delete(listener);
+        return () => {
+            shellState.metricsSubscribers.delete(listener);
+            if (shellState.metricsSubscribers.size <= 0) {
+                stopMetricsFallbackPoll();
+            }
+        };
     }
 
     async function fetchJson(path) {
@@ -2130,6 +2319,8 @@
         updateDocsViewState,
         getPageViewState,
         updatePageViewState,
+        setUnsavedChangesGuard,
+        clearUnsavedChangesGuard,
         activateHomeLogStream,
         stopAllHomeLogStreams,
         setHomeLogSnapshot,
@@ -2188,6 +2379,12 @@
     }
     async function navigateTo(url, options = {}) {
         const nextUrl = new URL(url, window.location.href);
+        if (!options.skipUnsavedGuard && nextUrl.pathname !== currentPath) {
+            const proceed = await confirmUnsavedChangesBeforeLeaving();
+            if (!proceed) {
+                return false;
+            }
+        }
         const previousPath = currentPath;
         persistCurrentPageScroll(window.location.href);
         navigationToken += 1;
@@ -2228,6 +2425,7 @@
             }
             dispatchSyntheticPageHide();
             pageModules.unmount(contentRoot.dataset.currentPage || document.body.dataset.page || "");
+            clearUnsavedChangesGuard();
             contentRoot.innerHTML = html;
             pruneContentRootWhitespace();
             await mountCurrentContent(
@@ -2248,6 +2446,7 @@
             } else {
                 window.history.pushState({}, "", target);
             }
+            currentUrl = nextUrl.toString();
             if (nextUrl.hash) {
                 const anchor = document.getElementById(nextUrl.hash.slice(1));
                 if (anchor) anchor.scrollIntoView();
@@ -2285,7 +2484,11 @@
     });
 
     window.addEventListener("popstate", () => {
-        navigateTo(window.location.href, { replaceHistory: true });
+        navigateTo(window.location.href, { replaceHistory: true }).then((result) => {
+            if (result === false) {
+                window.history.pushState({}, "", currentUrl);
+            }
+        }).catch(() => {});
     });
 
     document.addEventListener("visibilitychange", () => {
@@ -2303,7 +2506,11 @@
         schedulePersistCurrentPageScroll();
     }, { passive: true });
 
-    window.addEventListener("beforeunload", () => {
+    window.addEventListener("beforeunload", (event) => {
+        if (pageHasUnsavedChanges()) {
+            event.preventDefault();
+            event.returnValue = "";
+        }
         persistCurrentPageScroll(window.location.href);
         rememberPanelSettingsAccessForReload();
         if (isPrimaryTab) {

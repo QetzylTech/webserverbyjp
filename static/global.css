@@ -529,8 +529,10 @@ textarea:disabled {
 }
 
 /* Explicit reusable text-input style for forms that need consistent sizing. */
-.ui-text-input,
-.ui-title-input {
+input.ui-text-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+textarea.ui-text-input,
+input.ui-title-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+textarea.ui-title-input {
     height: var(--btn-height) !important;
     border: 0 !important;
     border-radius: 10px !important;
@@ -541,14 +543,18 @@ textarea:disabled {
     color: inherit;
 }
 
-.ui-text-input:focus,
-.ui-title-input:focus,
-.ui-card-input:focus {
+input.ui-text-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]):focus,
+textarea.ui-text-input:focus,
+input.ui-title-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]):focus,
+textarea.ui-title-input:focus,
+input.ui-card-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]):focus,
+textarea.ui-card-input:focus {
     outline: none;
     box-shadow: none !important;
 }
 
-.ui-card-input {
+input.ui-card-input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+textarea.ui-card-input {
     height: var(--btn-height) !important;
     border: 0 !important;
     border-radius: 10px !important;

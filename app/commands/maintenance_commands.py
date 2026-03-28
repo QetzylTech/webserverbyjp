@@ -7,10 +7,12 @@ from typing import Any, Mapping, cast
 
 from flask import has_request_context, request
 
+from app.core import state_store as state_store_service
 from app.services.maintenance_engine import _cleanup_evaluate, _cleanup_run_with_lock
 from app.services.maintenance_conflicts import priority_conflict
 from app.services.maintenance_policy import _cleanup_validate_rules
 from app.services.maintenance_scheduler import run_cleanup_event_if_enabled, start_cleanup_scheduler_once
+from app.services.maintenance_snapshot import _cleanup_state_snapshot
 from app.services.maintenance_state_store import (
     _cleanup_append_history,
     _cleanup_apply_scope_from_state,
@@ -200,6 +202,19 @@ def save_rules(ctx: Any, state: Mapping[str, Any], payload: Mapping[str, Any]) -
         details=f"scope={scope};rule_version={meta['rule_version']}",
     )
     preview = _cleanup_evaluate(ctx, cfg, mode='rule', apply_changes=False, trigger='preview')
+    try:
+        snapshot = _cleanup_state_snapshot(ctx, cfg)
+        state_store_service.append_event(
+            ctx.APP_STATE_DB_PATH,
+            topic=f'maintenance_state:{scope}',
+            payload={
+                'scope': scope,
+                'snapshot': snapshot if isinstance(snapshot, dict) else {},
+                'preview': preview if isinstance(preview, dict) else {},
+            },
+        )
+    except Exception:
+        pass
     return {'ok': True, 'config': cfg, 'preview': preview, 'scope': scope}
 
 

@@ -4,6 +4,9 @@
     const alertMessage = __MCWEB_HOME_CONFIG.alertMessage ?? "";
     const alertMessageCode = __MCWEB_HOME_CONFIG.alertMessageCode ?? "";
     const csrfToken = __MCWEB_HOME_CONFIG.csrfToken ?? "";
+    const initialLogSnapshots = __MCWEB_HOME_CONFIG.initialLogs && typeof __MCWEB_HOME_CONFIG.initialLogs === "object"
+        ? __MCWEB_HOME_CONFIG.initialLogs
+        : {};
     const shellConfig = window.__MCWEB_SHELL_CONFIG || {};
     const passwordRequired = shellConfig.passwordRequired !== false;
     const http = window.MCWebHttp || null;
@@ -21,6 +24,7 @@
     const pageActivityRuntime = window.MCWebPageActivityRuntime;
     const FILE_LISTS_INVALIDATED_EVENT = "mcweb:file-lists-invalidated";
     const START_BUTTON_COOLDOWN_MS = 10000;
+    const METRICS_POLL_INTERVAL_MS = 1000;
     const homeHeartbeatController = pageActivityRuntime.createHeartbeatController({
         path: "/home-heartbeat",
         csrfToken,
@@ -49,6 +53,7 @@
     let logScrollbarCleanup = null;
     let countdownTimer = null;
     let serverClockTimer = null;
+    let metricsPollTimer = null;
     let startCooldownTimer = null;
     const operationPollTimers = {};
     let lowStorageModalShown = false;
@@ -114,16 +119,18 @@
         homeLogController.activateLogStream(source);
     }
 
-    async function loadLogSourceFromServer(source) {
-        if (!homeLogController) return;
-        await homeLogController.loadLogSourceFromServer(source);
-        selectedLogSource = homeLogController.getSelectedSource();
-        logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
-    }
-
     async function loadDeviceNameMap() {
         if (!homeLogController) return;
         await homeLogController.loadDeviceNameMap();
+    }
+
+    function hydrateInitialLogSnapshots() {
+        if (!homeLogController) return;
+        LOG_SOURCE_KEYS.forEach((source) => {
+            if (!Object.prototype.hasOwnProperty.call(initialLogSnapshots, source)) return;
+            if (homeLogController.sourceHasEntries(source)) return;
+            setSourceLogText(source, String(initialLogSnapshots[source] || ""));
+        });
     }
 
     function parseCountdown(text) {
@@ -305,6 +312,58 @@
         const driftToNextSecond = 1000 - (now % 1000);
         const delay = Math.max(250, Math.min(1250, driftToNextSecond));
         serverClockTimer = window.setTimeout(scheduleServerClockTick, delay);
+    }
+
+    function clearMetricsPollTimer() {
+        if (!metricsPollTimer) return;
+        clearTimeout(metricsPollTimer);
+        metricsPollTimer = null;
+    }
+
+    function cacheMetricsSnapshot(data) {
+        if (!data || typeof data !== "object") return;
+        cachedMetricsSnapshot = data;
+        window.__MCWEB_LAST_METRICS_SNAPSHOT = data;
+    }
+
+    async function fetchLiveMetricsSnapshot() {
+        try {
+            const response = await fetch("/metrics", {
+                method: "GET",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest",
+                    Accept: "application/json",
+                },
+                cache: "no-store",
+            });
+            if (!response.ok) return null;
+            const payload = await response.json();
+            return payload && typeof payload === "object" ? payload : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function refreshLiveMetricsSnapshot() {
+        if (document.hidden) return;
+        const payload = await fetchLiveMetricsSnapshot();
+        if (payload) {
+            applyMetricsData(payload);
+        }
+    }
+
+    function scheduleLiveMetricsPoll(options = {}) {
+        clearMetricsPollTimer();
+        if (document.hidden) return;
+        const immediate = options.immediate === true;
+        const now = Date.now();
+        const driftToNextSecond = METRICS_POLL_INTERVAL_MS - (now % METRICS_POLL_INTERVAL_MS);
+        const delay = immediate ? 0 : Math.max(250, Math.min(1250, driftToNextSecond));
+        metricsPollTimer = window.setTimeout(async () => {
+            metricsPollTimer = null;
+            await refreshLiveMetricsSnapshot();
+            scheduleLiveMetricsPoll();
+        }, delay);
     }
 
     function isServiceRunningInMetrics(data) {
@@ -813,7 +872,7 @@
             const backupBlocked = serviceIsStarting || serviceIsShutting || lowStorageBlocked || backupBusy;
             backupBtn.disabled = backupBlocked;
         }
-        cachedMetricsSnapshot = data;
+        cacheMetricsSnapshot(data);
         applyRefreshMode(data.service_status);
     }
 
@@ -951,6 +1010,7 @@
             logScrollbarCleanup();
             logScrollbarCleanup = null;
         }
+        clearMetricsPollTimer();
         clearRefreshTimers();
         clearServerClockTimer();
         clearStartCooldownTimer();
@@ -963,11 +1023,14 @@
                 homeLogController.teardown();
             }
             homeHeartbeatController.stop();
+            clearMetricsPollTimer();
             clearServerClockTimer();
             return;
         }
         activateLogStream(selectedLogSource);
+        scheduleLiveMetricsPoll({ immediate: true });
         scheduleServerClockTick();
+        homeHeartbeatController.start();
     }
 
     async function startHomePage() {
@@ -1111,9 +1174,6 @@
                     logAutoScrollEnabled = homeLogController.getAutoScrollEnabled();
                 }
                 activateLogStream(selectedLogSource);
-                if (homeLogController && !homeLogController.sourceHasEntries(selectedLogSource)) {
-                    await loadLogSourceFromServer(selectedLogSource);
-                }
                 renderActiveLog();
                 if (logAutoScrollEnabled) {
                     scrollLogToBottom();
@@ -1128,25 +1188,24 @@
         if (homeLogController && !homeLogController.sourceHasEntries("minecraft")) {
             setSourceLogText("minecraft", existingLog ? existingLog.textContent : "");
         }
+        hydrateInitialLogSnapshots();
         if (existingLog) {
             renderActiveLog();
             scrollLogToBottom();
         }
         loadDeviceNameMap();
         activateLogStream(selectedLogSource);
-        if (homeLogController && !homeLogController.sourceHasEntries(selectedLogSource)) {
-            loadLogSourceFromServer(selectedLogSource);
-        }
         if (shell && typeof shell.subscribeMetrics === "function") {
             homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {
                 if (payload && typeof payload === "object") {
-                    applyMetricsData(payload);
+                    cacheMetricsSnapshot(payload);
                 }
             });
         }
         if (window.__MCWEB_LAST_METRICS_SNAPSHOT && typeof window.__MCWEB_LAST_METRICS_SNAPSHOT === "object") {
             applyMetricsData(window.__MCWEB_LAST_METRICS_SNAPSHOT);
         }
+        scheduleLiveMetricsPoll({ immediate: true });
         scheduleServerClockTick();
         const service = document.getElementById("service-status");
         applyRefreshMode(service ? service.textContent : "");

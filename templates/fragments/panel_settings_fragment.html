@@ -17,37 +17,42 @@
             </div>
         </div>
         <div class="pane-content">
-            <div class="settings-section-separator" role="separator" aria-label="Admin password section">
-                <span class="settings-section-separator-text">Admin Password</span>
-            </div>
-            <div class="settings-grid settings-grid--two-col">
-                <label>
-                    <span class="settings-label">New admin password</span>
-                    <input id="panel-new-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
-                </label>
-                <label>
-                    <span class="settings-label">Confirm new password</span>
-                    <input id="panel-new-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new password">
-                </label>
-            </div>
-            <label class="settings-check">
-                <input id="panel-require-password" type="checkbox" {% if current_settings.require_password %}checked{% endif %}>
-                Require password for sensitive actions
-            </label>
+            <div class="settings-card-grid">
+                <div class="settings-card">
+                    <div class="settings-section-separator" role="separator" aria-label="Admin password section">
+                        <span class="settings-section-separator-text">Admin Password</span>
+                    </div>
+                    <div class="settings-grid settings-grid--two-col">
+                        <label>
+                            <span class="settings-label">New admin password</span>
+                            <input id="panel-new-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                        </label>
+                        <label>
+                            <span class="settings-label">Confirm new password</span>
+                            <input id="panel-new-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new password">
+                        </label>
+                    </div>
+                    <label class="settings-check">
+                        <input id="panel-require-password" type="checkbox" {% if current_settings.require_password %}checked{% endif %}>
+                        Require password for sensitive actions
+                    </label>
+                </div>
 
-            <div class="settings-section-separator" role="separator" aria-label="Superadmin password section">
-                <span class="settings-section-separator-text">Superadmin Password</span>
-            </div>
-
-            <div class="settings-grid settings-grid--two-col">
-                <label>
-                    <span class="settings-label">New superadmin password</span>
-                    <input id="panel-new-superadmin-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
-                </label>
-                <label>
-                    <span class="settings-label">Confirm new superadmin password</span>
-                    <input id="panel-new-superadmin-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new superadmin password">
-                </label>
+                <div class="settings-card">
+                    <div class="settings-section-separator" role="separator" aria-label="Superadmin password section">
+                        <span class="settings-section-separator-text">Superadmin Password</span>
+                    </div>
+                    <div class="settings-grid settings-grid--two-col">
+                        <label>
+                            <span class="settings-label">New superadmin password</span>
+                            <input id="panel-new-superadmin-password" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                        </label>
+                        <label>
+                            <span class="settings-label">Confirm new superadmin password</span>
+                            <input id="panel-new-superadmin-password-confirm" class="ui-card-input" type="password" autocomplete="new-password" placeholder="Confirm new superadmin password">
+                        </label>
+                    </div>
+                </div>
             </div>
             <div class="settings-actions">
                 <button id="panel-save-security" class="btn-backup" type="button" hidden>Save</button>
@@ -62,20 +67,22 @@
             </div>
         </div>
         <div class="pane-content">
-            <div class="settings-grid settings-grid--two-col">
-                <label>
-                    <span class="settings-label">Minecraft world directory</span>
-                    <input id="panel-minecraft-root" class="ui-card-input" type="text" value="{{ current_settings.minecraft_root_dir or '' }}" required>
-                </label>
-                <label>
-                    <span class="settings-label">Backup directory</span>
-                    <input id="panel-backup-dir" class="ui-card-input" type="text" value="{{ current_settings.backup_dir or '' }}" required>
+            <div class="settings-card">
+                <div class="settings-grid settings-grid--two-col">
+                    <label>
+                        <span class="settings-label">Minecraft world directory</span>
+                        <input id="panel-minecraft-root" class="ui-card-input" type="text" value="{{ current_settings.minecraft_root_dir or '' }}" required>
+                    </label>
+                    <label>
+                        <span class="settings-label">Backup directory</span>
+                        <input id="panel-backup-dir" class="ui-card-input" type="text" value="{{ current_settings.backup_dir or '' }}" required>
+                    </label>
+                </div>
+                <label class="settings-check">
+                    <input id="panel-create-backup-dir" type="checkbox" {% if current_settings.create_backup_dir %}checked{% endif %}>
+                    Create backup directory if missing
                 </label>
             </div>
-            <label class="settings-check">
-                <input id="panel-create-backup-dir" type="checkbox" {% if current_settings.create_backup_dir %}checked{% endif %}>
-                Create backup directory if missing
-            </label>
             <div class="settings-actions">
                 <button id="panel-save-paths" class="btn-backup" type="button" hidden>Save</button>
             </div>
@@ -89,15 +96,17 @@
             </div>
         </div>
         <div class="pane-content">
-            <div class="settings-grid settings-grid--two-col">
-                <label class="settings-select">
-                    <span class="settings-label">Display timezone</span>
-                    <select id="panel-display-tz">
-                        {% for tz in timezone_options %}
-                        <option value="{{ tz.value }}" {% if tz.value == current_settings.display_tz %}selected{% endif %}>{{ tz.label }}</option>
-                        {% endfor %}
-                    </select>
-                </label>
+            <div class="settings-card">
+                <div class="settings-grid settings-grid--two-col">
+                    <label class="settings-select">
+                        <span class="settings-label">Display timezone</span>
+                        <select id="panel-display-tz">
+                            {% for tz in timezone_options %}
+                            <option value="{{ tz.value }}" {% if tz.value == current_settings.display_tz %}selected{% endif %}>{{ tz.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
             </div>
             <div class="settings-actions">
                 <button id="panel-save-timezone" class="btn-backup" type="button" hidden>Save</button>
@@ -127,29 +136,25 @@
                 <div id="panel-device-map-body" class="device-machine-list" role="list"></div>
                 <button id="panel-add-device-row" class="btn-backup" type="button">Add Machine</button>
             </div>
-            <div class="settings-actions">
-                <button id="panel-save-device-map" class="btn-backup" type="button" hidden>Save Mappings</button>
-            </div>
 
             <div class="settings-section-separator" role="separator" aria-label="Device mapping CSV import section">
                 <span class="settings-section-separator-text">CSV Import</span>
             </div>
             <div class="device-map-upload">
-                <div class="settings-grid">
-                    <label id="panel-device-csv-dropzone" class="settings-dropzone">
-                        <span class="settings-dropzone-text">Choose file or drag and drop to upload.</span>
-                        <input id="panel-device-csv" class="settings-dropzone-input" type="file" accept=".csv">
-                    </label>
-                    <label class="settings-select">
-                        <span class="settings-label">Import mode</span>
+                <label id="panel-device-csv-dropzone" class="settings-dropzone settings-dropzone--full">
+                    <span class="settings-dropzone-text">Choose file or drag and drop to upload.</span>
+                    <input id="panel-device-csv" class="settings-dropzone-input" type="file" accept=".csv">
+                </label>
+                <div class="device-map-upload-row">
+                    <label class="settings-select device-map-import-mode" aria-label="Import mode">
                         <select id="panel-device-import-mode">
                             <option value="append">Append to existing</option>
                             <option value="overwrite">Overwrite existing</option>
                         </select>
                     </label>
-                </div>
-                <div class="settings-actions">
-                    <button id="panel-upload-device-csv" class="btn-backup" type="button">Upload CSV</button>
+                    <div class="settings-actions device-map-upload-actions">
+                        <button id="panel-upload-device-csv" class="btn-backup" type="button">Upload CSV</button>
+                    </div>
                 </div>
             </div>
         </div>

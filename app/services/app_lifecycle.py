@@ -1,5 +1,6 @@
 """Install Flask hooks and build the app startup runner."""
 
+import threading
 from typing import Any, Callable, Iterable
 
 from flask import has_request_context, request
@@ -64,26 +65,38 @@ def build_run_server(
     start_worker_loops: Callable[[], object] | None = None,
     enable_background_workers: bool = True,
     enable_boot_runtime_tasks: bool = True,
+    boot_runtime: Callable[[], object] | None = None,
 ) -> Callable[[], None]:
     """Return the startup runner assembled from explicit boot steps."""
 
-    def run_server() -> None:
-        def _load_backup_log_cache_boot_step() -> None:
-            if not is_backup_running():
-                load_backup_log_cache_from_disk()
+    def _load_backup_log_cache_boot_step() -> None:
+        if not is_backup_running():
+            load_backup_log_cache_from_disk()
 
-        def _build_boot_steps() -> list[tuple[str, Callable[[], object]]]:
-            steps: list[tuple[str, Callable[[], object]]] = [
-                ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
-                ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
-                ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
-                ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
-                ("warm_file_page_caches", warm_file_page_caches),
-                ("collect_and_publish_metrics", collect_and_publish_metrics),
-            ]
-            if enable_background_workers and callable(start_worker_loops):
-                steps.append(("start_worker_loops", start_worker_loops))
-            return steps
+    def _build_boot_steps() -> list[tuple[str, Callable[[], object]]]:
+        steps: list[tuple[str, Callable[[], object]]] = [
+            ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
+            ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
+            ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
+            ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
+            ("warm_file_page_caches", warm_file_page_caches),
+            ("collect_and_publish_metrics", collect_and_publish_metrics),
+        ]
+        if enable_background_workers and callable(start_worker_loops):
+            steps.append(("start_worker_loops", start_worker_loops))
+        return steps
+
+    def run_server() -> None:
+        if callable(boot_runtime):
+            boot_runtime()
+            bootstrap_service.run_server(
+                app,
+                app_config,
+                log_mcweb_log,
+                log_mcweb_exception,
+                boot_steps=[],
+            )
+            return
 
         if not enable_boot_runtime_tasks:
             bootstrap_service.run_server(
@@ -104,3 +117,59 @@ def build_run_server(
         )
 
     return run_server
+
+
+def build_boot_runtime(
+    *,
+    log_mcweb_log: Callable[..., object],
+    log_mcweb_exception: Callable[..., object],
+    is_backup_running: Callable[[], bool],
+    load_backup_log_cache_from_disk: Callable[[], object],
+    load_minecraft_log_cache_from_journal: Callable[[], object],
+    load_mcweb_log_cache_from_disk: Callable[[], object],
+    ensure_session_tracking_initialized: Callable[[], object],
+    warm_file_page_caches: Callable[[], object],
+    collect_and_publish_metrics: Callable[[], object],
+    start_worker_loops: Callable[[], object] | None = None,
+    enable_background_workers: bool = True,
+    enable_boot_runtime_tasks: bool = True,
+) -> Callable[[], None]:
+    """Return an idempotent runtime bootstrap callable for WSGI/imported app paths."""
+
+    boot_lock = threading.Lock()
+    boot_completed = False
+
+    def _load_backup_log_cache_boot_step() -> None:
+        if not is_backup_running():
+            load_backup_log_cache_from_disk()
+
+    def _build_boot_steps() -> list[tuple[str, Callable[[], object]]]:
+        steps: list[tuple[str, Callable[[], object]]] = [
+            ("load_minecraft_log_cache_from_journal", load_minecraft_log_cache_from_journal),
+            ("load_mcweb_log_cache_from_disk", load_mcweb_log_cache_from_disk),
+            ("load_backup_log_cache_from_disk", _load_backup_log_cache_boot_step),
+            ("ensure_session_tracking_initialized", ensure_session_tracking_initialized),
+            ("warm_file_page_caches", warm_file_page_caches),
+            ("collect_and_publish_metrics", collect_and_publish_metrics),
+        ]
+        if enable_background_workers and callable(start_worker_loops):
+            steps.append(("start_worker_loops", start_worker_loops))
+        return steps
+
+    def boot_runtime() -> None:
+        nonlocal boot_completed
+        if boot_completed or not enable_boot_runtime_tasks:
+            return
+        with boot_lock:
+            if boot_completed or not enable_boot_runtime_tasks:
+                return
+            for step_name, step_func in _build_boot_steps():
+                try:
+                    step_func()
+                except Exception as exc:
+                    log_mcweb_exception(f"boot_step/{step_name}", exc)
+                    log_mcweb_log("boot-failed", command=step_name, rejection_message=str(exc)[:500] or "startup step failed")
+                    raise
+            boot_completed = True
+
+    return boot_runtime

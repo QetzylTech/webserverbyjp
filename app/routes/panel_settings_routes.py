@@ -15,6 +15,7 @@ from flask import jsonify, render_template, request
 from werkzeug.security import generate_password_hash
 
 from app.core import state_store as state_store_service
+from app.core.web_config import WebConfig
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
 from app.services import setup_service as setup_service_service
 from app.queries import setup_queries as setup_queries_service
@@ -83,18 +84,29 @@ def _web_cfg_values(state: Mapping[str, Any]) -> dict[str, str]:
     return {}
 
 
+def _load_env_file_values(web_conf_path: str | Path, app_dir: str | Path) -> dict[str, str]:
+    try:
+        return dict(WebConfig(Path(web_conf_path), Path(app_dir)).values)
+    except Exception:
+        return {}
+
+
 def _load_env_defaults(state: Mapping[str, Any]) -> tuple[dict[str, str], Path, Path]:
     app_dir = _panel_app_dir(state)
     web_conf_path = _panel_web_conf_path(state)
     raw_values = _web_cfg_values(state)
-    defaults = setup_service_service.setup_form_defaults(raw_values)
+    persisted_values = _load_env_file_values(web_conf_path, app_dir)
+    merged_values = dict(raw_values)
+    if persisted_values:
+        merged_values.update(persisted_values)
+    defaults = setup_service_service.setup_form_defaults(merged_values)
     defaults["MCWEB_REQUIRE_PASSWORD"] = "true" if _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")) else "false"
     admin_hash = str(defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "") or "").strip()
-    superadmin_hash = str(raw_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", admin_hash) or "").strip()
+    superadmin_hash = str(merged_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", admin_hash) or "").strip()
     if not superadmin_hash and admin_hash:
         superadmin_hash = admin_hash
     defaults["MCWEB_SUPERADMIN_PASSWORD_HASH"] = superadmin_hash
-    if admin_hash and str(raw_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "") or "").strip() != superadmin_hash:
+    if admin_hash and str(merged_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "") or "").strip() != superadmin_hash:
         _save_env_values(state, defaults, web_conf_path)
     return defaults, web_conf_path, app_dir
 
@@ -137,10 +149,13 @@ def _save_env_values(state: Mapping[str, Any], values: Mapping[str, object], web
         except Exception:
             pass
         return False, "Failed to write configuration."
+    persisted_values = _load_env_file_values(web_conf_path, Path(web_conf_path).parent)
+    if not persisted_values:
+        persisted_values = {str(key): str(value).strip() for key, value in values.items()}
     raw_values = _state_value(state, "WEB_CFG_VALUES")
     if isinstance(raw_values, dict):
         raw_values.clear()
-        for key, value in values.items():
+        for key, value in persisted_values.items():
             raw_values[str(key)] = str(value).strip()
     return True, ""
 
@@ -200,6 +215,17 @@ def _write_device_fallmap_rows(state: Mapping[str, Any], rows: list[dict[str, st
         return False
     try:
         state_store_service.replace_fallmap_rows(db_path, cast(list[object], rows))
+        cache_lock = _state_value(state, "device_name_map_lock")
+        cache = _state_value(state, "device_name_map_cache")
+        cache_mtime_ns_ref = _state_value(state, "device_name_map_mtime_ns_ref")
+        if cache_lock and isinstance(cache, dict) and isinstance(cache_mtime_ns_ref, list):
+            try:
+                with cache_lock:
+                    cache.clear()
+                    if cache_mtime_ns_ref:
+                        cache_mtime_ns_ref[0] = None
+            except Exception:
+                pass
         return True
     except Exception as exc:
         try:
@@ -207,6 +233,39 @@ def _write_device_fallmap_rows(state: Mapping[str, Any], rows: list[dict[str, st
         except Exception:
             pass
     return False
+
+
+def _normalize_fallmap_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    normalized = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        ip_text = str(row.get("ip", "") or "").strip()
+        name_text = str(row.get("device_name", "") or row.get("name", "") or "").strip()
+        owner_text = str(row.get("owner", "") or "").strip()
+        if not ip_text or not name_text:
+            continue
+        normalized.append({"ip": ip_text, "device_name": name_text, "owner": owner_text})
+    normalized.sort(key=lambda row: (row["ip"], row["device_name"], row["owner"]))
+    return normalized
+
+
+def _panel_settings_payload(state: Mapping[str, Any]) -> dict[str, Any]:
+    defaults, _web_conf_path, _app_dir = _load_env_defaults(state)
+    panel_settings = {
+        "display_tz": defaults.get("DISPLAY_TZ", ""),
+        "minecraft_root_dir": defaults.get("MINECRAFT_ROOT_DIR", ""),
+        "backup_dir": defaults.get("BACKUP_DIR", ""),
+        "create_backup_dir": _to_bool(defaults.get("CREATE_BACKUP_DIR", "false")),
+        "require_password": _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")),
+    }
+    fallmap_rows = _load_device_fallmap_rows(state)
+    return {
+        "ok": True,
+        "panel_settings": panel_settings,
+        "device_map": _fallmap_rows_to_device_map(fallmap_rows),
+        "device_machines": _build_device_machine_rows(fallmap_rows, _load_user_records(state)),
+    }
 
 
 def _load_user_records(state: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -350,21 +409,15 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
     @app.route("/panel-settings")
     def panel_settings_page() -> Any:
         defaults, _web_conf_path, _app_dir = _load_env_defaults(state)
-        panel_settings = {
-            "display_tz": defaults.get("DISPLAY_TZ", ""),
-            "minecraft_root_dir": defaults.get("MINECRAFT_ROOT_DIR", ""),
-            "backup_dir": defaults.get("BACKUP_DIR", ""),
-            "create_backup_dir": False,
-            "require_password": _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")),
-        }
-        fallmap_rows = _load_device_fallmap_rows(state)
-        device_map = _fallmap_rows_to_device_map(fallmap_rows)
-        device_machines = _build_device_machine_rows(fallmap_rows, _load_user_records(state))
+        payload = _panel_settings_payload(state)
+        panel_settings = cast(dict[str, Any], payload.get("panel_settings") or {})
+        device_map = cast(dict[str, str], payload.get("device_map") or {})
+        device_machines = cast(list[dict[str, object]], payload.get("device_machines") or [])
         data_dir = _state_value(state, "DATA_DIR")
         if not data_dir:
             data_dir = _panel_app_dir(state) / "data"
         device_map_sample_path = str((Path(data_dir) / "list.csv").resolve())
-        return render_shell_page_helper(
+        response = app.make_response(render_shell_page_helper(
             app,
             state,
             render_template,
@@ -378,7 +431,16 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
             device_map=device_map,
             device_machines=device_machines,
             device_map_sample_path=device_map_sample_path,
-        )
+        ))
+        return response
+
+    @app.route("/panel-settings/api/state", methods=["GET"])
+    def panel_settings_api_state() -> Any:
+        response = jsonify(_panel_settings_payload(state))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     @app.route("/panel-settings/confirm-password", methods=["POST"])
     def panel_settings_confirm_password() -> Any:
@@ -516,9 +578,20 @@ def register_panel_settings_routes(app: Any, state: Mapping[str, Any]) -> None:
         ]
         if not _write_device_fallmap_rows(state, fallmap_rows):
             return _json_fail("Failed to save device map.")
+        persisted_rows = _load_device_fallmap_rows(state)
+        if _normalize_fallmap_rows(persisted_rows) != _normalize_fallmap_rows(fallmap_rows):
+            try:
+                state["log_mcweb_exception"](
+                    "panel_settings/device_map_verify",
+                    RuntimeError("Device map read-after-write verification mismatch"),
+                )
+            except Exception:
+                pass
+            return _json_fail("Device map save did not persist. Please try again.", status=500)
+        persisted_map = _fallmap_rows_to_device_map(persisted_rows)
         return _json_ok({
-            "device_map": mapping,
-            "device_machines": _build_device_machine_rows(fallmap_rows, _load_user_records(state)),
+            "device_map": persisted_map,
+            "device_machines": _build_device_machine_rows(persisted_rows, _load_user_records(state)),
             "message": "Device map saved.",
         })
 

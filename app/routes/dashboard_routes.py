@@ -97,6 +97,14 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
     def index() -> Any:
         """Render the persistent dashboard shell or the home fragment payload."""
         home = dashboard_queries_service.get_dashboard_shell_model(state, request.args.get("msg", ""))
+        initial_logs: dict[str, str] = {}
+        get_log_source_text = state.get("get_log_source_text")
+        if callable(get_log_source_text):
+            for source in ("minecraft", "backup", "mcweb", "mcweb_log"):
+                try:
+                    initial_logs[source] = str(get_log_source_text(source) or "")
+                except Exception:
+                    initial_logs[source] = ""
         return render_shell_page_helper(app, state, render_template, 
             "fragments/home_fragment.html",
             current_page="home",
@@ -106,6 +114,7 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
             alert_message_code=home["message_code"],
             home_page_heartbeat_interval_ms=state["HOME_PAGE_HEARTBEAT_INTERVAL_MS"],
             metrics_snapshot=state["get_cached_dashboard_metrics"](),
+            initial_logs=initial_logs,
         )
 
     @app.route("/home-heartbeat", methods=["POST"])

@@ -112,6 +112,26 @@ class MetricsRouteTests(unittest.TestCase):
         self.assertEqual(payload.get("service_status"), "Off")
         self.assertEqual(payload.get("service_running_status"), "inactive")
 
+    def test_metrics_route_best_effort_refresh_runs_in_all_role(self):
+        app = Flask(__name__)
+        app.testing = True
+        calls = {"publish": 0}
+        state = {
+            "PROCESS_ROLE": "all",
+            "BACKUP_DIR": Path("."),
+            "APP_STATE_DB_PATH": Path("state.sqlite3"),
+            "ensure_metrics_collector_started": lambda: None,
+            "_collect_and_publish_metrics": lambda: calls.__setitem__("publish", calls["publish"] + 1),
+            "get_cached_dashboard_metrics": lambda: {"service_status": "Off"},
+        }
+        register_metrics_routes(app, state)
+
+        with patch.object(state_store_service, "get_latest_event", return_value=None):
+            response = app.test_client().get("/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls["publish"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

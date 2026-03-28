@@ -99,6 +99,47 @@ class PanelSettingsRouteHelpersTests(unittest.TestCase):
         self.assertTrue(panel_settings_routes._validate_superadmin_password(state, "secret"))
         state["validate_superadmin_password"].assert_called_once_with("secret")
 
+    def test_load_env_defaults_prefers_persisted_file_over_stale_runtime_values(self):
+        tmpdir = Path(tempfile.mkdtemp())
+        docs_dir = tmpdir / "doc"
+        docs_dir.mkdir(exist_ok=True)
+        web_conf = tmpdir / "mcweb.env"
+        web_conf.write_text(
+            """# mcweb runtime config
+
+BACKUP_DIR=C:/persisted/backups
+DISPLAY_TZ=UTC
+MCWEB_ADMIN_PASSWORD_HASH=persisted-admin
+MCWEB_REQUIRE_PASSWORD=true
+MCWEB_SECRET_KEY=persisted-secret
+MCWEB_SUPERADMIN_PASSWORD_HASH=persisted-super
+MINECRAFT_ROOT_DIR=C:/persisted/root
+SERVICE=minecraft
+""",
+            encoding="utf-8",
+        )
+        state = {
+            "DOCS_DIR": docs_dir,
+            "WEB_CFG_VALUES": {
+                "BACKUP_DIR": "C:/stale/backups",
+                "DISPLAY_TZ": "Asia/Manila",
+                "MCWEB_ADMIN_PASSWORD_HASH": "stale-admin",
+                "MCWEB_SUPERADMIN_PASSWORD_HASH": "stale-super",
+                "MCWEB_SECRET_KEY": "stale-secret",
+                "MINECRAFT_ROOT_DIR": "C:/stale/root",
+                "SERVICE": "minecraft",
+            },
+        }
+
+        defaults, web_conf_path, app_dir = panel_settings_routes._load_env_defaults(state)
+
+        self.assertEqual(app_dir, tmpdir)
+        self.assertEqual(web_conf_path, web_conf)
+        self.assertEqual(defaults["DISPLAY_TZ"], "UTC")
+        self.assertEqual(defaults["MINECRAFT_ROOT_DIR"], "C:/persisted/root")
+        self.assertEqual(defaults["BACKUP_DIR"], "C:/persisted/backups")
+        self.assertEqual(defaults["MCWEB_SUPERADMIN_PASSWORD_HASH"], "persisted-super")
+
 
 class PanelSettingsRoutePasswordTests(unittest.TestCase):
     def test_confirm_password_uses_shared_superadmin_throttle(self):
@@ -150,6 +191,218 @@ class PanelSettingsRoutePasswordTests(unittest.TestCase):
         throttle_entry = ctx.password_throttle_state["by_ip"]["100.64.0.9"]
         self.assertGreater(float(throttle_entry["blocked_until"]), 0.0)
         publish_ui_notification.assert_called_once()
+
+    def test_paths_save_persists_values_for_reload(self):
+        app = __import__("flask").Flask(__name__)
+        tmpdir = Path(tempfile.mkdtemp())
+        docs_dir = tmpdir / "doc"
+        docs_dir.mkdir(exist_ok=True)
+        web_conf = tmpdir / "mcweb.env"
+        web_conf.write_text(
+            """# mcweb runtime config
+
+BACKUP_DIR=C:/old/backups
+DISPLAY_TZ=UTC
+MCWEB_ADMIN_PASSWORD_HASH=adminhash
+MCWEB_REQUIRE_PASSWORD=true
+MCWEB_SECRET_KEY=secret
+MCWEB_SUPERADMIN_PASSWORD_HASH=superhash
+MINECRAFT_ROOT_DIR=C:/old/root
+SERVICE=minecraft
+""",
+            encoding="utf-8",
+        )
+        state = {
+            "validate_superadmin_password": lambda password: password == "ok",
+            "_ensure_csrf_token": lambda: "t",
+            "DOCS_DIR": docs_dir,
+            "WEB_CFG_VALUES": {
+                "BACKUP_DIR": "C:/old/backups",
+                "DISPLAY_TZ": "UTC",
+                "MCWEB_ADMIN_PASSWORD_HASH": "adminhash",
+                "MCWEB_SUPERADMIN_PASSWORD_HASH": "superhash",
+                "MCWEB_SECRET_KEY": "secret",
+                "MINECRAFT_ROOT_DIR": "C:/old/root",
+                "SERVICE": "minecraft",
+            },
+            "APP_STATE_DB_PATH": tmpdir / "state.sqlite3",
+            "get_device_name_map": lambda: {},
+            "record_successful_password_ip": lambda: None,
+        }
+
+        panel_settings_routes.register_panel_settings_routes(app, state)
+        client = app.test_client()
+
+        with patch.object(
+            panel_settings_routes.setup_queries_service,
+            "validate_setup_request",
+            return_value={"ok": True},
+        ):
+            response = client.post(
+                "/panel-settings/paths",
+                json={
+                    "sudo_password": "ok",
+                    "display_tz": "Asia/Manila",
+                    "minecraft_root_dir": "C:/new/root",
+                    "backup_dir": "C:/new/backups",
+                    "create_backup_dir": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json() or {}
+        self.assertTrue(body.get("ok"))
+        defaults, web_conf_path, _app_dir = panel_settings_routes._load_env_defaults(state)
+        self.assertEqual(web_conf_path, web_conf)
+        self.assertEqual(defaults["DISPLAY_TZ"], "Asia/Manila")
+        self.assertEqual(defaults["MINECRAFT_ROOT_DIR"], "C:/new/root")
+        self.assertEqual(defaults["BACKUP_DIR"], "C:/new/backups")
+
+    def test_device_map_save_persists_values_for_reload(self):
+        app = __import__("flask").Flask(__name__)
+        tmpdir = Path(tempfile.mkdtemp())
+        docs_dir = tmpdir / "doc"
+        docs_dir.mkdir(exist_ok=True)
+        db_path = tmpdir / "state.sqlite3"
+        state_store_service.initialize_state_db(db_path=db_path)
+        state = {
+            "validate_superadmin_password": lambda password: password == "ok",
+            "_ensure_csrf_token": lambda: "t",
+            "DOCS_DIR": docs_dir,
+            "WEB_CFG_VALUES": {
+                "DISPLAY_TZ": "UTC",
+                "MCWEB_ADMIN_PASSWORD_HASH": "adminhash",
+                "MCWEB_SUPERADMIN_PASSWORD_HASH": "superhash",
+                "MCWEB_SECRET_KEY": "secret",
+                "MINECRAFT_ROOT_DIR": "C:/root",
+                "BACKUP_DIR": "C:/backups",
+                "SERVICE": "minecraft",
+            },
+            "APP_STATE_DB_PATH": db_path,
+            "DATA_DIR": tmpdir / "data",
+            "get_device_name_map": lambda: {},
+            "record_successful_password_ip": lambda: None,
+        }
+
+        panel_settings_routes.register_panel_settings_routes(app, state)
+        client = app.test_client()
+        save_response = client.post(
+            "/panel-settings/device-map/save",
+            json={
+                "sudo_password": "ok",
+                "rows": [
+                    {"name": "krystal", "ip": "100.86.176.27", "owner": "jp"},
+                    {"name": "krystal", "ip": "fd7a:115c:a1e0::9d39:b01b", "owner": "jp"},
+                ],
+            },
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        rows = state_store_service.load_fallmap_rows(db_path)
+        self.assertEqual(
+            rows,
+            [
+                {"ip": "100.86.176.27", "device_name": "krystal", "owner": "jp"},
+                {"ip": "fd7a:115c:a1e0::9d39:b01b", "device_name": "krystal", "owner": "jp"},
+            ],
+        )
+        self.assertEqual(
+            panel_settings_routes._load_device_fallmap_rows(state),
+            rows,
+        )
+
+    def test_device_map_save_returns_error_when_readback_does_not_match(self):
+        app = __import__("flask").Flask(__name__)
+        tmpdir = Path(tempfile.mkdtemp())
+        docs_dir = tmpdir / "doc"
+        docs_dir.mkdir(exist_ok=True)
+        db_path = tmpdir / "state.sqlite3"
+        state_store_service.initialize_state_db(db_path=db_path)
+        state = {
+            "validate_superadmin_password": lambda password: password == "ok",
+            "_ensure_csrf_token": lambda: "t",
+            "DOCS_DIR": docs_dir,
+            "WEB_CFG_VALUES": {
+                "DISPLAY_TZ": "UTC",
+                "MCWEB_ADMIN_PASSWORD_HASH": "adminhash",
+                "MCWEB_SUPERADMIN_PASSWORD_HASH": "superhash",
+                "MCWEB_SECRET_KEY": "secret",
+                "MINECRAFT_ROOT_DIR": "C:/root",
+                "BACKUP_DIR": "C:/backups",
+                "SERVICE": "minecraft",
+            },
+            "APP_STATE_DB_PATH": db_path,
+            "DATA_DIR": tmpdir / "data",
+            "get_device_name_map": lambda: {},
+            "record_successful_password_ip": lambda: None,
+            "log_mcweb_exception": lambda *args, **kwargs: None,
+        }
+
+        panel_settings_routes.register_panel_settings_routes(app, state)
+        client = app.test_client()
+
+        with patch.object(
+            panel_settings_routes,
+            "_load_device_fallmap_rows",
+            return_value=[{"ip": "100.86.176.27", "device_name": "old-name", "owner": ""}],
+        ):
+            response = client.post(
+                "/panel-settings/device-map/save",
+                json={
+                    "sudo_password": "ok",
+                    "rows": [
+                        {"name": "krystal", "ip": "100.86.176.27", "owner": "jp"},
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json() or {}
+        self.assertFalse(body.get("ok", True))
+        self.assertIn("did not persist", body.get("message", ""))
+
+    def test_panel_settings_api_state_returns_persisted_device_map(self):
+        app = __import__("flask").Flask(__name__)
+        tmpdir = Path(tempfile.mkdtemp())
+        docs_dir = tmpdir / "doc"
+        docs_dir.mkdir(exist_ok=True)
+        db_path = tmpdir / "state.sqlite3"
+        state_store_service.initialize_state_db(db_path=db_path)
+        state_store_service.replace_fallmap_rows(
+            db_path,
+            [
+                {"ip": "100.86.176.27", "device_name": "krystal", "owner": "jp"},
+                {"ip": "fd7a:115c:a1e0::9d39:b01b", "device_name": "krystal", "owner": "jp"},
+            ],
+        )
+        state = {
+            "validate_superadmin_password": lambda password: password == "ok",
+            "_ensure_csrf_token": lambda: "t",
+            "DOCS_DIR": docs_dir,
+            "WEB_CFG_VALUES": {
+                "DISPLAY_TZ": "UTC",
+                "MCWEB_ADMIN_PASSWORD_HASH": "adminhash",
+                "MCWEB_SUPERADMIN_PASSWORD_HASH": "superhash",
+                "MCWEB_SECRET_KEY": "secret",
+                "MINECRAFT_ROOT_DIR": "C:/root",
+                "BACKUP_DIR": "C:/backups",
+                "CREATE_BACKUP_DIR": "false",
+                "SERVICE": "minecraft",
+            },
+            "APP_STATE_DB_PATH": db_path,
+            "get_device_name_map": lambda: {},
+            "record_successful_password_ip": lambda: None,
+        }
+        panel_settings_routes.register_panel_settings_routes(app, state)
+        client = app.test_client()
+
+        response = client.get("/panel-settings/api/state")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json() or {}
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("device_map", {}).get("100.86.176.27"), "krystal")
+        self.assertEqual(len(body.get("device_machines") or []), 1)
 
 
 if __name__ == "__main__":

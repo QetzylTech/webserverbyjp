@@ -45,6 +45,15 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
     """Register metrics JSON and SSE endpoints."""
     process_role = str(state.get("PROCESS_ROLE", "all") or "all").strip().lower()
 
+    def _ensure_metrics_runtime_started_best_effort() -> None:
+        starter = state.get("ensure_metrics_collector_started")
+        if not callable(starter):
+            return
+        try:
+            starter()
+        except Exception:
+            pass
+
     def _attach_nav_attention(payload: object) -> object:
         if not isinstance(payload, dict):
             return payload
@@ -79,8 +88,9 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
         return snapshot, _coerce_event_id(event.get("id", 0))
 
     def _refresh_metrics_snapshot_best_effort() -> None:
-        """Force a fresh metrics snapshot in web-only role."""
-        if process_role != "web":
+        """Force a fresh metrics snapshot in request-serving roles."""
+        _ensure_metrics_runtime_started_best_effort()
+        if process_role == "worker":
             return
         publish_fn = state.get("_collect_and_publish_metrics") or state.get("collect_and_publish_metrics")
         if not callable(publish_fn):
@@ -114,6 +124,7 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
     @app.route("/metrics-stream")
     def metrics_stream() -> Response:
         """Runtime helper metrics_stream."""
+        _ensure_metrics_runtime_started_best_effort()
         client_id = str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
         def generate() -> Iterator[str]:
             """Runtime helper generate."""

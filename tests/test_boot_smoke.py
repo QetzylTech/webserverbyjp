@@ -12,6 +12,14 @@ class WebBootSmokeTests(unittest.TestCase):
         app = create_app()
         self.assertIsInstance(app, Flask)
 
+    def test_application_factory_bootstraps_runtime_for_wsgi_path(self):
+        from app.application_factory import create_app
+
+        with patch("app.bootstrap.web_app.ensure_runtime_bootstrapped", return_value=None) as boot_mock:
+            app = create_app()
+        self.assertIsInstance(app, Flask)
+        boot_mock.assert_called_once_with()
+
     def test_main_entrypoint_uses_web_boot_path_for_non_worker_role(self):
         import app.main as main_app
 

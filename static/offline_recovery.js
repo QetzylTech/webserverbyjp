@@ -165,7 +165,10 @@
             try {
                 return await nativeFetch(...args);
             } catch (err) {
-                setOfflineActive("fetch_failed");
+                if (err && err.name === "AbortError") {
+                    throw err;
+                }
+                setOfflineIfUnreachable("fetch_failed");
                 throw err;
             }
         };

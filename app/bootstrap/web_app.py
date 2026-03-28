@@ -130,6 +130,7 @@ _runtime_bundle = runtime_wiring_service.create_runtime(
 RUNTIME_CONTEXT = _runtime_bundle["runtime_context"]
 STATE = _runtime_bundle["state"]
 _static_asset_version_fn = _runtime_bundle["static_asset_version_fn"]
+_boot_runtime = _runtime_bundle["boot_runtime"]
 run_server = _runtime_bundle["run_server"]
 if _setup_required():
     def _setup_run_server() -> None:
@@ -141,6 +142,13 @@ if _setup_required():
             boot_steps=[],
         )
     run_server = _setup_run_server
+
+
+def ensure_runtime_bootstrapped() -> None:
+    """Run non-server boot steps for WSGI/imported app entrypoints."""
+    if _setup_required() or PROCESS_ROLE == "worker":
+        return
+    _boot_runtime()
 
 
 def run_worker() -> None:

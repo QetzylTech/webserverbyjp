@@ -1,6 +1,6 @@
-﻿const STATIC_CACHE = "mcweb-static-v4";
-const HTML_CACHE = "mcweb-html-v4";
-const FRAGMENT_CACHE = "mcweb-fragments-v4";
+const STATIC_CACHE = "mcweb-static-v5";
+const HTML_CACHE = "mcweb-html-v5";
+const FRAGMENT_CACHE = "mcweb-fragments-v5";
 const OFFLINE_FALLBACK_URL = "/static/offline.html";
 const OFFLINE_FRAGMENT_HTML = "<main id=\"mcweb-page-root\" class=\"content\" data-page-key=\"offline\" data-page-title=\"Offline\" data-page-styles='[]' data-page-scripts='[]'><div class=\"wrap page-panes\"><section class=\"panel pane-primary\"><div class=\"pane-head\"><h1 class=\"pane-title\">Server offline</h1></div><div class=\"pane-content\"><p>Cached content is unavailable for this page. Reconnect to load data.</p></div></section></div></main>";
 
@@ -48,17 +48,11 @@ const PRECACHE_PAGE_ROUTES = [
     "/readme",
 ];
 
-function stripSearch(url) {
-    return url.origin + url.pathname;
-}
-
 async function cacheStaticResponse(request, response) {
     if (!response || !response.ok) return;
     const cache = await caches.open(STATIC_CACHE);
-    const url = new URL(request.url);
-    const stripped = new Request(stripSearch(url), { method: "GET" });
     try {
-        await cache.put(stripped, response.clone());
+        await cache.put(request, response.clone());
     } catch (_) {
         // Ignore cache failures.
     }
@@ -66,7 +60,7 @@ async function cacheStaticResponse(request, response) {
 
 async function matchStatic(request) {
     const cache = await caches.open(STATIC_CACHE);
-    const cached = await cache.match(request) || await cache.match(request, { ignoreSearch: true });
+    const cached = await cache.match(request);
     return cached || null;
 }
 
@@ -118,11 +112,15 @@ async function handleFragment(request) {
 }
 
 async function handleStatic(request) {
-    const cached = await matchStatic(request);
-    if (cached) return cached;
-    const response = await fetch(request);
-    cacheStaticResponse(request, response.clone()).catch(() => {});
-    return response;
+    try {
+        const response = await fetch(request);
+        cacheStaticResponse(request, response.clone()).catch(() => {});
+        return response;
+    } catch (err) {
+        const cached = await matchStatic(request);
+        if (cached) return cached;
+        throw err;
+    }
 }
 
 async function precacheStaticAssets() {

@@ -7,7 +7,7 @@ from typing import Any
 
 from app.ports import ports
 from app.core import state_store as state_store_service
-from app.services.worker_scheduler import WorkerSpec, start_worker
+from app.services.worker_scheduler import WorkerSpec, get_worker_health_snapshot, start_worker
 
 
 LogSourceSettings = dict[str, object]
@@ -71,14 +71,6 @@ def log_source_settings(ctx: Any, source: object) -> LogSourceSettings | None:
     if normalized == "minecraft":
         stream_mode = str(ports.log.minecraft_log_stream_mode() or "journal").strip().lower()
         latest_log_path = _minecraft_live_log_path(ctx)
-        if stream_mode == "journal" and latest_log_path.exists():
-            return {
-                "source": normalized,
-                "type": "file_poll",
-                "context": "minecraft_log_stream",
-                "path": latest_log_path,
-                "text_limit": ctx.MINECRAFT_LOG_TEXT_LIMIT,
-            }
         if stream_mode == "file_poll":
             return {
                 "source": normalized,
@@ -491,9 +483,20 @@ def ensure_log_stream_fetcher_started(ctx: Any, source: object) -> None:
     if normalized is None:
         return
     state = ctx.log_stream_states.get(normalized)
-    if state is None or state["started"]:
+    if state is None:
         return
+    marker = f"log_stream_fetcher_{normalized}"
+    if state["started"]:
+        health = get_worker_health_snapshot().get(marker, {})
+        if isinstance(health, dict) and bool(health.get("running")):
+            return
+        state["started"] = False
     with state["lifecycle_lock"]:
+        if state["started"]:
+            health = get_worker_health_snapshot().get(marker, {})
+            if isinstance(health, dict) and bool(health.get("running")):
+                return
+            state["started"] = False
         if state["started"]:
             return
         start_worker(

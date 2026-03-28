@@ -35,6 +35,7 @@ class TemplateContractsTests(unittest.TestCase):
             'id="success-modal"',
             'id="error-modal"',
             'name="csrf_token"',
+            '"initialLogs": initial_logs or {}',
         ]
         for token in required_tokens:
             self.assertIn(token, text)
@@ -143,6 +144,92 @@ class TemplateContractsTests(unittest.TestCase):
         self.assertIn('dom.passwordTitle.textContent = "Action Rejected"', files_js)
         self.assertIn("dom.passwordImage.hidden = false", files_js)
 
+    def test_panel_settings_device_cards_edit_inline_without_expanded_editor(self):
+        panel_js = self._read("static/panel_settings.js")
+        panel_css = self._read("static/panel_settings.css")
+        self.assertIn("device-machine-edit-field", panel_js)
+        self.assertIn('el.hasAttribute("data-device-last-seen")', panel_js)
+        self.assertNotIn("data-device-edit-last-seen", panel_js)
+        self.assertIn('card.classList.toggle("is-editing", isEditing)', panel_js)
+        self.assertNotIn("data-device-editor", panel_js)
+        self.assertNotIn("deviceInlineInputStyle", panel_js)
+        self.assertNotIn("device-machine-address-input", panel_js)
+        self.assertNotIn("device-machine-edit-readonly", panel_js)
+        self.assertIn(".device-machine-edit-field[hidden]", panel_css)
+
+    def test_panel_settings_security_paths_timezone_and_csv_layout_use_cards(self):
+        fragment = self._read("templates/fragments/panel_settings_fragment.html")
+        self.assertIn('class="settings-card-grid"', fragment)
+        self.assertIn('class="settings-card"', fragment)
+        self.assertIn('class="settings-dropzone settings-dropzone--full"', fragment)
+        self.assertIn('class="device-map-upload-row"', fragment)
+
+    def test_cleanup_rules_only_style_inputs_in_edit_mode(self):
+        rules_js = self._read("static/maintenance_page_rules.js")
+        rules_css = self._read("static/maintenance_page.css")
+        self.assertIn('class="ui-card-input rule-inline-edit-input"', rules_js)
+        self.assertIn('class="rule-inline-control" data-rule-field="time_based.repeat_mode"', rules_js)
+        self.assertIn("MCWebEnhanceCustomSelects(dom.rulesCardList)", rules_js)
+        self.assertIn("#rules-card-list .rule-inline-sentence .ui-select", rules_css)
+        self.assertNotIn('class="ui-card-input rule-inline-control" data-rule-field="time_based.repeat_mode"', rules_js)
+
+    def test_offline_recovery_ignores_aborted_fetches_and_probes_before_banner(self):
+        offline_js = self._read("static/offline_recovery.js")
+        self.assertIn('if (err && err.name === "AbortError")', offline_js)
+        self.assertIn('setOfflineIfUnreachable("fetch_failed")', offline_js)
+        self.assertNotIn('setOfflineActive("fetch_failed")', offline_js)
+
+    def test_service_worker_respects_static_asset_versions_and_prefers_network(self):
+        sw_js = self._read("static/service_worker.js")
+        self.assertNotIn("stripSearch(", sw_js)
+        self.assertNotIn("ignoreSearch: true", sw_js.split("async function matchStatic", 1)[1].split("async function handleNavigate", 1)[0])
+        self.assertRegex(
+            sw_js,
+            re.compile(
+                r"async function handleStatic\(request\)\s*\{\s*try\s*\{\s*const response = await fetch\(request\);",
+                re.MULTILINE,
+            ),
+        )
+        self.assertIn('await cache.put(request, response.clone())', sw_js)
+
+    def test_global_input_classes_override_generic_input_reset(self):
+        global_css = self._read("static/global.css")
+        self.assertIn('input.ui-text-input:not([type="checkbox"])', global_css)
+        self.assertIn('input.ui-card-input:not([type="checkbox"])', global_css)
+        self.assertIn("textarea.ui-card-input", global_css)
+
+    def test_shell_and_pages_register_unsaved_changes_guard(self):
+        shell_js = self._read("static/app_shell.js")
+        maintenance_js = self._read("static/maintenance_page.js")
+        panel_js = self._read("static/panel_settings.js")
+        self.assertIn("setUnsavedChangesGuard", shell_js)
+        self.assertIn("Discard Changes", shell_js)
+        self.assertIn("Save Changes", shell_js)
+        self.assertIn("Go Back to Editing", shell_js)
+        self.assertIn('pageKey: "maintenance"', maintenance_js)
+        self.assertIn("hasUnsavedRuleChanges", maintenance_js)
+        self.assertIn('pageKey: "panel_settings"', panel_js)
+        self.assertIn("saveAllUnsavedChanges", panel_js)
+
+    def test_shell_has_metrics_1hz_fallback_poll_when_sse_stalls(self):
+        shell_js = self._read("static/app_shell.js")
+        self.assertIn("METRICS_FALLBACK_POLL_MS = 1000", shell_js)
+        self.assertIn("METRICS_SSE_STALL_MS = 1500", shell_js)
+        self.assertIn('fetchJson("/metrics")', shell_js)
+        self.assertIn("startMetricsFallbackPoll", shell_js)
+        self.assertIn("lastMetricsSseAtMs = Date.now()", shell_js)
+        self.assertIn('nextStatus === "running"', shell_js)
+        self.assertIn('nextStatus === "off"', shell_js)
+        self.assertIn('previousStatus === "running" || previousStatus === "shutting down"', shell_js)
+
+    def test_home_page_has_direct_visible_1hz_metrics_poll(self):
+        home_js = self._read("static/dashboard_home_page.js")
+        self.assertIn("METRICS_POLL_INTERVAL_MS = 1000", home_js)
+        self.assertIn('fetch("/metrics"', home_js)
+        self.assertIn("scheduleLiveMetricsPoll({ immediate: true })", home_js)
+        self.assertIn("clearMetricsPollTimer()", home_js)
+        self.assertIn("cacheMetricsSnapshot(payload)", home_js)
+        self.assertNotIn("homeMetricsUnsubscribe = shell.subscribeMetrics((payload) => {\n                if (payload && typeof payload === \"object\") {\n                    applyMetricsData(payload);", home_js)
 
 if __name__ == "__main__":
     unittest.main()

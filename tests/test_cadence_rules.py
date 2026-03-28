@@ -8,6 +8,7 @@ import pytest
 
 from app.services import dashboard_metrics_runtime as metrics_runtime
 from app.services import log_stream_service
+from app.services import session_watchers
 
 
 def _make_log_state(clients=0):
@@ -124,7 +125,7 @@ def test_publish_log_stream_line_marks_start_observed_from_startup_log(monkeypat
     assert recorded["updated"]["status"] == "observed"
 
 
-def test_minecraft_log_source_prefers_latest_file_when_present(monkeypatch):
+def test_minecraft_log_source_prefers_journal_even_when_latest_file_exists(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         logs_dir = Path(tmp)
         (logs_dir / "latest.log").write_text("line\n", encoding="utf-8")
@@ -139,8 +140,7 @@ def test_minecraft_log_source_prefers_latest_file_when_present(monkeypatch):
         settings = log_stream_service.log_source_settings(ctx, "minecraft")
 
     assert settings is not None
-    assert settings["type"] == "file_poll"
-    assert settings["path"] == logs_dir / "latest.log"
+    assert settings["type"] == "journal"
 
 
 def test_increment_log_stream_clients_notifies_waiters():
@@ -252,3 +252,130 @@ def test_metrics_collector_waits_for_clients_and_collects_when_active(monkeypatc
         metrics_runtime.metrics_collector_loop(ctx)
 
     assert calls == ["idle", "collect"]
+
+
+def test_ensure_metrics_collector_restarts_when_health_is_not_running(monkeypatch):
+    started = {"count": 0}
+
+    def fake_start_worker(_ctx, _spec):
+        started["count"] += 1
+
+    monkeypatch.setattr(
+        metrics_runtime,
+        "get_worker_health_snapshot",
+        lambda: {"metrics_collector": {"running": False}},
+    )
+    monkeypatch.setattr(metrics_runtime, "start_worker", fake_start_worker)
+
+    ctx = SimpleNamespace(
+        metrics_collector_started=True,
+        metrics_collector_start_lock=threading.Lock(),
+        METRICS_COLLECT_INTERVAL_SECONDS=1.0,
+    )
+
+    metrics_runtime.ensure_metrics_collector_started(ctx)
+
+    assert started["count"] == 1
+    assert ctx.metrics_collector_started is True
+
+
+def test_ensure_log_stream_fetcher_restarts_when_health_is_not_running(monkeypatch):
+    started = {"count": 0}
+
+    def fake_start_worker(_ctx, _spec):
+        started["count"] += 1
+
+    monkeypatch.setattr(
+        log_stream_service,
+        "get_worker_health_snapshot",
+        lambda: {"log_stream_fetcher_minecraft": {"running": False}},
+    )
+    monkeypatch.setattr(log_stream_service, "start_worker", fake_start_worker)
+
+    state = _make_log_state(clients=0)
+    state["started"] = True
+    ctx = SimpleNamespace(
+        LOG_SOURCE_KEYS=("minecraft",),
+        log_stream_states={"minecraft": state},
+        LOG_FETCHER_IDLE_SLEEP_SECONDS=2,
+    )
+
+    log_stream_service.ensure_log_stream_fetcher_started(ctx, "minecraft")
+
+    assert started["count"] == 1
+    assert state["started"] is True
+
+
+def test_start_idle_player_watcher_restarts_when_health_is_not_running(monkeypatch):
+    started = {"count": 0}
+
+    def fake_start_worker(_ctx, _spec):
+        started["count"] += 1
+
+    monkeypatch.setattr(
+        session_watchers,
+        "get_worker_health_snapshot",
+        lambda: {"idle_player_watcher": {"running": False}},
+    )
+    monkeypatch.setattr(session_watchers, "start_worker", fake_start_worker)
+
+    ctx = SimpleNamespace(
+        IDLE_CHECK_INTERVAL_ACTIVE_SECONDS=5.0,
+    )
+
+    session_watchers.start_idle_player_watcher(ctx)
+
+    assert started["count"] == 1
+
+
+def test_collect_dashboard_metrics_best_effort_ensures_session_watchers(monkeypatch):
+    ensured = {"count": 0}
+    monkeypatch.setattr(
+        metrics_runtime.session_watchers_service,
+        "ensure_session_watchers_started",
+        lambda _ctx: ensured.__setitem__("count", ensured["count"] + 1),
+    )
+    monkeypatch.setattr(metrics_runtime, "has_active_flask_app_clients", lambda _ctx: True)
+    monkeypatch.setattr(metrics_runtime, "get_observed_state", lambda _ctx: {"service_status_raw": "active", "service_status_display": "Running", "players_online": "0"})
+    monkeypatch.setattr(metrics_runtime, "get_slow_metrics", lambda _ctx, _status, active_clients=False: {
+        "cpu_per_core": ["1.0"],
+        "ram_usage": "1 / 2 GB (50.0%)",
+        "cpu_frequency": "3.00 GHz",
+        "storage_usage": "1G / 10G (10%)",
+        "backups_status": "Idle",
+    })
+    monkeypatch.setattr(metrics_runtime, "_get_backup_and_stale_counts", lambda _ctx: (0, 0, "/tmp/backups"))
+    monkeypatch.setattr(metrics_runtime.maintenance_state_store_service, "get_cleanup_meta", lambda _ctx, scope="backups": {
+        "last_run_at": "",
+        "rule_version": 0,
+        "schedule_version": 0,
+        "last_changed_by": "",
+    })
+    monkeypatch.setattr(metrics_runtime.maintenance_state_store_service, "get_cleanup_missed_run_count", lambda _ctx: 0)
+    monkeypatch.setattr(metrics_runtime.maintenance_scheduler_service, "get_next_cleanup_run_at", lambda _ctx, scope="backups": "")
+
+    ctx = SimpleNamespace(
+        DISPLAY_TZ=None,
+        BACKUP_WARNING_TTL_SECONDS=60,
+        log_mcweb_exception=lambda *_args, **_kwargs: None,
+        get_status=lambda: "active",
+        is_storage_low=lambda _usage: False,
+        low_storage_error_message=lambda _usage: "",
+        _probe_minecraft_runtime_metrics=lambda force=False: ("0", "12.3ms"),
+        get_players_online=lambda: "0",
+        get_tick_rate=lambda: "12.3ms",
+        get_session_duration_text=lambda: "00:01:00",
+        get_backup_schedule_times=lambda _status: {"last_backup_time": "--", "next_backup_time": "--"},
+        get_backup_status=lambda: ("Idle", "stat-yellow"),
+        get_backup_warning_state=lambda _ttl: {"seq": 0, "message": ""},
+        get_service_status_class=lambda _status: "stat-green",
+        get_world_name=lambda: "World",
+        is_rcon_enabled=lambda: True,
+        get_idle_countdown=lambda _status, _players: "00:00",
+        re=__import__("re"),
+    )
+
+    snapshot = metrics_runtime.collect_dashboard_metrics(ctx)
+
+    assert ensured["count"] == 1
+    assert snapshot["service_status"] == "Running"
