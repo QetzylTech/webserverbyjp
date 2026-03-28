@@ -123,6 +123,7 @@ _runtime_bundle = runtime_wiring_service.create_runtime(
         dashboard_metrics_runtime_service=dashboard_metrics_runtime_service,
         dashboard_operations_runtime_service=dashboard_operations_runtime_service,
         status_cache_service=status_cache_service,
+        worker_runtime_service=worker_runtime_service,
     ),
     register_routes=register_routes,
 )

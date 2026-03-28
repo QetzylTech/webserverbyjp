@@ -510,6 +510,21 @@
         return "Action completed successfully.";
     }
 
+    function closeErrorModal() {
+        const modal = document.getElementById("error-modal");
+        const details = document.getElementById("error-modal-details");
+        const moreBtn = document.getElementById("error-modal-more");
+        if (!modal) return;
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        if (details) {
+            details.hidden = true;
+        }
+        if (moreBtn) {
+            moreBtn.textContent = "Show more";
+        }
+    }
+
 
     function stopOperationPoll(opId) {
         const key = String(opId || "").trim();
@@ -1025,10 +1040,16 @@
         }
         const errorOk = document.getElementById("error-modal-ok");
         const errorMore = document.getElementById("error-modal-more");
+        const errorModal = document.getElementById("error-modal");
+        if (errorModal) {
+            addScopedListener(errorModal, "click", (event) => {
+                if (event.target !== errorModal) return;
+                closeErrorModal();
+            });
+        }
         if (errorOk) {
             addScopedListener(errorOk, "click", () => {
-                const modal = document.getElementById("error-modal");
-                if (modal) modal.classList.remove("open");
+                closeErrorModal();
             });
         }
         if (errorMore) {

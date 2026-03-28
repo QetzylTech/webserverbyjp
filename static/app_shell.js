@@ -408,9 +408,7 @@
     function startPrimaryStreams() {
         startMetricsStream();
         startNotificationsStream();
-        if (shellState.homeLogs.activeSource) {
-            ensureHomeLogStreamStarted(shellState.homeLogs.activeSource);
-        }
+        activateHomeLogStream(resolvePreferredHomeLogSource());
     }
 
     function stopPrimaryStreams() {
@@ -1875,6 +1873,18 @@
         shellState.homeLogs.streams[sourceKey] = stream;
     }
 
+    function resolvePreferredHomeLogSource() {
+        const activeSource = String(shellState.homeLogs.activeSource || "").trim().toLowerCase();
+        if (HOME_LOG_PATHS[activeSource]) {
+            return activeSource;
+        }
+        const selectedSource = String(shellState.homeView?.selectedLogSource || "").trim().toLowerCase();
+        if (HOME_LOG_PATHS[selectedSource]) {
+            return selectedSource;
+        }
+        return "minecraft";
+    }
+
     function stopHomeLogStream(source) {
         const sourceKey = String(source || "").trim().toLowerCase();
         const stream = shellState.homeLogs.streams[sourceKey];
@@ -1888,7 +1898,8 @@
     }
 
     function activateHomeLogStream(source) {
-        const sourceKey = String(source || "").trim().toLowerCase();
+        const requestedSource = String(source || "").trim().toLowerCase();
+        const sourceKey = HOME_LOG_PATHS[requestedSource] ? requestedSource : resolvePreferredHomeLogSource();
         Object.keys(shellState.homeLogs.streams).forEach((key) => {
             if (key !== sourceKey) stopHomeLogStream(key);
         });

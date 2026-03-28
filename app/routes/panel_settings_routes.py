@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from flask import jsonify, render_template, request
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import generate_password_hash
 
 from app.core import state_store as state_store_service
 from app.routes.shell_page import render_shell_page as render_shell_page_helper
@@ -118,31 +118,14 @@ def _validate_admin_password(state: Mapping[str, Any], password: str) -> bool:
         ok = bool(state["validate_admin_password"](password))
     except Exception:
         ok = False
-    if ok:
-        try:
-            state["record_successful_password_ip"]()
-        except Exception:
-            pass
     return ok
 
 
 def _validate_superadmin_password(state: Mapping[str, Any], password: str) -> bool:
-    defaults, _web_conf_path, _app_dir = _load_env_defaults(state)
-    expected_hash = str(defaults.get("MCWEB_SUPERADMIN_PASSWORD_HASH", "") or "").strip()
-    if not expected_hash:
-        expected_hash = str(defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "") or "").strip()
-    ok = False
-    if expected_hash and password:
-        try:
-            ok = bool(check_password_hash(expected_hash, password))
-        except Exception:
-            ok = False
-    if ok:
-        try:
-            state["record_successful_password_ip"]()
-        except Exception:
-            pass
-    return ok
+    try:
+        return bool(state["validate_superadmin_password"](password))
+    except Exception:
+        return False
 
 
 def _save_env_values(state: Mapping[str, Any], values: Mapping[str, object], web_conf_path: str | Path) -> tuple[bool, str]:

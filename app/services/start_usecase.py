@@ -47,7 +47,7 @@ def _password_required(ctx: Any) -> bool:
         return True
 
 
-def _validate_password(ctx: Any, sudo_password: object) -> bool:
+def _client_ip(ctx: Any) -> str:
     client_ip = ""
     getter = getattr(ctx, "_get_client_ip", None)
     if callable(getter):
@@ -55,34 +55,43 @@ def _validate_password(ctx: Any, sudo_password: object) -> bool:
             client_ip = str(getter() or "").strip()
         except Exception:
             client_ip = ""
+    return client_ip
+
+
+def _publish_password_throttle(ctx: Any, blocked_until: float) -> None:
+    retry_seconds = max(0, int(blocked_until - time.time()))
+    _notification_service.publish_ui_notification(
+        ctx,
+        {
+            "code": "password_throttle",
+            "kind": "warning",
+            "message": f"Password retries paused for {retry_seconds} seconds after 3 failed attempts.",
+            "retry_after_seconds": retry_seconds,
+        },
+    )
+    try:
+        ctx.log_mcweb_action(
+            "password_throttle",
+            rejection_message=f"Password retries paused for {retry_seconds} seconds.",
+        )
+    except Exception:
+        pass
+
+
+def _validate_password_hash(ctx: Any, sudo_password: object, expected_hash: object) -> bool:
+    client_ip = _client_ip(ctx)
     if _password_throttle_service.is_blocked(ctx, client_ip):
         return False
 
-    expected_hash = (getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
+    expected = str(expected_hash or "").strip()
     candidate = str(sudo_password or "").strip()
-    if not expected_hash or not candidate:
+    if not expected or not candidate:
         blocked_until, triggered = _password_throttle_service.record_failure(ctx, client_ip)
         if triggered:
-            retry_seconds = max(0, int(blocked_until - time.time()))
-            _notification_service.publish_ui_notification(
-                ctx,
-                {
-                    "code": "password_throttle",
-                    "kind": "warning",
-                    "message": f"Password retries paused for {retry_seconds} seconds after 3 failed attempts.",
-                    "retry_after_seconds": retry_seconds,
-                },
-            )
-            try:
-                ctx.log_mcweb_action(
-                    "password_throttle",
-                    rejection_message=f"Password retries paused for {retry_seconds} seconds.",
-                )
-            except Exception:
-                pass
+            _publish_password_throttle(ctx, blocked_until)
         return False
     try:
-        ok = bool(check_password_hash(expected_hash, candidate))
+        ok = bool(check_password_hash(expected, candidate))
     except ValueError:
         ok = False
     if ok:
@@ -90,34 +99,30 @@ def _validate_password(ctx: Any, sudo_password: object) -> bool:
         return True
     blocked_until, triggered = _password_throttle_service.record_failure(ctx, client_ip)
     if triggered:
-        retry_seconds = max(0, int(blocked_until - time.time()))
-        _notification_service.publish_ui_notification(
-            ctx,
-            {
-                "code": "password_throttle",
-                "kind": "warning",
-                "message": f"Password retries paused for {retry_seconds} seconds after 3 failed attempts.",
-                "retry_after_seconds": retry_seconds,
-            },
-        )
-        try:
-            ctx.log_mcweb_action(
-                "password_throttle",
-                rejection_message=f"Password retries paused for {retry_seconds} seconds.",
-            )
-        except Exception:
-            pass
+        _publish_password_throttle(ctx, blocked_until)
     return False
+
+
+def _admin_password_hash(ctx: Any) -> str:
+    return str(getattr(ctx, "ADMIN_PASSWORD_HASH", "") or "").strip()
+
+
+def _superadmin_password_hash(ctx: Any) -> str:
+    return str(getattr(ctx, "SUPERADMIN_PASSWORD_HASH", "") or "").strip() or _admin_password_hash(ctx)
 
 
 def validate_sudo_password(ctx: Any, sudo_password: object) -> bool:
     if not _password_required(ctx):
         return True
-    return _validate_password(ctx, sudo_password)
+    return _validate_password_hash(ctx, sudo_password, _admin_password_hash(ctx))
 
 
 def validate_admin_password(ctx: Any, sudo_password: object) -> bool:
-    return _validate_password(ctx, sudo_password)
+    return _validate_password_hash(ctx, sudo_password, _admin_password_hash(ctx))
+
+
+def validate_superadmin_password(ctx: Any, sudo_password: object) -> bool:
+    return _validate_password_hash(ctx, sudo_password, _superadmin_password_hash(ctx))
 
 
 def read_session_start_time(ctx: Any) -> float | None:

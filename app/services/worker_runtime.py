@@ -356,6 +356,17 @@ def start_worker_loops(ctx: Any) -> None:
         ctx.ensure_metrics_collector_started()
     except Exception as exc:
         ctx.log_mcweb_exception("worker_start_metrics_collector", exc)
+    for name, starter in (
+        ("worker_start_idle_player_watcher", getattr(ctx, "start_idle_player_watcher", None)),
+        ("worker_start_backup_session_watcher", getattr(ctx, "start_backup_session_watcher", None)),
+        ("worker_start_storage_safety_watcher", getattr(ctx, "start_storage_safety_watcher", None)),
+    ):
+        if not callable(starter):
+            continue
+        try:
+            starter()
+        except Exception as exc:
+            ctx.log_mcweb_exception(name, exc)
     start_worker(
         ctx,
         WorkerSpec(

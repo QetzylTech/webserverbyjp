@@ -20,6 +20,7 @@ _CONTROL_METHODS = (
     "run_elevated_command",
     "validate_sudo_password",
     "validate_admin_password",
+    "validate_superadmin_password",
     "graceful_stop_minecraft",
     "stop_server_automatically",
     "ensure_startup_rcon_settings",

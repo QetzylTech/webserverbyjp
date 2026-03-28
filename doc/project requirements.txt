@@ -134,9 +134,30 @@ Eventually, old backups and stale worlds should be deleted. These are the cleanu
         - Action Button and dropdown colors
             - Red: Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
             - Blue: Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
-            - Torquise: : Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
+            - teal: : Normal, Hovered, Clicked, Disabled Normal, Disabled Hovered, Disabled Clicked
         - Navigation/ view switcher button colors
             - Normal (Body Background color), Hovered (Nav Highlight color), Clicked (Clicked color), Highlighted (Normal Blue Button Color)
+        - Text Input boxes
+            - Split the textinput box class into 2 - title row input and content area/ card input
+            - Title row input retains the current color scheme
+            - Content area/ card input now uses the same color as the pane class background color (light and dark mode)
+        - Modals
+            - Only 4 classes of modals
+                - Action Successful acknowledgement (Completed successfully)
+                - Action accepted (Initiated successfully)
+                - Action Rejected (Password Verification Failed)
+                - Password input prompt
+                - Cleanup dry run list
+                - Error (Action failed, exception, backup or snapshot failures, other errors; has more details button)
+                - Warnings/ Prompts:
+                    - Clicking should open the page and pane concerned 
+        - Alerts
+            - Nav bar also  acts as an alert indicator:
+                - Home button flashes orange when server is starting or shutting down
+                - Home button is solid teal when server is running
+                - Home button flashes red when server has an emergency shutdown or crashed.`
+                - Backup & restore button flashes red when someone opens the restore pane. Stop flashing immediately upon closing the restore pane.
+                - Cleanup  button flashes red when a cleanup job is missed
     - Files
         - Selected and opened files are highlighted in the file list. Unhighlight upon closing.
     - Buttons
@@ -231,16 +252,19 @@ Eventually, old backups and stale worlds should be deleted. These are the cleanu
     - Notification system:
         - Nav bar also  acts as an alert indicator:
             - Home button flashes orange when server is starting or shutting down
-            - Home button is solid torquise when server is running
+            - Home button is solid teal when server is running
             - Home button flashes red when server has an emergency shutdown or crashed.`
             - Backup & restore button flashes red when someone opens the restore pane. Stop flashing immediately upon closing the restore pane.
             - Cleanup  button flashes red when a cleanup job is missed
         - There is a popup modal with these variations:
             - Action Successful acknowledgement (Completed successfully)
             - Action accepted (Initiated successfully)
-            - Action Rejected (Password Verification Failed)
-            - Password input prompt
+            - Password input prompt (Initial Password Prompt, Password Prompt for Protected Action)
+            - Action Rejected (Password Verification Failed), rejection image is shown here only
+                - This modal contains the rejection image and a password input box.
             - Cleanup dry run list
+            - Cleanup execution summary
+                - Cleanup execution summary modal that shows the number of files deleted, total space freed, and any errors encountered during cleanup.
             - Error (Action failed, exception, backup or snapshot failures, other errors; has more details button)
             - Warnings/ Prompts:
                 - Clicking should open the page and pane concerned 
@@ -268,11 +292,30 @@ Eventually, old backups and stale worlds should be deleted. These are the cleanu
     The current control method for the server is via systemctl for start and stop. I want to remove this and just have the app directly call and terminate the run.sh or server.jar file to avoid linux specific dependency.
 
 16. Implemented Behavior Not Explicitly Listed Above
-- Server-side client registry with heartbeats to track connected clients and detect abrupt disconnects.
-- Log streaming tracks file offsets and buffers lines when idle, then drains buffered lines on client connect.
-- Restore log stream is exposed via dedicated SSE channel /stream/restore_logs (separate from main logs).
-- Cleanup scheduler persists last tick per scope and records missed-run metadata in a non-normal state file.
-- Cleanup run history is persisted and attached to metrics/history views.
-- Cleanup blast-radius caps are enforced per run (max percent, absolute max, and minimum per run).
-- Server-side priority/guard enforcement for cleanup actions (reject when backup/restore running or queued).
-- Storage guard calculates free space percent and estimated job size to block start/backup/restore and trigger emergency shutdown.
+    - Server-side client registry with heartbeats to track connected clients and detect abrupt disconnects.
+    - Log streaming tracks file offsets and buffers lines when idle, then drains buffered lines on client connect.
+    - Restore log stream is exposed via dedicated SSE channel /stream/restore_logs (separate from main logs).
+    - Cleanup scheduler persists last tick per scope and records missed-run metadata in a non-normal state file.
+    - Cleanup run history is persisted and attached to metrics/history views.
+    - Cleanup blast-radius caps are enforced per run (max percent, absolute max, and minimum per run).
+    - Server-side priority/guard enforcement for cleanup actions (reject when backup/restore running or queued).
+    - Storage guard calculates free space percent and estimated job size to block start/backup/restore and trigger emergency shutdown.
+
+17. Panel settings device name ip mapping
+    - Side Admin Password and Superadmin Password Change
+    - Path settings for backup directory and minecraft server directory
+    - Timezone settings that affects all time related aspects of the app (Timestamps, scheduling)
+    - Device name and ip mapping for client identification and logging purposes.
+        - Use similar ui to the machine list of tailscale
+        - Machine name, combined addresses into a single cell, date last seen, owner
+        - Individual edit and delete buttons per machine
+        - Pressing edit expands the row of that machine to show all editable values and allow editing
+        - When in edit mode, the edit button turns into a save button and the delete button turns into a cancel button.
+        - Aside from manual entry, thes is also a csv file upload.
+    - App control:
+        - Refresh all states
+        - Reboot Control Panel (restart flask app)
+        - Shutdown entire server (shutdown linux server)
+        - Update Control Panel (record current commit version, pull latest code and restart app)
+        - Revert Control Panel (rollback to previously deployed commit)
+        

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ports import ports
+from app.core import state_store as state_store_service
 from app.services.worker_scheduler import WorkerSpec, start_worker
 
 
@@ -147,6 +148,62 @@ def drain_buffered_log_lines(ctx: Any, source: object) -> list[str]:
         return lines
 
 
+def _mark_start_observed_from_log(ctx: Any, line: object) -> None:
+    pattern = getattr(ctx, "RCON_STARTUP_READY_PATTERN", None)
+    if pattern is None or not pattern.search(str(line or "")):
+        return
+    with ctx.rcon_startup_lock:
+        ctx.rcon_startup_ready = True
+    intent_getter = getattr(ctx, "get_service_status_intent", None)
+    intent = str(intent_getter() or "").strip().lower() if callable(intent_getter) else ""
+    if intent != "starting":
+        return
+    intent_setter = getattr(ctx, "set_service_status_intent", None)
+    if callable(intent_setter):
+        try:
+            intent_setter(None)
+        except Exception:
+            pass
+    invalidate_status_cache = getattr(ctx, "invalidate_status_cache", None)
+    if callable(invalidate_status_cache):
+        try:
+            invalidate_status_cache()
+        except Exception:
+            pass
+    invalidate_observed_state_cache = getattr(ctx, "invalidate_observed_state_cache", None)
+    if callable(invalidate_observed_state_cache):
+        try:
+            invalidate_observed_state_cache()
+        except Exception:
+            pass
+    db_path = getattr(ctx, "APP_STATE_DB_PATH", None)
+    if not db_path:
+        return
+    try:
+        latest_start = state_store_service.get_latest_operation_for_type(db_path, "start")
+    except Exception:
+        latest_start = None
+    if not isinstance(latest_start, dict):
+        return
+    status = str(latest_start.get("status", "") or "").strip().lower()
+    op_id = str(latest_start.get("op_id", "") or "").strip()
+    if not op_id or status not in {"intent", "in_progress"}:
+        return
+    try:
+        state_store_service.update_operation(
+            db_path,
+            op_id=op_id,
+            status="observed",
+            checkpoint="observed_from_startup_log",
+            message="Service start observed from startup log.",
+            finished=True,
+        )
+    except Exception as exc:
+        log_exception = getattr(ctx, "log_mcweb_exception", None)
+        if callable(log_exception):
+            log_exception("mark_start_observed_from_log", exc)
+
+
 
 
 
@@ -155,12 +212,7 @@ def publish_log_stream_line(ctx: Any, source: object, line: object) -> None:
     if normalized is None:
         return
     if normalized == "minecraft":
-        intent = str(ctx.get_service_status_intent() or "").strip().lower()
-        if intent == "starting":
-            pattern = getattr(ctx, "RCON_STARTUP_READY_PATTERN", None)
-            if pattern is not None and pattern.search(str(line or "")):
-                with ctx.rcon_startup_lock:
-                    ctx.rcon_startup_ready = True
+        _mark_start_observed_from_log(ctx, line)
     stream_state = ctx.log_stream_states.get(normalized)
     if stream_state is None:
         return

@@ -36,6 +36,7 @@ class RuntimeServices:
     dashboard_metrics_runtime_service: Any
     dashboard_operations_runtime_service: Any
     status_cache_service: Any
+    worker_runtime_service: Any
 
 
 def _build_runtime_context(
@@ -75,17 +76,9 @@ def _install_lifecycle_hooks(
     namespace: Mapping[str, Any],
 ) -> None:
     """Install Flask lifecycle hooks from the resolved runtime bindings."""
-    process_role = str(namespace.get("PROCESS_ROLE", "all") or "all").strip().lower()
     app_lifecycle_service.install_flask_hooks(
         app,
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
-        ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
-        enable_metrics_collector_autostart=True,
-        start_operation_reconciler=binding("start_operation_reconciler"),
-        start_idle_player_watcher=binding("start_idle_player_watcher"),
-        start_backup_session_watcher=binding("start_backup_session_watcher"),
-        start_storage_safety_watcher=binding("start_storage_safety_watcher"),
-        enable_background_watchers_autostart=process_role == "web",
         ensure_csrf_token=binding("_ensure_csrf_token"),
         is_csrf_valid=binding("_is_csrf_valid"),
         csrf_rejected_response=binding("_csrf_rejected_response"),
@@ -99,6 +92,7 @@ def _build_run_server(
     app: Any,
     namespace: Mapping[str, Any],
     binding: Callable[[str], Any],
+    start_worker_loops: Callable[[], object],
 ) -> Any:
     """Create the app startup entrypoint from the resolved runtime bindings."""
     bootstrap_service = namespace.get("bootstrap_service") or _default_bootstrap_service
@@ -113,15 +107,10 @@ def _build_run_server(
         load_backup_log_cache_from_disk=binding("_load_backup_log_cache_from_disk"),
         load_minecraft_log_cache_from_journal=binding("_load_minecraft_log_cache_from_journal"),
         load_mcweb_log_cache_from_disk=binding("_load_mcweb_log_cache_from_disk"),
-        ensure_log_stream_fetcher_started=binding("ensure_log_stream_fetcher_started"),
         ensure_session_tracking_initialized=binding("ensure_session_tracking_initialized"),
         warm_file_page_caches=binding("warm_file_page_caches"),
-        ensure_metrics_collector_started=binding("ensure_metrics_collector_started"),
         collect_and_publish_metrics=binding("_collect_and_publish_metrics"),
-        start_operation_reconciler=binding("start_operation_reconciler"),
-        start_idle_player_watcher=binding("start_idle_player_watcher"),
-        start_backup_session_watcher=binding("start_backup_session_watcher"),
-        start_storage_safety_watcher=binding("start_storage_safety_watcher"),
+        start_worker_loops=start_worker_loops,
         enable_background_workers=process_role != "web",
         enable_boot_runtime_tasks=process_role != "web",
     )
@@ -210,5 +199,11 @@ def create_runtime(
         "runtime_context": runtime_context,
         "state": state,
         "static_asset_version_fn": world_bindings["_static_asset_version"],
-        "run_server": _build_run_server(services.app_lifecycle_service, app, namespace, binding),
+        "run_server": _build_run_server(
+            services.app_lifecycle_service,
+            app,
+            namespace,
+            binding,
+            lambda: services.worker_runtime_service.start_worker_loops(state),
+        ),
     }

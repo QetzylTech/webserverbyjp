@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import re
 
 
 class TemplateContractsTests(unittest.TestCase):
@@ -73,13 +74,15 @@ class TemplateContractsTests(unittest.TestCase):
             'id="backup-restore-start"',
             'id="backup-restore-cancel"',
             'id="download-password-modal"',
-            'id="message-modal"',
+            'id="download-password-image"',
+            'id="download-password-error"',
             'id="success-modal"',
             'id="error-modal"',
             'data-log-source="crash"',
         ]
         for token in required_tokens:
             self.assertIn(token, text)
+        self.assertNotIn('id="message-modal"', text)
 
     def test_documentation_fragment_has_main_content_and_toc(self):
         text = self._read("templates/fragments/documentation_fragment.html")
@@ -117,6 +120,28 @@ class TemplateContractsTests(unittest.TestCase):
         self.assertIn("X-CSRF-Token", files_js)
         self.assertIn("X-CSRF-Token", home_js)
         self.assertIn("X-CSRF-Token", maint_js)
+
+    def test_home_error_modal_close_handler_restores_hidden_state(self):
+        home_js = self._read("static/dashboard_home_page.js")
+        self.assertRegex(
+            home_js,
+            re.compile(
+                r"function closeErrorModal\(\)\s*\{[\s\S]*?setAttribute\(\"aria-hidden\", \"true\"\)",
+                re.MULTILINE,
+            ),
+        )
+
+    def test_app_shell_restores_preferred_home_log_stream_from_shell_state(self):
+        shell_js = self._read("static/app_shell.js")
+        self.assertIn("resolvePreferredHomeLogSource", shell_js)
+        self.assertIn("activateHomeLogStream(resolvePreferredHomeLogSource())", shell_js)
+        self.assertIn('shellState.homeView?.selectedLogSource', shell_js)
+
+    def test_file_page_password_rejection_reuses_password_modal(self):
+        files_js = self._read("static/file_page_modals.js")
+        self.assertIn("showPasswordError", files_js)
+        self.assertIn('dom.passwordTitle.textContent = "Action Rejected"', files_js)
+        self.assertIn("dom.passwordImage.hidden = false", files_js)
 
 
 if __name__ == "__main__":

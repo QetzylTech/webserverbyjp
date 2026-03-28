@@ -2,27 +2,68 @@
     function createModalsController(options) {
         const dom = options?.dom || {};
         const actions = options?.actions || {};
+        const DEFAULT_PASSWORD_TEXT = "Enter sudo password to continue.";
 
         let pendingAction = null;
-        let reloadAfterMessageClose = false;
 
-        function openPasswordModal(actionRequest) {
-            if (!dom.passwordModal || !dom.passwordInput) return;
-            pendingAction = actionRequest || null;
+        function defaultPasswordText(actionRequest) {
+            if (actionRequest?.kind === "restore") {
+                return "Enter sudo password to restore this backup.";
+            }
+            return "Enter sudo password to download this backup.";
+        }
+
+        function resetPasswordModal(actionRequest) {
             if (dom.passwordTitle) {
                 dom.passwordTitle.textContent = actionRequest?.kind === "restore" ? "Confirm Restore" : "Enter Password";
             }
             if (dom.passwordText) {
-                if (actionRequest?.kind === "restore") {
-                    dom.passwordText.textContent = "Enter sudo password to restore this backup.";
-                } else {
-                    dom.passwordText.textContent = "Enter sudo password to download this backup.";
-                }
+                dom.passwordText.textContent = defaultPasswordText(actionRequest) || DEFAULT_PASSWORD_TEXT;
             }
             if (dom.passwordSubmit) {
                 dom.passwordSubmit.textContent = actionRequest?.kind === "restore" ? "Restore" : "Continue";
             }
-            dom.passwordInput.value = actionRequest?.prefillPassword || "";
+            if (dom.passwordImage) {
+                dom.passwordImage.hidden = true;
+            }
+            if (dom.passwordError) {
+                dom.passwordError.textContent = "";
+                dom.passwordError.hidden = true;
+            }
+        }
+
+        function openPasswordModal(actionRequest) {
+            if (!dom.passwordModal || !dom.passwordInput) return;
+            pendingAction = actionRequest || null;
+            resetPasswordModal(actionRequest);
+            dom.passwordInput.value = "";
+            dom.passwordModal.classList.add("open");
+            dom.passwordModal.setAttribute("aria-hidden", "false");
+            dom.passwordInput.focus();
+        }
+
+        function showPasswordError(actionRequest, message) {
+            if (!dom.passwordModal || !dom.passwordInput) return;
+            pendingAction = actionRequest || null;
+            closeSuccessModal();
+            closeErrorModal();
+            if (dom.passwordTitle) {
+                dom.passwordTitle.textContent = "Action Rejected";
+            }
+            if (dom.passwordText) {
+                dom.passwordText.textContent = "Password incorrect. Enter sudo password to try again.";
+            }
+            if (dom.passwordSubmit) {
+                dom.passwordSubmit.textContent = actionRequest?.kind === "restore" ? "Restore" : "Continue";
+            }
+            if (dom.passwordImage) {
+                dom.passwordImage.hidden = false;
+            }
+            if (dom.passwordError) {
+                dom.passwordError.textContent = message || "Password incorrect.";
+                dom.passwordError.hidden = false;
+            }
+            dom.passwordInput.value = "";
             dom.passwordModal.classList.add("open");
             dom.passwordModal.setAttribute("aria-hidden", "false");
             dom.passwordInput.focus();
@@ -33,40 +74,12 @@
             dom.passwordModal.classList.remove("open");
             dom.passwordModal.setAttribute("aria-hidden", "true");
             if (dom.passwordInput) dom.passwordInput.value = "";
-            if (dom.passwordSubmit) dom.passwordSubmit.textContent = "Continue";
+            resetPasswordModal(pendingAction);
             pendingAction = null;
-        }
-
-        function popPendingAction() {
-            const action = pendingAction;
-            pendingAction = null;
-            return action;
-        }
-
-        function showMessageModal(message, options = {}) {
-            closePasswordModal();
-            closeSuccessModal();
-            closeErrorModal();
-            if (!dom.messageModal || !dom.messageModalText) return;
-            reloadAfterMessageClose = !!options.reloadAfterClose;
-            dom.messageModalText.textContent = message || "";
-            dom.messageModal.classList.add("open");
-            dom.messageModal.setAttribute("aria-hidden", "false");
-        }
-
-        function closeMessageModal() {
-            if (!dom.messageModal) return;
-            dom.messageModal.classList.remove("open");
-            dom.messageModal.setAttribute("aria-hidden", "true");
-            if (reloadAfterMessageClose) {
-                reloadAfterMessageClose = false;
-                global.location.reload();
-            }
         }
 
         function showSuccessModal(message) {
             closePasswordModal();
-            closeMessageModal();
             closeErrorModal();
             if (!dom.successModal || !dom.successModalText) return;
             dom.successModalText.textContent = message || "Action completed successfully.";
@@ -116,7 +129,7 @@
                     if (!dom.passwordInput) return;
                     const password = (dom.passwordInput.value || "").trim();
                     if (!password) return;
-                    const action = popPendingAction();
+                    const action = pendingAction;
                     closePasswordModal();
                     if (typeof handlers.onPasswordSubmit === "function") {
                         handlers.onPasswordSubmit(action, password);
@@ -132,16 +145,6 @@
                 });
             }
 
-            if (dom.messageModal) {
-                listen(dom.messageModal, "click", (event) => {
-                    if (event.target === dom.messageModal) {
-                        closeMessageModal();
-                    }
-                });
-            }
-            if (dom.messageModalOk) {
-                listen(dom.messageModalOk, "click", () => closeMessageModal());
-            }
             if (dom.successModal) {
                 listen(dom.successModal, "click", (event) => {
                     if (event.target === dom.successModal) {
@@ -166,10 +169,9 @@
 
         return {
             openPasswordModal,
-            showMessageModal,
+            showPasswordError,
             showSuccessModal,
             showErrorModal,
-            closeMessageModal,
             closeSuccessModal,
             closeErrorModal,
             bindEvents,

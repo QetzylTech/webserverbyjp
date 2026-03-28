@@ -108,20 +108,12 @@
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="download-password-title">
             <h3 id="download-password-title" class="modal-title">Enter Password</h3>
             <p class="modal-text">Enter sudo password to download this backup.</p>
+            <img id="download-password-image" class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image" hidden>
             <input id="download-password-input" class="modal-input ui-text-input" type="password" autocomplete="current-password" placeholder="Password">
+            <p id="download-password-error" class="modal-text modal-error" hidden></p>
             <div class="modal-actions">
                 <button id="download-password-cancel" class="btn-secondary" type="button">Cancel</button>
                 <button id="download-password-submit" class="btn-backup" type="button">Continue</button>
-            </div>
-        </div>
-    </div>
-    <div id="message-modal" class="modal-overlay" aria-hidden="true">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="message-modal-title">
-            <h3 id="message-modal-title" class="modal-title">Action Rejected</h3>
-            <img class="modal-image" src="https://i.imgflip.com/6k8gqw.jpg" alt="Incorrect password image">
-            <p id="message-modal-text" class="modal-text"></p>
-            <div class="modal-actions">
-                <button id="message-modal-ok" class="btn-backup" type="button">OK</button>
             </div>
         </div>
     </div>

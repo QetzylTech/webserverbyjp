@@ -164,12 +164,11 @@ function mountFileBrowserPage() {
         const passwordModal = document.getElementById("download-password-modal");
         const passwordTitle = document.getElementById("download-password-title");
         const passwordText = passwordModal ? passwordModal.querySelector(".modal-text") : null;
+        const passwordImage = document.getElementById("download-password-image");
         const passwordInput = document.getElementById("download-password-input");
+        const passwordError = document.getElementById("download-password-error");
         const passwordCancel = document.getElementById("download-password-cancel");
         const passwordSubmit = document.getElementById("download-password-submit");
-        const messageModal = document.getElementById("message-modal");
-        const messageModalText = document.getElementById("message-modal-text");
-        const messageModalOk = document.getElementById("message-modal-ok");
         const successModal = document.getElementById("success-modal");
         const successModalText = document.getElementById("success-modal-text");
         const successModalOk = document.getElementById("success-modal-ok");
@@ -290,12 +289,11 @@ function mountFileBrowserPage() {
                     passwordModal,
                     passwordTitle,
                     passwordText,
+                    passwordImage,
                     passwordInput,
+                    passwordError,
                     passwordCancel,
                     passwordSubmit,
-                    messageModal,
-                    messageModalText,
-                    messageModalOk,
                     successModal,
                     successModalText,
                     successModalOk,
@@ -308,7 +306,7 @@ function mountFileBrowserPage() {
             : null;
         const modals = modalsController || {
             openPasswordModal: () => {},
-            showMessageModal: () => {},
+            showPasswordError: () => {},
             showSuccessModal: () => {},
             showErrorModal: (message) => setDownloadError(message || "Action failed."),
             bindEvents: () => {},
@@ -1610,7 +1608,7 @@ function mountFileBrowserPage() {
                 if (payload && payload.message) message = payload.message;
                 if (payload && payload.error) errorCode = payload.error;
                 if (errorCode === "password_incorrect") {
-                    modals.showMessageModal(message);
+                    modals.showPasswordError(downloadRequest, message);
                 } else {
                     modals.showErrorModal(message, { errorCode });
                     setDownloadError(message);
@@ -1682,7 +1680,7 @@ function mountFileBrowserPage() {
                 const message = (payload && payload.message) ? payload.message : "Restore failed.";
                 const errorCode = (payload && payload.error) ? payload.error : "";
                 if (errorCode === "password_incorrect") {
-                    modals.showMessageModal(message);
+                    modals.showPasswordError(restoreRequest, message);
                 } else {
                     modals.showErrorModal(message, { errorCode });
                     setDownloadError(message);

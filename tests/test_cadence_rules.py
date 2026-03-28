@@ -2,6 +2,7 @@ import threading
 import tempfile
 from types import SimpleNamespace
 from pathlib import Path
+import re
 
 import pytest
 
@@ -78,6 +79,49 @@ def test_publish_log_stream_line_appends_db_with_clients(monkeypatch):
 
     assert calls["append"] == 1
     assert appended["lines"] == ["hello"]
+
+
+def test_publish_log_stream_line_marks_start_observed_from_startup_log(monkeypatch):
+    recorded = {"updated": None}
+
+    def fake_get_latest_operation_for_type(_db_path, op_type):
+        assert op_type == "start"
+        return {"op_id": "start-1", "status": "in_progress"}
+
+    def fake_update_operation(_db_path, **kwargs):
+        recorded["updated"] = kwargs
+
+    monkeypatch.setattr(log_stream_service.state_store_service, "get_latest_operation_for_type", fake_get_latest_operation_for_type)
+    monkeypatch.setattr(log_stream_service.state_store_service, "update_operation", fake_update_operation)
+
+    calls = {"intent": [], "status_cache": 0, "observed_cache": 0}
+    ctx = SimpleNamespace(
+        PROCESS_ROLE="all",
+        APP_STATE_DB_PATH=":memory:",
+        LOG_SOURCE_KEYS=("minecraft", "backup", "mcweb", "mcweb_log"),
+        get_service_status_intent=lambda: "starting",
+        set_service_status_intent=lambda value: calls["intent"].append(value),
+        invalidate_status_cache=lambda: calls.__setitem__("status_cache", calls["status_cache"] + 1),
+        invalidate_observed_state_cache=lambda: calls.__setitem__("observed_cache", calls["observed_cache"] + 1),
+        RCON_STARTUP_READY_PATTERN=re.compile(r"Dedicated server took\s+\d+(?:[.,]\d+)?\s+seconds to load", re.IGNORECASE),
+        rcon_startup_lock=threading.Lock(),
+        rcon_startup_ready=False,
+        log_stream_states={"minecraft": _make_log_state(clients=0)},
+        _append_minecraft_log_cache_line=lambda _line: None,
+        _append_backup_log_cache_line=lambda _line: None,
+        _append_mcweb_log_cache_line=lambda _line: None,
+        log_mcweb_exception=lambda *_args, **_kwargs: None,
+    )
+
+    log_stream_service.publish_log_stream_line(ctx, "minecraft", "Dedicated server took 88.715 seconds to load")
+
+    assert ctx.rcon_startup_ready is True
+    assert calls["intent"] == [None]
+    assert calls["status_cache"] == 1
+    assert calls["observed_cache"] == 1
+    assert recorded["updated"] is not None
+    assert recorded["updated"]["op_id"] == "start-1"
+    assert recorded["updated"]["status"] == "observed"
 
 
 def test_minecraft_log_source_prefers_latest_file_when_present(monkeypatch):
