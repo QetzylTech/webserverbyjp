@@ -49,14 +49,14 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
     def _current_request_client_id() -> str:
         return str(request.args.get("client_id", "") or request.headers.get("X-MCWEB-Client-Id", "") or "").strip()
 
-    def _client_is_active(client_id: str) -> bool:
+    def _client_is_active(client_id: str) -> bool | None:
         key = str(client_id or "").strip()
         if not key:
             return False
         registry = state.get("client_registry")
         lock = state.get("client_registry_lock")
         if not isinstance(registry, dict) or lock is None:
-            return False
+            return None
         with lock:
             return isinstance(registry.get(key), dict)
 
@@ -66,7 +66,8 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
             filename = str(restore_pane_alert_filename_ref[0] or "")
             opener_ip = _normalized_ip(restore_pane_alert_ip_ref[0])
             opener_client_id = str(restore_pane_alert_client_id_ref[0] or "").strip()
-            if active and opener_client_id and not _client_is_active(opener_client_id):
+            opener_client_active = _client_is_active(opener_client_id)
+            if active and opener_client_id and opener_client_active is False:
                 restore_pane_alert_active_ref[0] = False
                 restore_pane_alert_filename_ref[0] = ""
                 restore_pane_alert_ip_ref[0] = ""

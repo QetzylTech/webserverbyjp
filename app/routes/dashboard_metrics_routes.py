@@ -22,6 +22,7 @@ _METRICS_ROUTE_CACHE: dict[str, Any] = {
     "event_id": -1,
     "expires_at": 0.0,
     "payload": None,
+    "scope_key": None,
 }
 _state_store = cast(Any, state_store_service)
 _client_registry = cast(Any, client_registry_service)
@@ -116,11 +117,14 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
     def metrics() -> Any:
         """Runtime helper metrics."""
         now = time.time()
+        cache_scope_key = id(runtime_state)
         _refresh_metrics_snapshot_best_effort()
         latest_snapshot, latest_event_id = _latest_metrics_from_db()
         with _METRICS_ROUTE_CACHE_LOCK:
             cached_payload = _METRICS_ROUTE_CACHE.get("payload")
             if (
+                _METRICS_ROUTE_CACHE.get("scope_key") == cache_scope_key
+                and
                 _METRICS_ROUTE_CACHE.get("event_id") == int(latest_event_id)
                 and float(_METRICS_ROUTE_CACHE.get("expires_at", 0.0) or 0.0) >= now
                 and isinstance(cached_payload, dict)
@@ -128,6 +132,7 @@ def register_metrics_routes(app: Any, state: dict[str, Any], get_nav_alert_state
                 return jsonify(copy.deepcopy(cached_payload))
         payload = latest_snapshot if isinstance(latest_snapshot, dict) else state["get_cached_dashboard_metrics"]()
         with _METRICS_ROUTE_CACHE_LOCK:
+            _METRICS_ROUTE_CACHE["scope_key"] = cache_scope_key
             _METRICS_ROUTE_CACHE["event_id"] = int(latest_event_id)
             _METRICS_ROUTE_CACHE["expires_at"] = now + _METRICS_ROUTE_CACHE_TTL_SECONDS
             _METRICS_ROUTE_CACHE["payload"] = copy.deepcopy(payload if isinstance(payload, dict) else {})
