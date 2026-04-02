@@ -422,8 +422,11 @@ class HomeRoutesCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             docs_dir = root / "doc"
+            downloads_dir = root / "downloadables"
             docs_dir.mkdir(parents=True)
+            downloads_dir.mkdir(parents=True)
             (docs_dir / "server_setup_doc.md").write_text("# Doc", encoding="utf-8")
+            (downloads_dir / "modpack.zip").write_text("zip", encoding="utf-8")
 
             app = Flask(__name__)
             state = {
@@ -460,12 +463,14 @@ class HomeRoutesCoverageTests(unittest.TestCase):
                 "log_mcweb_log": lambda *_args, **_kwargs: None,
                 "FAVICON_URL": "https://example.com/favicon.ico",
                 "DOCS_DIR": docs_dir,
+                "DOWNLOADS_DIR": downloads_dir,
                 "DOC_README_URL": "/doc/server_setup_doc.md",
                 "get_device_name_map": lambda: {"127.0.0.1": "local"},
                 "_get_client_ip": lambda: "127.0.0.1",
                 "validate_sudo_password": lambda password: password == "ok",
                 "_password_rejected_response": lambda: ("password incorrect", 403),
                 "record_successful_password_ip": lambda: None,
+                "_safe_filename_in_dir": lambda base_dir, filename: filename if (base_dir / filename).exists() else None,
                 "get_observed_state": lambda: {
                     "service_status_display": "Off",
                 },
@@ -489,6 +494,7 @@ class HomeRoutesCoverageTests(unittest.TestCase):
                 _assert_rule_methods(self, app, "/favicon.ico", {"GET"})
                 _assert_rule_methods(self, app, "/readme", {"GET"})
                 _assert_rule_methods(self, app, "/doc/server_setup_doc.md", {"GET"})
+                _assert_rule_methods(self, app, "/downloads/<path:filename>", {"GET"})
                 _assert_rule_methods(self, app, "/doc/readme-url", {"GET"})
                 _assert_rule_methods(self, app, "/observed-state", {"GET"})
                 _assert_rule_methods(self, app, "/consistency-check", {"GET"})
@@ -502,6 +508,7 @@ class HomeRoutesCoverageTests(unittest.TestCase):
                 self.assertEqual(client.get("/favicon.ico").status_code, 302)
                 self.assertEqual(client.get("/readme").status_code, 200)
                 self.assertEqual(client.get("/doc/server_setup_doc.md").status_code, 200)
+                self.assertEqual(client.get("/downloads/modpack.zip").status_code, 200)
                 self.assertEqual(client.get("/doc/readme-url").status_code, 200)
                 self.assertEqual(client.get("/observed-state").status_code, 200)
                 self.assertEqual(client.get("/consistency-check").status_code, 200)

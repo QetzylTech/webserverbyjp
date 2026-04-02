@@ -30,6 +30,7 @@ def build_state(app_config: Any, *, app_dir: Path, display_tz: tzinfo) -> dict[s
     data_dir = app_dir / "data"
     app_state_db_path = data_dir / "app_state.sqlite3"
     docs_dir = app_dir / "doc"
+    downloads_dir = app_dir.parent / "downloadables"
     backup_state_file = data_dir / "state.txt"
     session_file = data_dir / "session.txt"
 
@@ -240,6 +241,7 @@ def build_state(app_config: Any, *, app_dir: Path, display_tz: tzinfo) -> dict[s
         "DATA_DIR": data_dir,
         "APP_STATE_DB_PATH": app_state_db_path,
         "DOCS_DIR": docs_dir,
+        "DOWNLOADS_DIR": downloads_dir,
         "BACKUP_STATE_FILE": backup_state_file,
         "SESSION_FILE": session_file,
         "DOC_README_URL": app_config.doc_readme_url,

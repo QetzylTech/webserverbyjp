@@ -191,6 +191,14 @@ def register_routes(app: Any, state: dict[str, Any]) -> None:
         """Serve the markdown source used by the documentation page."""
         return send_from_directory(str(state["DOCS_DIR"]), "server_setup_doc.md")
 
+    @app.route("/downloads/<path:filename>")
+    def public_download(filename: str) -> Any:
+        """Serve public downloadable files referenced by the documentation page."""
+        safe_name = state["_safe_filename_in_dir"](state["DOWNLOADS_DIR"], filename)
+        if not safe_name:
+            return ("Not found", 404)
+        return send_from_directory(str(state["DOWNLOADS_DIR"]), safe_name, as_attachment=True)
+
     @app.route("/doc/readme-url")
     def readme_url_config() -> Any:
         """Return the configured readme URL used by the documentation shell."""

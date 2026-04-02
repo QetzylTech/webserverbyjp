@@ -5,8 +5,10 @@ By JP
 1. Install the latest:
   - TLauncher https://tlauncher.org/en/
   - Tailscale https://tailscale.com/download
-2. Import modpack 
+2. Download and import modpack 
   - https://drive.google.com/drive/folders/1vuYmIkiJw5WnN9wqXW7krUkUowxOI1wr?usp=sharing
+  or
+  - [mod v7.6 15-03-2026-13_15_50.zip](/downloads/mod%20v7.6%2015-03-2026-13_15_50.zip)
 3. Join VPN using the Tailscale account provided by JP
 4. Join the server using the server URL 'servera'
 5. If server is off, go to http://servera/ and press start.
@@ -50,7 +52,7 @@ By JP
 ## 1 Client Setup
 Steps required for players to join the server.
 ### 1.1 Install Modpack
-1. Download the modpack zip file from https://drive.google.com/drive/folders/1vuYmIkiJw5WnN9wqXW7krUkUowxOI1wr?usp=sharing
+1. Download the modpack zip file from [/downloads/mod v7.6 15-03-2026-13_15_50.zip](/downloads/mod%20v7.6%2015-03-2026-13_15_50.zip) or https://drive.google.com/drive/folders/1vuYmIkiJw5WnN9wqXW7krUkUowxOI1wr?usp=sharing
 2. Open Tlauncher (make sure tLauncher is updated to the latest version) and then open the TLmods tab
 3. Click the screwdriver and wrench icon on the upper left part of the window, and select `Backup Mods`.
 4. Find the mod zip file you downloaded and click restore.

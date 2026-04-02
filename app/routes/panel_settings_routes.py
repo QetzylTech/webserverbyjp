@@ -113,6 +113,10 @@ def _load_env_defaults(state: Mapping[str, Any]) -> tuple[dict[str, str], Path, 
     if persisted_values:
         merged_values.update(persisted_values)
     defaults = setup_service_service.setup_form_defaults(merged_values)
+    for key, value in merged_values.items():
+        text = str(value or "").strip()
+        if text:
+            defaults[str(key)] = text
     defaults["MCWEB_REQUIRE_PASSWORD"] = "true" if _to_bool(defaults.get("MCWEB_REQUIRE_PASSWORD", "true")) else "false"
     admin_hash = str(defaults.get("MCWEB_ADMIN_PASSWORD_HASH", "") or "").strip()
     superadmin_hash = str(merged_values.get("MCWEB_SUPERADMIN_PASSWORD_HASH", admin_hash) or "").strip()
